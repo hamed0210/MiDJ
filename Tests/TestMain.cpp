@@ -4,6 +4,7 @@
 #include "Engine/BpmDetector.h"
 #include "Engine/ChannelStrip.h"
 #include "Engine/Deck.h"
+#include "Engine/Effects.h"
 #include "Engine/Mixer.h"
 #include "Library/Library.h"
 #include "Library/TagReader.h"
@@ -811,6 +812,297 @@ void testLibrary()
     root.deleteRecursively();
 }
 
+
+// --- Efectos -----------------------------------------------------------------------------
+
+// Pasa 'buf' (estereo) por un efecto en bloques, con el tempo avanzando como en el deck.
+void runEffect (midj::Effect& fx, juce::AudioBuffer<float>& buf, double bpm, int from = 0, int to = -1)
+{
+    if (to < 0)
+        to = buf.getNumSamples();
+    midj::TempoInfo t;
+    t.samplesPerBeat = sr * 60.0 / bpm;
+    t.synced = true;
+    for (int start = from; start < to; start += blockSize)
+    {
+        const int n = std::min (blockSize, to - start);
+        t.beatAtStart = start / t.samplesPerBeat;
+        fx.process (buf.getWritePointer (0, start), buf.getWritePointer (1, start), n, t);
+    }
+}
+
+juce::AudioBuffer<float> stereoNoise (double seconds, float level = 0.3f)
+{
+    juce::Random rng (11);
+    juce::AudioBuffer<float> b (2, (int) (seconds * sr));
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < b.getNumSamples(); ++i)
+            b.setSample (ch, i, (rng.nextFloat() * 2.0f - 1.0f) * level);
+    return b;
+}
+
+juce::AudioBuffer<float> stereoSine (double seconds, double hz, float level = 0.5f)
+{
+    juce::AudioBuffer<float> b (2, (int) (seconds * sr));
+    for (int i = 0; i < b.getNumSamples(); ++i)
+        for (int ch = 0; ch < 2; ++ch)
+            b.setSample (ch, i, level * (float) std::sin (2.0 * juce::MathConstants<double>::pi * hz * i / sr));
+    return b;
+}
+
+bool sameRange (const juce::AudioBuffer<float>& a, const juce::AudioBuffer<float>& b, int from, int to)
+{
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = from; i < to; ++i)
+            if (a.getSample (ch, i) != b.getSample (ch, i))
+                return false;
+    return true;
+}
+
+float maxStep (const juce::AudioBuffer<float>& b, int from, int to)
+{
+    float m = 0.0f;
+    for (int i = std::max (1, from); i < to; ++i)
+        m = std::max (m, std::abs (b.getSample (0, i) - b.getSample (0, i - 1)));
+    return m;
+}
+
+std::vector<std::unique_ptr<midj::Effect>> allEffects()
+{
+    std::vector<std::unique_ptr<midj::Effect>> v;
+    v.push_back (std::make_unique<midj::EchoEffect>());
+    v.push_back (std::make_unique<midj::ReverbEffect>());
+    v.push_back (std::make_unique<midj::FlangerEffect>());
+    v.push_back (std::make_unique<midj::BitCrushEffect>());
+    v.push_back (std::make_unique<midj::GateEffect>());
+    for (auto& fx : v)
+        fx->prepare (sr, blockSize);
+    return v;
+}
+
+void testEffectsCommon()
+{
+    for (auto& fx : allEffects())
+    {
+        const juce::String name (fx->getName());
+        const auto input = stereoNoise (12.0);
+
+        // Apagado: la senal pasa intacta (ni un bit distinto).
+        auto off = input;
+        runEffect (*fx, off, 120.0);
+        check (sameRange (off, input, 0, input.getNumSamples()) && fx->isIdle(),
+               (name + ": apagado no toca la senal").toRawUTF8(), 0.0, 0.0);
+
+        // Encendido 2 s y apagado: cambia la senal y despues vuelve a ser identica.
+        fx->setAmount (0.8f);
+        fx->setOn (true);
+        auto out = input;
+        runEffect (*fx, out, 120.0, 0, (int) (2.0 * sr));
+        juce::AudioBuffer<float> diff (1, (int) sr);
+        diff.copyFrom (0, 0, out, 0, (int) sr, (int) sr);
+        diff.addFrom (0, 0, input, 0, (int) sr, (int) sr, -1.0f);
+        const float change = diff.getRMSLevel (0, 0, (int) sr);
+        check (change > 0.02f, (name + ": encendido cambia la senal (RMS de la diferencia)").toRawUTF8(), change, 0.02);
+
+        fx->setOn (false);
+        runEffect (*fx, out, 120.0, (int) (2.0 * sr), input.getNumSamples());
+        // Tras 10 s apagado (colas incluidas) vuelve a pasar todo intacto.
+        check (fx->isIdle() && sameRange (out, input, (int) (11.0 * sr), input.getNumSamples()),
+               (name + ": al apagarlo vuelve a quedar intacto").toRawUTF8(), 0.0, 0.0);
+        fx->reset();
+    }
+
+    // Sin clics: encender y apagar con un seno de 220 Hz; el salto maximo entre muestras no
+    // crece (un seno de 0,5 a 220 Hz salta como mucho 0,016 por muestra).
+    for (auto& fx : allEffects())
+    {
+        const juce::String name (fx->getName());
+        if (name == "BitCrush" || name == "Gate")
+            continue;   // su sonido son escalones y cortes: el salto es el efecto, no un clic
+        auto sine = stereoSine (3.0, 220.0);
+        fx->setAmount (0.7f);
+        runEffect (*fx, sine, 120.0, 0, (int) sr);
+        fx->setOn (true);
+        runEffect (*fx, sine, 120.0, (int) sr, (int) (2.0 * sr));
+        fx->setOn (false);
+        runEffect (*fx, sine, 120.0, (int) (2.0 * sr), sine.getNumSamples());
+        const float step = maxStep (sine, 1, sine.getNumSamples());
+        check (step < 0.06f, (name + ": encender y apagar sin clics (salto maximo)").toRawUTF8(), step, 0.016);
+    }
+}
+
+void testEcho()
+{
+    // Un golpe a 120 BPM: eco cada medio pulso (11025 muestras), cada vez mas bajo.
+    midj::EchoEffect echo;
+    echo.prepare (sr, blockSize);
+    echo.setAmount (0.6f);
+    echo.setOn (true);
+    juce::AudioBuffer<float> b (2, (int) (3.0 * sr));
+    b.clear();
+    const int hit = (int) (0.1 * sr);
+    for (int i = 0; i < 64; ++i)
+        for (int ch = 0; ch < 2; ++ch)
+            b.setSample (ch, hit + i, 0.8f * (float) std::sin (i * 0.3));
+    runEffect (echo, b, 120.0);
+
+    // Pico de cada golpe y su comienzo (primera muestra por encima de 0,01). Los filtros de la
+    // realimentacion cambian la forma del golpe, asi que la posicion se mide por el comienzo.
+    auto peakNear = [&b] (int centre, int& onset)
+    {
+        float best = 0.0f;
+        onset = -1;
+        for (int i = centre - 200; i < centre + 400; ++i)
+        {
+            const float v = std::abs (b.getSample (0, i));
+            if (onset < 0 && v > 0.01f)
+                onset = i;
+            best = std::max (best, v);
+        }
+        return best;
+    };
+    int at1 = 0, at2 = 0, at0 = 0;
+    const float p0 = peakNear (hit, at0), p1 = peakNear (hit + 11025, at1), p2 = peakNear (hit + 22050, at2);
+    check (std::abs ((at1 - at0) - 11025) <= 3, "echo: repite a medio pulso (11025 muestras a 120 BPM)", at1 - at0, 11025);
+    check (std::abs ((at2 - at1) - 11025) <= 3, "echo: segunda repeticion otro medio pulso despues", at2 - at1, 11025);
+    check (p1 > 0.1f && p2 < p1 && p1 < p0, "echo: cada repeticion mas baja", p2, p1);
+
+    // La cola sigue al apagar: el golpe, el eco se apaga justo despues del 1er eco, y el 2o suena.
+    echo.reset();
+    echo.setOn (true);
+    b.clear();
+    for (int i = 0; i < 64; ++i)
+        for (int ch = 0; ch < 2; ++ch)
+            b.setSample (ch, hit + i, 0.8f * (float) std::sin (i * 0.3));
+    runEffect (echo, b, 120.0, 0, hit + 11025 + 2000);
+    echo.setOn (false);
+    runEffect (echo, b, 120.0, hit + 11025 + 2000, b.getNumSamples());
+    int at = 0;
+    check (peakNear (hit + 22050, at) > 0.05f, "echo: al apagarlo la cola sigue sonando", peakNear (hit + 22050, at), 0.05);
+
+    // Cambio de tempo con el eco sonando: fundido de 64 muestras, sin clic.
+    echo.reset();
+    echo.setOn (true);
+    auto sine = stereoSine (4.0, 220.0);
+    runEffect (echo, sine, 120.0, 0, (int) (2.0 * sr));
+    runEffect (echo, sine, 126.0, (int) (2.0 * sr), sine.getNumSamples());
+    const float step = maxStep (sine, (int) (1.5 * sr), (int) (2.5 * sr));
+    check (step < 0.06f, "echo: cambiar el BPM sonando no hace clic", step, 0.03);
+}
+
+void testBitCrushAndGate()
+{
+    // BitCrush a tope: 4 bits (multiplos de 1/8) y cada valor se mantiene 1024 muestras.
+    check (midj::BitCrushEffect::bitsFor (0.0f) == 16.0f && midj::BitCrushEffect::bitsFor (1.0f) == 4.0f,
+           "bitcrush: de 16 a 4 bits (formula de VirtualDJ)", midj::BitCrushEffect::bitsFor (1.0f), 4.0);
+    midj::BitCrushEffect crush;
+    crush.setAmount (1.0f);
+    crush.setOn (true);
+    crush.prepare (sr, blockSize);
+    auto ramp = stereoSine (2.0, 3.0, 0.9f);
+    runEffect (crush, ramp, 120.0);
+    bool onGrid = true;
+    int longestRun = 0, run = 1;
+    for (int i = (int) sr; i < ramp.getNumSamples(); ++i)
+    {
+        const float v = ramp.getSample (0, i) * 8.0f;
+        onGrid = onGrid && std::abs (v - std::round (v)) < 1e-4f;
+        run = ramp.getSample (0, i) == ramp.getSample (0, i - 1) ? run + 1 : 1;
+        longestRun = std::max (longestRun, run);
+    }
+    check (onGrid, "bitcrush a tope: valores en multiplos de 1/8 (4 bits)", 0.0, 0.0);
+    check (longestRun >= 1024, "bitcrush a tope: retiene 1024 muestras", longestRun, 1024);
+
+    // Gate a 120 BPM: abierto en la primera mitad de cada cuarto de pulso, cerrado en la segunda.
+    midj::GateEffect gate;
+    gate.prepare (sr, blockSize);
+    gate.setAmount (1.0f);
+    gate.setOn (true);
+    juce::AudioBuffer<float> dc (2, (int) (4.0 * sr));
+    for (int ch = 0; ch < 2; ++ch)
+        juce::FloatVectorOperations::fill (dc.getWritePointer (ch), 0.5f, dc.getNumSamples());
+    runEffect (gate, dc, 120.0);
+    const double quarter = 22050.0 / 4.0;
+    bool aligned = true;
+    for (int k = 8; k < 40; ++k)
+    {
+        const float openValue = dc.getSample (0, (int) (k * quarter + quarter * 0.25));
+        const float closedValue = dc.getSample (0, (int) (k * quarter + quarter * 0.75));
+        aligned = aligned && openValue > 0.49f && closedValue < 0.01f;
+    }
+    check (aligned, "gate: abre y cierra cada cuarto de pulso, en su sitio", 0.0, 0.0);
+}
+
+void testEffectRack()
+{
+    midj::EffectRack rack;
+    rack.prepare (sr, blockSize);
+    check (rack.getEffect (0) == 0 && rack.getEffect (1) == 2 && rack.getEffect (2) == 4,
+           "rack: ranuras con Echo, Flanger y Gate", 0.0, 0.0);
+    rack.setAmount (0, 0.7f);
+    rack.setOn (0, true);
+    rack.setEffect (0, 3);   // cambiar a BitCrush sonando: sigue encendido y con el mismo mando
+    check (rack.getEffect (0) == 3 && rack.isOn (0) && rack.getAmount (0) == 0.7f,
+           "rack: cambiar de efecto conserva ON y el mando", 0.0, 0.0);
+
+    // Los efectos de un deck no tocan al otro: BitCrush en A no cambia B (crossfader a B).
+    juce::AudioFormatManager formats;
+    midj::Deck a (formats), b (formats);
+    midj::Mixer mixer (a, b);
+    mixer.prepareToPlay (blockSize, sr);
+    juce::AudioBuffer<float> tone (1, (int) (sr * 5.0));
+    for (int i = 0; i < tone.getNumSamples(); ++i)
+        tone.setSample (0, i, 0.4f * (float) std::sin (2.0 * juce::MathConstants<double>::pi * 330.0 * i / sr));
+    a.loadBuffer (tone, sr, "a", { 120.0, 0.0 });
+    b.loadBuffer (tone, sr, "b", { 120.0, 0.0 });
+    a.setKeyLock (false);
+    b.setKeyLock (false);
+    a.play();
+    b.play();
+    mixer.setCrossfader (1.0f);
+    auto render = [&] (int blocks)
+    {
+        juce::AudioBuffer<float> out (2, blocks * blockSize);
+        for (int k = 0; k < blocks; ++k)
+        {
+            juce::AudioSourceChannelInfo info (&out, k * blockSize, blockSize);
+            mixer.getNextAudioBlock (info);
+        }
+        return out;
+    };
+    const auto before = render (40);
+    a.setPositionSeconds (0.0);
+    b.setPositionSeconds (0.0);
+    mixer.getEffects (0).setEffect (0, 3);
+    mixer.getEffects (0).setAmount (0, 1.0f);
+    mixer.getEffects (0).setOn (0, true);
+    render (1);   // el salto se aplica en este bloque
+    a.setPositionSeconds (0.0);
+    b.setPositionSeconds (0.0);
+    const auto after = render (40);
+    // Los filtros del canal arrastran memoria de lo anterior: se compara pasado ese arranque.
+    float worst = 0.0f;
+    for (int i = blockSize * 10; i < before.getNumSamples(); ++i)
+        worst = std::max (worst, std::abs (before.getSample (0, i) - after.getSample (0, i)));
+    check (worst < 1e-4f, "mezclador: los efectos de A no tocan B (diferencia maxima)", worst, 0.0);
+}
+
+void benchmarkEffects()
+{
+    // Los 5 efectos encendidos a la vez en una ranura cada uno no es posible (3 ranuras):
+    // se mide cada efecto encendido por separado.
+    for (auto& fx : allEffects())
+    {
+        fx->setOn (true);
+        fx->setAmount (0.8f);
+        auto noise = stereoNoise (10.0);
+        const auto start = juce::Time::getMillisecondCounterHiRes();
+        runEffect (*fx, noise, 120.0);
+        const double load = (juce::Time::getMillisecondCounterHiRes() - start) / 10000.0;
+        std::printf ("[INFO]  %-9s %.2f %% de un nucleo\n", fx->getName(), load * 100.0);
+    }
+}
+
 }
 
 #if JUCE_WINDOWS
@@ -851,6 +1143,7 @@ int main (int argc, char* argv[])
     {
         benchmarkKeyLock (midj::TimeStretcher::Engine::finer);
         benchmarkKeyLock (midj::TimeStretcher::Engine::faster);
+        benchmarkEffects();
         return 0;
     }
 
@@ -880,6 +1173,12 @@ int main (int argc, char* argv[])
     std::printf ("== Canal: ganancia, EQ de 3 bandas, filtro y volumen ==\n");
     testChannelStrip();
     testMixerChannels();
+
+    std::printf ("== Efectos ==\n");
+    testEffectsCommon();
+    testEcho();
+    testBitCrushAndGate();
+    testEffectRack();
 
     std::printf ("== Biblioteca: etiquetas, SQLite, busqueda y analisis ==\n");
     testTagReader();

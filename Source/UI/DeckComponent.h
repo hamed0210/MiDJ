@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine/Deck.h"
+#include "UI/EffectsRow.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -9,7 +10,7 @@
 namespace midj
 {
 // Panel de un deck: titulo, BPM, tiempo, forma de onda con rejilla de pulsos,
-// botones CUE / Play / SYNC, bucles de 1-2-4-8 pulsos, cargar, fader de tempo y KEY.
+// botones CUE / Play / SYNC, efectos, bucles de 1-2-4-8 pulsos, cargar, fader de tempo y KEY.
 class DeckComponent : public juce::Component,
                       public juce::DragAndDropTarget,
                       public juce::FileDragAndDropTarget,
@@ -17,8 +18,8 @@ class DeckComponent : public juce::Component,
                       private juce::Timer
 {
 public:
-    // 'other' es el deck contrario: SYNC se sincroniza con el.
-    DeckComponent (Deck& deck, Deck& other, const juce::String& name);
+    // other es el deck contrario: SYNC se sincroniza con el. effects: los efectos de este deck.
+    DeckComponent (Deck& deck, Deck& other, EffectRack& effects, const juce::String& name);
     ~DeckComponent() override;
 
     void paint (juce::Graphics& g) override;
@@ -66,6 +67,7 @@ private:
     juce::Rectangle<int> waveformArea;
     std::unique_ptr<juce::FileChooser> chooser;
     bool dragHighlight = false;
+    EffectsRow effectsRow;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (DeckComponent)
 };

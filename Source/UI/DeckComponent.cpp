@@ -18,9 +18,11 @@ namespace
     }
 }
 
-DeckComponent::DeckComponent (Deck& d, Deck& other, const juce::String& name)
-    : deck (d), otherDeck (other), deckName (name)
+DeckComponent::DeckComponent (Deck& d, Deck& other, EffectRack& effects, const juce::String& name)
+    : deck (d), otherDeck (other), deckName (name),
+      effectsRow (effects, name == "A" ? DarkLookAndFeel::accentA : DarkLookAndFeel::accentB)
 {
+    addAndMakeVisible (effectsRow);
     deck.addChangeListener (this);
     deck.getThumbnail().addChangeListener (this);
 
@@ -273,7 +275,7 @@ void DeckComponent::resized()
     bpmLabel.setBounds (header.removeFromRight (200));
     titleLabel.setBounds (header);
     timeLabel.setBounds (area.removeFromTop (20));
-    area.removeFromTop (8);
+    area.removeFromTop (4);
 
     auto right = area.removeFromRight (70);
     tempoLabel.setBounds (right.removeFromBottom (20));
@@ -291,9 +293,9 @@ void DeckComponent::resized()
     syncButton.setBounds (transport.removeFromLeft (bw).reduced (0, 4));
     loadButton.setBounds (transport.removeFromRight (bw).reduced (0, 4).withTrimmedRight (8));
 
-    // Fila de bucles.
+    // Fila de bucles y, encima, la de efectos.
     area.removeFromBottom (4);
-    auto loops = area.removeFromBottom (34);
+    auto loops = area.removeFromBottom (30);
     loopLabel.setBounds (loops.removeFromLeft (44));
     loops.removeFromLeft (6);
     for (auto& b : loopButtons)
@@ -301,6 +303,8 @@ void DeckComponent::resized()
         b.setBounds (loops.removeFromLeft (48).reduced (0, 2));
         loops.removeFromLeft (6);
     }
+    area.removeFromBottom (2);
+    effectsRow.setBounds (area.removeFromBottom (36));
 
     area.removeFromBottom (8);
     waveformArea = area.reduced (0, 4).withTrimmedRight (8);

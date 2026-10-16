@@ -39,8 +39,8 @@ private:
     Mixer mixer { deckA, deckB };
     Library library { formatManager };
 
-    DeckComponent deckViewA { deckA, deckB, "A" };
-    DeckComponent deckViewB { deckB, deckA, "B" };
+    DeckComponent deckViewA { deckA, deckB, mixer.getEffects (0), "A" };
+    DeckComponent deckViewB { deckB, deckA, mixer.getEffects (1), "B" };
     MixerComponent mixerView { mixer };
     std::unique_ptr<LibraryBrowser> browser;   // se crea con la biblioteca ya abierta
     juce::TooltipWindow tooltips { this };

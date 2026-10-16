@@ -39,6 +39,7 @@ Source/
     ChannelStrip.*      canal de un deck: ganancia, EQ de 3 bandas, filtro, volumen
     BpmDetector.*       detección de tempo y del primer pulso
     TimeStretcher.*     keylock: cambio de tempo sin cambio de tono (Rubber Band)
+    Effects.*           efectos sincronizados al tempo y rack de 3 ranuras por deck
   Library/              biblioteca de canciones
     Library.*           base SQLite, carpetas, escaneo, analisis de fondo y busqueda
     TagReader.*         etiquetas ID3 (v1, v2.2-2.4) y 'Artista - Titulo' del nombre
@@ -46,13 +47,14 @@ Source/
     DeckComponent.*     panel de un deck: forma de onda, botones, tempo
     MixerComponent.*    columna central del mezclador: mandos y faders de volumen
     LibraryBrowser.*    navegador: carpetas, buscador y lista (arrastrar o doble clic)
+    EffectsRow.*        fila FX de un deck: elegir efecto, encender y mando
     DarkLookAndFeel.*   estilo visual oscuro
 Tests/
   TestMain.cpp          pruebas automáticas del motor (ctest) y herramientas:
                         MiDJTests --analyse canciones...      BPM y primer pulso
                         MiDJTests --stretch cancion 1.08 dir  keylock con una canción real
                         MiDJTests --compare a.wav b.wav       tono de b respecto de a
-                        MiDJTests --benchmark                 CPU del keylock
+                        MiDJTests --benchmark                 CPU del keylock y de los efectos
 ```
 
 ## Licencias
@@ -74,3 +76,4 @@ SQLite es de dominio público.
 - Mezclador por deck: ganancia (hasta +12 dB), EQ de 3 bandas con kill (cruces en 200 y 6500 Hz), filtro de un mando (paso bajo / paso alto con zona muerta) y fader de volumen.
 - Keylock (botón KEY, activado por defecto): cambio de tempo sin cambiar el tono con Rubber Band R2. Detector de BPM más fiable con música real: ataques de mezcla y graves en escala logarítmica y tempo elegido con un peine de 1-4 pulsos (corrige el 4/3 del reggaeton).
 - Biblioteca en SQLite (`%APPDATA%\MiDJ\library.db`) y navegador: carpetas, escaneo y análisis de BPM en segundo plano, búsqueda sin acentos ni mayúsculas, columnas ordenables; cargar arrastrando a un deck (también desde el Explorador) o con doble clic. Las canciones ya analizadas cargan sin volver a analizar.
+- Efectos: 3 ranuras por deck con Echo (medio pulso, cola al apagar), Reverb, Flanger (barrido de 8 pulsos), BitCrush (fórmula de VirtualDJ) y Gate (cuartos de pulso), todos sincronizados al BPM del deck, sin clics al encender, apagar o cambiar, y sin tocar la señal cuando están apagados.

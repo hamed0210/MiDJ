@@ -43,6 +43,7 @@ add_library(MiDJEngine STATIC
     Source/Engine/BpmDetector.cpp
     Source/Engine/ChannelStrip.cpp
     Source/Engine/Deck.cpp
+    Source/Engine/Effects.cpp
     Source/Engine/Mixer.cpp
     Source/Engine/TimeStretcher.cpp
     Source/Library/Library.cpp
@@ -70,6 +71,7 @@ target_sources(MiDJ PRIVATE
     Source/Main.cpp
     Source/MainComponent.cpp
     Source/UI/DeckComponent.cpp
+    Source/UI/EffectsRow.cpp
     Source/UI/MixerComponent.cpp
     Source/UI/LibraryBrowser.cpp
     Source/UI/DarkLookAndFeel.cpp)
