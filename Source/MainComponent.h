@@ -28,8 +28,8 @@ private:
     Deck deckB { formatManager };
     Mixer mixer { deckA, deckB };
 
-    DeckComponent deckViewA { deckA, "A" };
-    DeckComponent deckViewB { deckB, "B" };
+    DeckComponent deckViewA { deckA, deckB, "A" };
+    DeckComponent deckViewB { deckB, deckA, "B" };
     juce::Slider crossfader;
     juce::Label crossfaderLabel;
 

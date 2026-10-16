@@ -1,10 +1,15 @@
 #include "UI/DeckComponent.h"
 #include "UI/DarkLookAndFeel.h"
 
+#include <cmath>
+
 namespace midj
 {
 namespace
 {
+    constexpr double tempoRangePercent = 16.0;
+    const juce::Colour cueColour { 0xffffa726 };   // naranja, como en las mesas de DJ
+
     juce::String formatTime (double seconds)
     {
         const int total = (int) std::max (0.0, seconds);
@@ -12,25 +17,51 @@ namespace
     }
 }
 
-DeckComponent::DeckComponent (Deck& d, const juce::String& name)
-    : deck (d), deckName (name)
+DeckComponent::DeckComponent (Deck& d, Deck& other, const juce::String& name)
+    : deck (d), otherDeck (other), deckName (name)
 {
     deck.addChangeListener (this);
     deck.getThumbnail().addChangeListener (this);
 
     loadButton.onClick = [this] { chooseFile(); };
+    cueButton.onClick = [this] { deck.cue(); };
     playButton.onClick = [this]
     {
         deck.isPlaying() ? deck.pause() : deck.play();
         updateLabels();
     };
-    addAndMakeVisible (loadButton);
-    addAndMakeVisible (playButton);
+    syncButton.onClick = [this]
+    {
+        if (! deck.syncTo (otherDeck))
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "MiDJ",
+                                                    "SYNC necesita una cancion con BPM en los dos decks.");
+    };
+    for (auto* b : { &loadButton, &cueButton, &playButton, &syncButton })
+        addAndMakeVisible (b);
+    cueButton.setColour (juce::TextButton::textColourOffId, cueColour);
 
-    // Tempo +-8 %, como el fader de pitch de un plato.
+    // Bucles: pulsar un tamano activa ese bucle; pulsar el activo lo quita.
+    for (size_t i = 0; i < loopButtons.size(); ++i)
+    {
+        auto& b = loopButtons[i];
+        b.setButtonText (juce::String (loopSizes[i]));
+        b.setClickingTogglesState (false);
+        b.onClick = [this, beats = loopSizes[i]]
+        {
+            if (deck.getLoopBeats() == beats) deck.exitLoop();
+            else                             deck.setLoop (beats);
+        };
+        addAndMakeVisible (b);
+    }
+    loopLabel.setText ("LOOP", juce::dontSendNotification);
+    loopLabel.setJustificationType (juce::Justification::centredRight);
+    loopLabel.setColour (juce::Label::textColourId, DarkLookAndFeel::textQuiet);
+    addAndMakeVisible (loopLabel);
+
+    // Tempo +-16 %, como el fader de pitch de un plato con rango ampliado.
     tempoSlider.setSliderStyle (juce::Slider::LinearVertical);
     tempoSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-    tempoSlider.setRange (-8.0, 8.0, 0.01);
+    tempoSlider.setRange (-tempoRangePercent, tempoRangePercent, 0.01);
     tempoSlider.setValue (0.0, juce::dontSendNotification);
     tempoSlider.setDoubleClickReturnValue (true, 0.0);
     tempoSlider.onValueChange = [this]
@@ -82,19 +113,28 @@ void DeckComponent::chooseFile()
 
 void DeckComponent::updateLabels()
 {
-    const auto file = deck.getFile();
-    titleLabel.setText (deckName + "   " + (file == juce::File() ? juce::String ("Sin cancion") : file.getFileNameWithoutExtension()),
+    const bool hasTrack = deck.hasTrack();
+    titleLabel.setText (deckName + "   " + (deck.isLoading() ? juce::String ("Cargando...")
+                                           : hasTrack ? deck.getTrackName() : juce::String ("Sin cancion")),
                         juce::dontSendNotification);
 
     const double bpm = deck.getCurrentBpm();
-    bpmLabel.setText (bpm > 0.0 ? juce::String (bpm, 1) + " BPM"
-                                : (file == juce::File() ? "--- BPM" : "analizando..."),
-                      juce::dontSendNotification);
+    bpmLabel.setText (bpm > 0.0 ? juce::String (bpm, 2) + " BPM" : juce::String ("--- BPM"), juce::dontSendNotification);
 
     timeLabel.setText (formatTime (deck.getPositionSeconds()) + " / " + formatTime (deck.getLengthSeconds()),
                        juce::dontSendNotification);
-    tempoLabel.setText (juce::String (tempoSlider.getValue(), 2) + " %", juce::dontSendNotification);
+
+    // El fader sigue a la velocidad real (SYNC la cambia), salvo mientras se arrastra.
+    const double percent = (deck.getSpeed() - 1.0) * 100.0;
+    if (! tempoSlider.isMouseButtonDown())
+        tempoSlider.setValue (percent, juce::dontSendNotification);
+    tempoLabel.setText ((percent >= 0.0 ? "+" : "") + juce::String (percent, 2) + " %", juce::dontSendNotification);
+
     playButton.setButtonText (deck.isPlaying() ? "Pausa" : "Play");
+    for (size_t i = 0; i < loopButtons.size(); ++i)
+        loopButtons[i].setColour (juce::TextButton::buttonColourId,
+                                  deck.getLoopBeats() == loopSizes[i] ? accent().withAlpha (0.6f)
+                                                                      : DarkLookAndFeel::panel.brighter (0.15f));
 }
 
 void DeckComponent::changeListenerCallback (juce::ChangeBroadcaster*)
@@ -109,34 +149,84 @@ void DeckComponent::timerCallback()
     repaint (waveformArea);
 }
 
+float DeckComponent::timeToX (double seconds) const
+{
+    const double length = deck.getLengthSeconds();
+    if (length <= 0.0)
+        return (float) waveformArea.getX();
+    return (float) waveformArea.getX() + (float) (seconds / length) * (float) waveformArea.getWidth();
+}
+
+// Rejilla de pulsos: linea tenue en cada pulso y mas marcada cada 4 (inicio de compas).
+// Si los pulsos quedarian a menos de 4 px, solo se dibujan los inicios de compas.
+void DeckComponent::paintBeatGrid (juce::Graphics& g)
+{
+    const double bpm = deck.getOriginalBpm(), length = deck.getLengthSeconds();
+    if (bpm <= 0.0 || length <= 0.0)
+        return;
+    const double period = 60.0 / bpm;
+    const double pixelsPerBeat = period / length * waveformArea.getWidth();
+    const int step = pixelsPerBeat < 4.0 ? 4 : 1;
+    const auto top = (float) waveformArea.getY(), bottom = (float) waveformArea.getBottom();
+    for (int beat = 0; ; beat += step)
+    {
+        const double t = deck.beatTime (beat);
+        if (t > length)
+            break;
+        const bool barStart = beat % 4 == 0;
+        g.setColour (DarkLookAndFeel::text.withAlpha (barStart ? 0.35f : 0.12f));
+        g.drawVerticalLine ((int) timeToX (t), top, bottom);
+    }
+}
+
 void DeckComponent::paint (juce::Graphics& g)
 {
     g.setColour (DarkLookAndFeel::panel);
     g.fillRoundedRectangle (getLocalBounds().toFloat(), 8.0f);
 
-    // Forma de onda y cabezal de reproduccion.
     g.setColour (DarkLookAndFeel::background);
     g.fillRect (waveformArea);
+    if (! deck.hasTrack())
+        return;
+
+    const auto top = (float) waveformArea.getY(), bottom = (float) waveformArea.getBottom();
+
+    // Zona del bucle, detras de la forma de onda.
+    if (deck.isLooping())
+    {
+        const float x0 = timeToX (deck.getLoopStart()), x1 = timeToX (deck.getLoopEnd());
+        g.setColour (accent().withAlpha (0.18f));
+        g.fillRect (juce::Rectangle<float> (x0, top, juce::jmax (2.0f, x1 - x0), bottom - top));
+    }
+
+    paintBeatGrid (g);
+
     auto& thumb = deck.getThumbnail();
-    const double length = deck.getLengthSeconds();
     if (thumb.getTotalLength() > 0.0)
     {
         g.setColour (accent().withAlpha (0.85f));
         thumb.drawChannels (g, waveformArea.reduced (2), 0.0, thumb.getTotalLength(), 1.0f);
     }
-    if (length > 0.0)
-    {
-        const float x = (float) waveformArea.getX() + (float) (deck.getPositionSeconds() / length) * (float) waveformArea.getWidth();
-        g.setColour (DarkLookAndFeel::text);
-        g.drawLine (x, (float) waveformArea.getY(), x, (float) waveformArea.getBottom(), 2.0f);
-    }
+
+    // Punto CUE: linea y triangulo naranjas arriba.
+    const float cx = timeToX (deck.getCuePoint());
+    g.setColour (cueColour);
+    g.drawVerticalLine ((int) cx, top, bottom);
+    juce::Path tri;
+    tri.addTriangle (cx - 6.0f, top, cx + 6.0f, top, cx, top + 9.0f);
+    g.fillPath (tri);
+
+    // Cabezal de reproduccion.
+    const float px = timeToX (deck.getPositionSeconds());
+    g.setColour (DarkLookAndFeel::text);
+    g.drawLine (px, top, px, bottom, 2.0f);
 }
 
 void DeckComponent::resized()
 {
     auto area = getLocalBounds().reduced (12);
     auto header = area.removeFromTop (36);
-    bpmLabel.setBounds (header.removeFromRight (180));
+    bpmLabel.setBounds (header.removeFromRight (200));
     titleLabel.setBounds (header);
     timeLabel.setBounds (area.removeFromTop (20));
     area.removeFromTop (8);
@@ -145,10 +235,26 @@ void DeckComponent::resized()
     tempoLabel.setBounds (right.removeFromBottom (20));
     tempoSlider.setBounds (right);
 
-    auto buttons = area.removeFromBottom (44);
-    loadButton.setBounds (buttons.removeFromLeft (120).reduced (0, 4));
-    buttons.removeFromLeft (8);
-    playButton.setBounds (buttons.removeFromLeft (120).reduced (0, 4));
+    // Fila inferior: CUE, Play, SYNC y Cargar a la derecha.
+    auto transport = area.removeFromBottom (44);
+    const int bw = 86;
+    cueButton.setBounds (transport.removeFromLeft (bw).reduced (0, 4));
+    transport.removeFromLeft (6);
+    playButton.setBounds (transport.removeFromLeft (bw).reduced (0, 4));
+    transport.removeFromLeft (6);
+    syncButton.setBounds (transport.removeFromLeft (bw).reduced (0, 4));
+    loadButton.setBounds (transport.removeFromRight (bw).reduced (0, 4).withTrimmedRight (8));
+
+    // Fila de bucles.
+    area.removeFromBottom (4);
+    auto loops = area.removeFromBottom (34);
+    loopLabel.setBounds (loops.removeFromLeft (44));
+    loops.removeFromLeft (6);
+    for (auto& b : loopButtons)
+    {
+        b.setBounds (loops.removeFromLeft (48).reduced (0, 2));
+        loops.removeFromLeft (6);
+    }
 
     area.removeFromBottom (8);
     waveformArea = area.reduced (0, 4).withTrimmedRight (8);

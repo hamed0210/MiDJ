@@ -2,15 +2,30 @@
 
 #include <juce_audio_formats/juce_audio_formats.h>
 
-// Detecta el tempo (BPM) de una cancion.
+// Detecta el tempo (BPM) y la posicion del primer pulso de una cancion.
 // Metodo: envolvente de energia -> ataques (subidas de energia) -> autocorrelacion
-// de los ataques en los retardos que corresponden a 70-180 BPM, con ajuste fino
-// parabolico y plegado de octava al rango 85-170 BPM.
-namespace midj::BpmDetector
+// de los ataques en los retardos que corresponden a 70-180 BPM, ajuste fino con el
+// pico 4 pulsos mas alla y plegado de octava al rango 85-170 BPM.
+// La fase sale de plegar los ataques sobre el periodo encontrado.
+namespace midj
 {
-    // Analiza muestras mono. Devuelve 0 si no encuentra un tempo claro.
+struct TempoAnalysis
+{
+    double bpm = 0.0;          // 0 si no hay un tempo claro
+    double firstBeat = 0.0;    // segundos hasta el primer pulso, en [0, 60/bpm)
+
+    double beatPeriod() const { return bpm > 0.0 ? 60.0 / bpm : 0.0; }
+};
+
+namespace BpmDetector
+{
+    // Analiza muestras mono.
+    TempoAnalysis analyse (const float* mono, int numSamples, double sampleRate);
+
+    // Atajo: solo el BPM.
     double detect (const float* mono, int numSamples, double sampleRate);
 
-    // Lee como mucho maxSeconds de un archivo y analiza esa parte.
-    double detect (juce::AudioFormatReader& reader, double maxSeconds = 120.0);
+    // Mezcla a mono los canales de un bufer y analiza como mucho maxSeconds.
+    TempoAnalysis analyse (const juce::AudioBuffer<float>& audio, double sampleRate, double maxSeconds = 120.0);
+}
 }
