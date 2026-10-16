@@ -24,8 +24,12 @@ public:
     explicit Deck (juce::AudioFormatManager& formatManager);
     ~Deck() override;
 
-    // Carga asincrona: devuelve false si el archivo no se puede abrir.
-    bool load (const juce::File& file);
+    // Carga asincrona: devuelve false si el archivo no se puede abrir. Si se pasa un analisis ya
+    // conocido (de la biblioteca) se usa tal cual y la carga es mucho mas rapida.
+    bool load (const juce::File& file, TempoAnalysis known = {});
+    // Se llama en el hilo de interfaz cuando el deck ha analizado un archivo por su cuenta.
+    std::function<void (const juce::File&, const TempoAnalysis&)> onAnalysed;
+    juce::File getLoadedFile() const { return loadedFile; }
     // Carga sincrona desde memoria (pruebas). Analiza el tempo si analysis.bpm == 0.
     void loadBuffer (juce::AudioBuffer<float> audio, double sampleRate, const juce::String& name,
                      TempoAnalysis analysis = {});
@@ -114,6 +118,7 @@ private:
     juce::SpinLock trackLock;
     std::unique_ptr<Track> track;
     juce::String trackName;
+    juce::File loadedFile;
 
     std::atomic<bool> loading { false }, playing { false }, keyLock { true };
     std::atomic<double> speed { 1.0 }, bpm { 0.0 }, firstBeat { 0.0 }, cuePoint { 0.0 };

@@ -63,23 +63,25 @@ void MixerComponent::paint (juce::Graphics& g)
 
 void MixerComponent::resized()
 {
-    // Tres columnas: mandos del deck A | nombres | mandos del deck B. Debajo, los dos faders.
+    // Cinco columnas: fader A | mandos A | nombres | mandos B | fader B. Los faders van a los
+    // lados en toda la altura (como en una mesa) y cada mando tiene una fila entera.
     auto area = getLocalBounds().reduced (8);
-    const int colWidth = area.getWidth() / 3;
-    auto faders = area.removeFromBottom (juce::jmax (90, area.getHeight() * 30 / 100));
-    const int rowHeight = area.getHeight() / (int) knobNames.size();
+    constexpr int faderWidth = 34;
+    auto faderA = area.removeFromLeft (faderWidth);
+    auto faderB = area.removeFromRight (faderWidth);
+    volumeLabel.setBounds (faderA.removeFromBottom (18).withWidth (faderWidth));
+    faderB.removeFromBottom (18);
+    channels[0].volume.setBounds (faderA);
+    channels[1].volume.setBounds (faderB);
 
+    const int colWidth = juce::jmin (area.getWidth() / 3, area.getHeight() / (int) knobNames.size() + 8);
+    const int rowHeight = area.getHeight() / (int) knobNames.size();
     for (size_t i = 0; i < knobNames.size(); ++i)
     {
         auto row = area.removeFromTop (rowHeight);
-        channels[0].knobs[i].setBounds (row.removeFromLeft (colWidth).reduced (4));
-        channels[1].knobs[i].setBounds (row.removeFromRight (colWidth).reduced (4));
+        channels[0].knobs[i].setBounds (row.removeFromLeft (colWidth).reduced (2));
+        channels[1].knobs[i].setBounds (row.removeFromRight (colWidth).reduced (2));
         rowLabels[i].setBounds (row);
     }
-
-    faders.removeFromTop (6);
-    channels[0].volume.setBounds (faders.removeFromLeft (colWidth));
-    channels[1].volume.setBounds (faders.removeFromRight (colWidth));
-    volumeLabel.setBounds (faders.withSizeKeepingCentre (faders.getWidth(), 20));
 }
 }

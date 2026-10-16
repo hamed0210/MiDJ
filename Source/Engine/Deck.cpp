@@ -33,7 +33,7 @@ bool Deck::hasTrack() const
     return lengthSeconds.load() > 0.0;
 }
 
-bool Deck::load (const juce::File& file)
+bool Deck::load (const juce::File& file, TempoAnalysis known)
 {
     std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
     if (reader == nullptr)
@@ -45,7 +45,7 @@ bool Deck::load (const juce::File& file)
     sendChangeMessage();
 
     const int generation = ++loadGeneration;
-    loaderPool.addJob ([this, file, generation, flag = alive, r = reader.release()]
+    loaderPool.addJob ([this, file, generation, known, flag = alive, r = reader.release()]
     {
         std::unique_ptr<juce::AudioFormatReader> rd (r);
         auto newTrack = std::make_unique<Track>();
@@ -54,14 +54,20 @@ bool Deck::load (const juce::File& file)
         newTrack->audio.setSize (2, length);
         // Mono se duplica en los dos canales; mas de dos canales: solo los dos primeros.
         rd->read (&newTrack->audio, 0, length, 0, true, true);
-        const auto analysis = BpmDetector::analyse (newTrack->audio, newTrack->sampleRate);
+        const bool needsAnalysis = known.bpm <= 0.0;
+        const auto analysis = needsAnalysis ? BpmDetector::analyse (newTrack->audio, newTrack->sampleRate) : known;
 
         auto* raw = newTrack.release();
-        juce::MessageManager::callAsync ([this, raw, file, analysis, generation, flag]
+        juce::MessageManager::callAsync ([this, raw, file, analysis, needsAnalysis, generation, flag]
         {
             std::unique_ptr<Track> t (raw);
             if (flag->load() && generation == loadGeneration.load())   // ignora cargas viejas
+            {
+                loadedFile = file;
                 install (std::move (t), file.getFileNameWithoutExtension(), analysis);
+                if (needsAnalysis && onAnalysed)
+                    onAnalysed (file, analysis);
+            }
         });
     });
     return true;

@@ -1,5 +1,6 @@
 #include "UI/DeckComponent.h"
 #include "UI/DarkLookAndFeel.h"
+#include "UI/LibraryBrowser.h"
 
 #include <cmath>
 
@@ -111,10 +112,40 @@ void DeckComponent::chooseFile()
                           [this] (const juce::FileChooser& fc)
                           {
                               const auto file = fc.getResult();
-                              if (file.existsAsFile() && ! deck.load (file))
-                                  juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
-                                                                          "MiDJ", "No se pudo abrir el archivo.");
+                              if (file.existsAsFile())
+                                  loadFile (file);
                           });
+}
+
+void DeckComponent::loadFile (const juce::File& file)
+{
+    if (onLoadFile)
+        onLoadFile (file);
+    else if (! deck.load (file))
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "MiDJ", "No se pudo abrir el archivo.");
+}
+
+bool DeckComponent::isInterestedInDragSource (const SourceDetails& details)
+{
+    return details.description.toString().startsWith (LibraryBrowser::dragPrefix);
+}
+
+void DeckComponent::itemDropped (const SourceDetails& details)
+{
+    setDragHighlight (false);
+    loadFile (juce::File (details.description.toString().fromFirstOccurrenceOf (LibraryBrowser::dragPrefix, false, false)));
+}
+
+bool DeckComponent::isInterestedInFileDrag (const juce::StringArray& files)
+{
+    return files.size() == 1 && Library::isAudioFile (juce::File (files[0]));
+}
+
+void DeckComponent::filesDropped (const juce::StringArray& files, int, int)
+{
+    setDragHighlight (false);
+    if (! files.isEmpty())
+        loadFile (juce::File (files[0]));
 }
 
 void DeckComponent::updateLabels()
@@ -191,6 +222,11 @@ void DeckComponent::paint (juce::Graphics& g)
 {
     g.setColour (DarkLookAndFeel::panel);
     g.fillRoundedRectangle (getLocalBounds().toFloat(), 8.0f);
+    if (dragHighlight)   // se esta arrastrando una cancion encima: marco del color del deck
+    {
+        g.setColour (accent());
+        g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (1.5f), 8.0f, 3.0f);
+    }
 
     g.setColour (DarkLookAndFeel::background);
     g.fillRect (waveformArea);

@@ -29,18 +29,29 @@ if(MSVC)
     target_compile_options(rubberband PRIVATE /W0 /bigobj /arch:AVX /fp:fast $<$<CONFIG:Debug>:/O2 /Ob2>)
 endif()
 
+# SQLite (biblioteca de canciones). Dominio publico, un solo archivo C.
+set(SQLITE_DIR "D:/Tools/sqlite" CACHE PATH "Carpeta de SQLite (amalgamation)")
+add_library(sqlite3 STATIC ${SQLITE_DIR}/sqlite3.c)
+target_include_directories(sqlite3 SYSTEM PUBLIC ${SQLITE_DIR})
+target_compile_definitions(sqlite3 PRIVATE SQLITE_THREADSAFE=1 SQLITE_DQS=0 SQLITE_OMIT_LOAD_EXTENSION SQLITE_DEFAULT_WAL_SYNCHRONOUS=1)
+if(MSVC)
+    target_compile_options(sqlite3 PRIVATE /W0)
+endif()
+
 # Motor de audio: independiente de la interfaz para poder probarlo solo
 add_library(MiDJEngine STATIC
     Source/Engine/BpmDetector.cpp
     Source/Engine/ChannelStrip.cpp
     Source/Engine/Deck.cpp
     Source/Engine/Mixer.cpp
-    Source/Engine/TimeStretcher.cpp)
+    Source/Engine/TimeStretcher.cpp
+    Source/Library/Library.cpp
+    Source/Library/TagReader.cpp)
 target_include_directories(MiDJEngine PUBLIC Source)
 # Los modulos JUCE se compilan una sola vez aqui (PRIVATE) y se exportan sus
 # cabeceras y definiciones a la app y a las pruebas (patron recomendado por JUCE).
 target_link_libraries(MiDJEngine
-    PRIVATE juce::juce_audio_utils juce::juce_audio_formats juce::juce_dsp rubberband
+    PRIVATE juce::juce_audio_utils juce::juce_audio_formats juce::juce_dsp rubberband sqlite3
     PUBLIC  juce::juce_recommended_config_flags juce::juce_recommended_lto_flags
             juce::juce_recommended_warning_flags)
 target_compile_definitions(MiDJEngine PUBLIC
@@ -60,6 +71,7 @@ target_sources(MiDJ PRIVATE
     Source/MainComponent.cpp
     Source/UI/DeckComponent.cpp
     Source/UI/MixerComponent.cpp
+    Source/UI/LibraryBrowser.cpp
     Source/UI/DarkLookAndFeel.cpp)
 target_link_libraries(MiDJ PRIVATE MiDJEngine)
 

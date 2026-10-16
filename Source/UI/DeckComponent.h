@@ -11,6 +11,8 @@ namespace midj
 // Panel de un deck: titulo, BPM, tiempo, forma de onda con rejilla de pulsos,
 // botones CUE / Play / SYNC, bucles de 1-2-4-8 pulsos, cargar, fader de tempo y KEY.
 class DeckComponent : public juce::Component,
+                      public juce::DragAndDropTarget,
+                      public juce::FileDragAndDropTarget,
                       private juce::ChangeListener,
                       private juce::Timer
 {
@@ -23,10 +25,25 @@ public:
     void resized() override;
     void mouseDown (const juce::MouseEvent& e) override;   // clic en la forma de onda = saltar
 
+    // Cargar un archivo: lo usan el boton Cargar y el arrastre. Si no se asigna, deck.load().
+    std::function<void (const juce::File&)> onLoadFile;
+
+    // Arrastre desde el navegador de la biblioteca y desde el Explorador de Windows.
+    bool isInterestedInDragSource (const SourceDetails& details) override;
+    void itemDragEnter (const SourceDetails&) override { setDragHighlight (true); }
+    void itemDragExit (const SourceDetails&) override  { setDragHighlight (false); }
+    void itemDropped (const SourceDetails& details) override;
+    bool isInterestedInFileDrag (const juce::StringArray& files) override;
+    void fileDragEnter (const juce::StringArray&, int, int) override { setDragHighlight (true); }
+    void fileDragExit (const juce::StringArray&) override           { setDragHighlight (false); }
+    void filesDropped (const juce::StringArray& files, int, int) override;
+
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void timerCallback() override;
     void chooseFile();
+    void loadFile (const juce::File& file);
+    void setDragHighlight (bool on) { dragHighlight = on; repaint(); }
     void updateLabels();
     void paintBeatGrid (juce::Graphics& g);
     float timeToX (double seconds) const;
@@ -48,6 +65,7 @@ private:
     juce::Label titleLabel, bpmLabel, timeLabel, tempoLabel;
     juce::Rectangle<int> waveformArea;
     std::unique_ptr<juce::FileChooser> chooser;
+    bool dragHighlight = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (DeckComponent)
 };

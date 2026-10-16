@@ -5,6 +5,8 @@
 #include "Engine/ChannelStrip.h"
 #include "Engine/Deck.h"
 #include "Engine/Mixer.h"
+#include "Library/Library.h"
+#include "Library/TagReader.h"
 
 #include <cmath>
 #include <cstdio>
@@ -614,6 +616,201 @@ int stretchFile (const juce::String& path, double speed, const juce::File& outDi
     return 0;
 }
 
+
+// --- Biblioteca (SQLite) -----------------------------------------------------------------
+
+// Escribe un WAV de 'seconds' con bombos a 'bpm'.
+void writeClickWav (const juce::File& file, double bpm, double seconds = 20.0)
+{
+    file.getParentDirectory().createDirectory();
+    file.deleteFile();
+    const auto clicks = clickTrack (bpm, seconds, sr, 0.25);
+    juce::WavAudioFormat wav;
+    std::unique_ptr<juce::AudioFormatWriter> writer (wav.createWriterFor (new juce::FileOutputStream (file), sr, 1, 16, {}, 0));
+    const float* data = clicks.data();
+    writer->writeFromFloatArrays (&data, 1, (int) clicks.size());
+}
+
+void testTagReader()
+{
+    using namespace midj::TagReader;
+
+    // ID3v2.3: titulo en Latin-1 (con o acentuada), artista en UTF-16 con BOM, genero "(17)Rock".
+    juce::MemoryOutputStream frames;
+    auto frame23 = [&frames] (const char* id, const juce::MemoryBlock& body)
+    {
+        frames.write (id, 4);
+        const auto n = (uint32_t) body.getSize();
+        const uint8_t size[4] = { (uint8_t) (n >> 24), (uint8_t) (n >> 16), (uint8_t) (n >> 8), (uint8_t) n };
+        frames.write (size, 4);
+        frames.writeShort (0);
+        frames.write (body.getData(), body.getSize());
+    };
+    const uint8_t title[] = { 0, 'C', 'a', 'n', 'c', 'i', 0xf3, 'n' };
+    const uint8_t artist[] = { 1, 0xff, 0xfe, 0xd1, 0, 'a', 0, 'n', 0, 'd', 0, 0xfa, 0, 0, 0 };   // "Ñandú"
+    const uint8_t genre[] = { 0, '(', '1', '7', ')', 'R', 'o', 'c', 'k' };
+    const uint8_t bpmText[] = { 0, '1', '2', '8' };
+    frame23 ("TIT2", juce::MemoryBlock (title, sizeof (title)));
+    frame23 ("TPE1", juce::MemoryBlock (artist, sizeof (artist)));
+    frame23 ("TCON", juce::MemoryBlock (genre, sizeof (genre)));
+    frame23 ("TBPM", juce::MemoryBlock (bpmText, sizeof (bpmText)));
+    juce::MemoryOutputStream tag;
+    const auto n = (uint32_t) frames.getDataSize();
+    const uint8_t header[10] = { 'I', 'D', '3', 3, 0, 0, (uint8_t) ((n >> 21) & 0x7f), (uint8_t) ((n >> 14) & 0x7f),
+                                 (uint8_t) ((n >> 7) & 0x7f), (uint8_t) (n & 0x7f) };
+    tag.write (header, 10);
+    tag.write (frames.getData(), frames.getDataSize());
+    const auto t23 = parseId3v2 (tag.getData(), tag.getDataSize());
+    check (t23.title == juce::String (juce::CharPointer_UTF8 ("Canci\xc3\xb3n")), "ID3v2.3: titulo Latin-1", t23.title.length(), 7);
+    check (t23.artist == juce::String (juce::CharPointer_UTF8 ("\xc3\x91" "and\xc3\xba")), "ID3v2.3: artista UTF-16", t23.artist.length(), 5);
+    check (t23.genre == "Rock", "ID3v2.3: genero '(17)Rock' -> Rock", t23.genre.length(), 4);
+    check (t23.bpm == 128.0, "ID3v2.3: BPM de la etiqueta", t23.bpm, 128.0);
+
+    // ID3v2.4: tamanos "syncsafe" tambien en los marcos y texto UTF-8.
+    const uint8_t v24[] = { 'I', 'D', '3', 4, 0, 0, 0, 0, 0, 19,
+                            'T', 'I', 'T', '2', 0, 0, 0, 9, 0, 0, 3, 'B', 'a', 'i', 'l', 0xc3, 0xa9, 'm', 'o' };
+    const auto t24 = parseId3v2 (v24, sizeof (v24));
+    check (t24.title == juce::String (juce::CharPointer_UTF8 ("Bail\xc3\xa9mo")), "ID3v2.4: titulo UTF-8", t24.title.length(), 7);
+
+    // ID3v2.2: identificadores de 3 letras.
+    const uint8_t v22[] = { 'I', 'D', '3', 2, 0, 0, 0, 0, 0, 10, 'T', 'P', '1', 0, 0, 4, 0, 'D', 'J', 'X' };
+    check (parseId3v2 (v22, sizeof (v22)).artist == "DJX", "ID3v2.2: artista", 0.0, 0.0);
+
+    // ID3v1 (128 bytes al final del archivo).
+    uint8_t v1[128] = { 'T', 'A', 'G' };
+    std::memcpy (v1 + 3, "Viejo Tema", 10);
+    std::memcpy (v1 + 33, "Grupo Antiguo", 13);
+    const auto t1 = parseId3v1 (v1, sizeof (v1));
+    check (t1.title == "Viejo Tema" && t1.artist == "Grupo Antiguo", "ID3v1: titulo y artista", 0.0, 0.0);
+
+    // Sin etiquetas: "Artista - Titulo" en el nombre; si no hay guion, todo es titulo.
+    midj::TrackTags fromName;
+    fillFromFileName (fromName, "Luister La Voz - La Maria - Remix");
+    check (fromName.artist == "Luister La Voz" && fromName.title == "La Maria - Remix", "nombre: 'Artista - Titulo'", 0.0, 0.0);
+    midj::TrackTags onlyTitle;
+    fillFromFileName (onlyTitle, "pista suelta");
+    check (onlyTitle.artist.isEmpty() && onlyTitle.title == "pista suelta", "nombre sin guion = titulo", 0.0, 0.0);
+}
+
+void testLibrary()
+{
+    using midj::Library;
+    check (Library::normalise (juce::String (juce::CharPointer_UTF8 ("Mar\xc3\xad" "a \xc3\x91" "and\xc3\xba \xc3\x89XITO")))
+               == "maria nandu exito", "normalizar: minusculas y sin acentos", 0.0, 0.0);
+
+    const auto root = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("MiDJTestsLibrary");
+    root.deleteRecursively();
+    const auto music = root.getChildFile ("Musica");
+    const auto maria = music.getChildFile (juce::String (juce::CharPointer_UTF8 ("Luister La Voz - La Mar\xc3\xad" "a.wav")));
+    const auto slow = music.getChildFile ("Otro Artista - Cancion Lenta.wav");
+    const auto loose = music.getChildFile ("solo titulo.wav");
+    const auto deep = music.getChildFile ("sub").getChildFile ("Deep - Uno.wav");
+    writeClickWav (maria, 120.0);
+    writeClickWav (slow, 100.0);
+    writeClickWav (loose, 110.0);
+    writeClickWav (deep, 128.0);
+    music.getChildFile ("notas.txt").replaceWithText ("no es audio");
+
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    const auto dbFile = root.getChildFile ("library.db");
+    {
+        Library library (formats);
+        check (library.open (dbFile), "biblioteca: crear la base de datos", 1.0, 1.0);
+        library.addFolder (music);
+        library.scanNow();
+        check (library.getNumTracks() == 4, "escaneo: 4 canciones (subcarpetas si, .txt no)", library.getNumTracks(), 4);
+
+        const auto t = library.findByFile (maria);
+        check (t.has_value() && t->artist == "Luister La Voz"
+                   && t->title == juce::String (juce::CharPointer_UTF8 ("La Mar\xc3\xad" "a")),
+               "escaneo: artista y titulo del nombre", 0.0, 0.0);
+        check (t.has_value() && std::abs (t->duration - 20.0) < 0.01, "escaneo: duracion", t ? t->duration : 0.0, 20.0);
+        check (t.has_value() && ! t->analysed, "escaneo: pendiente de analizar", 0.0, 0.0);
+
+        check (library.search ("maria").size() == 1, "buscar 'maria' encuentra 'Maria' con acento",
+               (double) library.search ("maria").size(), 1.0);
+        check (library.search (juce::String (juce::CharPointer_UTF8 ("LUISTER mar\xc3\xad" "a"))).size() == 1,
+               "buscar varias palabras, mayusculas", (double) library.search ("LUISTER maria").size(), 1.0);
+        check (library.search ("cancion artista").size() == 1, "buscar palabras en distinto orden",
+               (double) library.search ("cancion artista").size(), 1.0);
+        check (library.search ("zzz").empty(), "buscar algo que no esta: nada", (double) library.search ("zzz").size(), 0.0);
+        check (library.search ("").size() == 4, "busqueda vacia: todo", (double) library.search ("").size(), 4.0);
+        check (library.search ("", music.getChildFile ("sub")).size() == 1, "filtrar por carpeta",
+               (double) library.search ("", music.getChildFile ("sub")).size(), 1.0);
+        check (library.search ("100%").empty() && library.search ("_").empty(), "buscar % y _ no son comodines", 0.0, 0.0);
+
+        check (library.analysePendingNow() == 4, "analisis: 4 pendientes", 4.0, 4.0);
+        const auto bpmOf = [&] (const juce::File& f) { auto x = library.findByFile (f); return x ? x->bpm : 0.0; };
+        check (std::abs (bpmOf (maria) - 120.0) < 0.05 && std::abs (bpmOf (slow) - 100.0) < 0.05
+                   && std::abs (bpmOf (deep) - 128.0) < 0.05,
+               "analisis: 120, 100 y 128 BPM guardados", bpmOf (deep), 128.0);
+
+        // El deck y la biblioteca deben dar exactamente el mismo resultado.
+        {
+            double rate = 0.0;
+            auto audio = readFile (formats, maria, rate);
+            const auto deckAnalysis = midj::BpmDetector::analyse (*audio, rate);
+            const auto stored = library.findByFile (maria);
+            check (stored && stored->bpm == deckAnalysis.bpm && stored->firstBeat == deckAnalysis.firstBeat,
+                   "analisis: identico al del deck", stored ? stored->bpm : 0.0, deckAnalysis.bpm);
+        }
+
+        const auto byBpm = library.search ("", {}, Library::SortColumn::bpm, false);
+        check (byBpm.size() == 4 && byBpm.front().bpm > byBpm.back().bpm, "ordenar por BPM descendente",
+               byBpm.empty() ? 0.0 : byBpm.front().bpm, 128.0);
+
+        // Volver a escanear sin cambios no repite nada.
+        library.scanNow();
+        check (library.analysePendingNow() == 0, "re-escanear sin cambios: nada que analizar", 0.0, 0.0);
+
+        // Un archivo cambiado se vuelve a analizar; uno borrado desaparece.
+        writeClickWav (slow, 90.0, 25.0);
+        slow.setLastModificationTime (juce::Time::getCurrentTime() + juce::RelativeTime::minutes (1));
+        loose.deleteFile();
+        library.scanNow();
+        check (library.getNumTracks() == 3, "archivo borrado: sale de la biblioteca", library.getNumTracks(), 3);
+        const int reanalysed = library.analysePendingNow();
+        check (reanalysed == 1 && std::abs (bpmOf (slow) - 90.0) < 0.05,
+               "archivo cambiado: se re-analiza (90 BPM)", bpmOf (slow), 90.0);
+
+        // Analisis guardado desde fuera (lo que hace un deck al cargar un archivo nuevo).
+        library.setAnalysis (deep, { 127.5, 0.1 });
+        check (bpmOf (deep) == 127.5, "guardar analisis de un deck", bpmOf (deep), 127.5);
+    }
+    {
+        // Lo guardado sigue ahi al volver a abrir.
+        Library library (formats);
+        library.open (dbFile);
+        check (library.getNumTracks() == 3 && library.getFolders().size() == 1, "reabrir: canciones y carpetas guardadas",
+               library.getNumTracks(), 3);
+        const auto t = library.findByFile (maria);
+        check (t && t->analysed && std::abs (t->bpm - 120.0) < 0.05, "reabrir: el BPM no se pierde", t ? t->bpm : 0.0, 120.0);
+        library.removeFolder (music);
+        check (library.getNumTracks() == 0 && library.getFolders().isEmpty(), "quitar carpeta: quita sus canciones",
+               library.getNumTracks(), 0);
+    }
+    {
+        // El hilo de fondo escanea y analiza solo.
+        const auto dbFile2 = root.getChildFile ("library2.db");
+        Library library (formats);
+        library.open (dbFile2);
+        library.addFolder (music);
+        library.startBackgroundWork();
+        const auto deadline = juce::Time::getMillisecondCounter() + 60000;
+        auto allDone = [&]
+        {
+            const auto all = library.search ("");
+            return all.size() == 3 && std::all_of (all.begin(), all.end(), [] (const midj::TrackInfo& x) { return x.analysed; });
+        };
+        while (! allDone() && juce::Time::getMillisecondCounter() < deadline)
+            juce::Thread::sleep (50);
+        check (allDone() && ! library.isBusy(), "hilo de fondo: escanea y analiza solo", (double) library.search ("").size(), 3.0);
+        check (library.getStatusText() == "3 canciones", "estado al terminar", 0.0, 0.0);
+    }
+    root.deleteRecursively();
+}
+
 }
 
 #if JUCE_WINDOWS
@@ -683,6 +880,10 @@ int main (int argc, char* argv[])
     std::printf ("== Canal: ganancia, EQ de 3 bandas, filtro y volumen ==\n");
     testChannelStrip();
     testMixerChannels();
+
+    std::printf ("== Biblioteca: etiquetas, SQLite, busqueda y analisis ==\n");
+    testTagReader();
+    testLibrary();
 
     std::printf ("== Keylock: tempo sin cambiar el tono ==\n");
     testKeyLock();

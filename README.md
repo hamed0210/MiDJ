@@ -11,6 +11,7 @@ Primer objetivo: dos decks que reproducen MP3/WAV/FLAC/Ogg, BPM detectado, contr
 | CMake | 3.22 o superior | `D:\Tools\cmake\bin` |
 | JUCE | 8.0.4 | `D:\Tools\JUCE` (otra ruta: `-DJUCE_DIR=...`) |
 | Rubber Band | 4.0.0 | `D:\Tools\rubberband` (otra ruta: `-DRUBBERBAND_DIR=...`) |
+| SQLite (amalgamation) | 3.46.1 | `D:\Tools\sqlite` (otra ruta: `-DSQLITE_DIR=...`) |
 | Git | cualquiera | ya instalado |
 
 ## Compilar y ejecutar
@@ -38,9 +39,13 @@ Source/
     ChannelStrip.*      canal de un deck: ganancia, EQ de 3 bandas, filtro, volumen
     BpmDetector.*       detección de tempo y del primer pulso
     TimeStretcher.*     keylock: cambio de tempo sin cambio de tono (Rubber Band)
+  Library/              biblioteca de canciones
+    Library.*           base SQLite, carpetas, escaneo, analisis de fondo y busqueda
+    TagReader.*         etiquetas ID3 (v1, v2.2-2.4) y 'Artista - Titulo' del nombre
   UI/                   interfaz
     DeckComponent.*     panel de un deck: forma de onda, botones, tempo
     MixerComponent.*    columna central del mezclador: mandos y faders de volumen
+    LibraryBrowser.*    navegador: carpetas, buscador y lista (arrastrar o doble clic)
     DarkLookAndFeel.*   estilo visual oscuro
 Tests/
   TestMain.cpp          pruebas automáticas del motor (ctest) y herramientas:
@@ -54,6 +59,7 @@ Tests/
 
 Rubber Band es GPL. Para uso propio no hay problema; para vender MiDJ hace falta su licencia
 comercial o cambiarla por otra librería (por ejemplo SoundTouch, LGPL). Solo `TimeStretcher.*` la usa.
+SQLite es de dominio público.
 
 ## Reglas del motor de audio
 
@@ -67,3 +73,4 @@ comercial o cambiarla por otra librería (por ejemplo SoundTouch, LGPL). Solo `T
 - SYNC, CUE y bucles de 1-2-4-8 pulsos.
 - Mezclador por deck: ganancia (hasta +12 dB), EQ de 3 bandas con kill (cruces en 200 y 6500 Hz), filtro de un mando (paso bajo / paso alto con zona muerta) y fader de volumen.
 - Keylock (botón KEY, activado por defecto): cambio de tempo sin cambiar el tono con Rubber Band R2. Detector de BPM más fiable con música real: ataques de mezcla y graves en escala logarítmica y tempo elegido con un peine de 1-4 pulsos (corrige el 4/3 del reggaeton).
+- Biblioteca en SQLite (`%APPDATA%\MiDJ\library.db`) y navegador: carpetas, escaneo y análisis de BPM en segundo plano, búsqueda sin acentos ni mayúsculas, columnas ordenables; cargar arrastrando a un deck (también desde el Explorador) o con doble clic. Las canciones ya analizadas cargan sin volver a analizar.
