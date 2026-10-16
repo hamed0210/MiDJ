@@ -1,6 +1,9 @@
 // Pruebas automaticas del motor. Se ejecutan con: ctest --preset debug
 // Devuelven codigo 0 si todo pasa y 1 si algo falla. No necesitan tarjeta de sonido:
 // el audio se "reproduce" pidiendo bloques al deck directamente.
+#include "Control/ControlSurface.h"
+#include "Control/MidiController.h"
+#include "Control/MidiMapping.h"
 #include "Engine/BpmDetector.h"
 #include "Engine/ChannelStrip.h"
 #include "Engine/Deck.h"
@@ -1103,6 +1106,199 @@ void benchmarkEffects()
     }
 }
 
+
+// --- Controladoras MIDI ------------------------------------------------------------------
+
+void testMidiValues()
+{
+    using B = midj::MidiBinding;
+    check (B::unitFromCC (0) == 0.0 && B::unitFromCC (64) == 0.5 && B::unitFromCC (127) == 1.0,
+           "MIDI: CC 0/64/127 -> 0 / 0,5 exacto / 1", B::unitFromCC (64), 0.5);
+    check (B::unitFromPitchBend (0) == 0.0 && B::unitFromPitchBend (8192) == 0.5 && B::unitFromPitchBend (16383) == 1.0,
+           "MIDI: pitch bend 0/8192/16383 -> 0 / 0,5 / 1", B::unitFromPitchBend (8192), 0.5);
+    check (B::ticksFrom (1, B::Encoding::relativeTwos) == 1 && B::ticksFrom (127, B::Encoding::relativeTwos) == -1
+               && B::ticksFrom (3, B::Encoding::relativeTwos) == 3,
+           "MIDI: encoder en complemento a dos (1 = +1, 127 = -1)", 0.0, 0.0);
+    check (B::ticksFrom (65, B::Encoding::relativeOffset) == 1 && B::ticksFrom (63, B::Encoding::relativeOffset) == -1,
+           "MIDI: encoder desplazado (65 = +1, 63 = -1)", 0.0, 0.0);
+
+    // Mapeo: un control hace una sola accion; se guarda y se lee igual.
+    midj::MidiMapping mapping;
+    midj::MidiBinding play;
+    play.kind = B::Kind::note;
+    play.number = 36;
+    play.action = "deck1.play";
+    mapping.bind (play);
+    auto cue = play;
+    cue.action = "deck1.cue";
+    mapping.bind (cue);   // misma nota: sustituye
+    check (mapping.getAll().size() == 1 && mapping.getAll()[0].action == "deck1.cue", "mapeo: un control, una accion", 0.0, 0.0);
+    midj::MidiBinding jog;
+    jog.channel = 2;
+    jog.number = 20;
+    jog.encoding = B::Encoding::relativeOffset;
+    jog.action = "deck2.jog";
+    mapping.bind (jog);
+    const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("MiDJTestsMidi.xml");
+    mapping.save (file);
+    midj::MidiMapping loaded;
+    loaded.load (file);
+    const auto* back = loaded.find (jog);
+    check (loaded.getAll().size() == 2 && back != nullptr && back->action == "deck2.jog"
+               && back->encoding == B::Encoding::relativeOffset && back->channel == 2,
+           "mapeo: guardar y leer el XML", (double) loaded.getAll().size(), 2.0);
+    file.deleteFile();
+}
+
+void testMidiController()
+{
+    juce::AudioFormatManager formats;
+    midj::Deck a (formats), b (formats);
+    midj::Mixer mixer (a, b);
+    mixer.prepareToPlay (blockSize, sr);
+    a.loadBuffer (toBuffer (clickTrack (120.0, 30.0, sr, 0.25)), sr, "a", { 120.0, 0.25 });
+    b.loadBuffer (toBuffer (clickTrack (128.0, 30.0, sr, 0.25)), sr, "b", { 128.0, 0.25 });
+    midj::ControlSurface surface (a, b, mixer);
+    midj::MidiController midi (surface);
+    midi.setMappingFile (juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("MiDJTestsMidi2.xml"));
+
+    using M = juce::MidiMessage;
+    // Aprender: Play A con la nota 36 del canal 1.
+    midi.startLearning ("deck1.play");
+    midi.handleMessage (M::noteOn (1, 36, (juce::uint8) 127));
+    check (midi.getLearningAction().isEmpty() && midi.describeBindings ("deck1.play") == "Nota 36 (canal 1)",
+           "aprender: Play A = nota 36", 0.0, 0.0);
+    check (! a.isPlaying(), "aprender: el mensaje que se aprende no ejecuta la accion", 0.0, 0.0);
+    midi.handleMessage (M::noteOn (1, 36, (juce::uint8) 127));
+    check (a.isPlaying(), "nota 36: Play A", 1.0, 1.0);
+    midi.handleMessage (M::noteOff (1, 36));
+    check (a.isPlaying(), "soltar la nota no cambia nada", 1.0, 1.0);
+    midi.handleMessage (M::noteOn (1, 36, (juce::uint8) 100));
+    check (! a.isPlaying(), "nota 36 otra vez: pausa", 0.0, 0.0);
+
+    // Volumen B con el CC 7 del canal 2.
+    midi.startLearning ("deck2.volume");
+    midi.handleMessage (M::controllerEvent (2, 7, 10));
+    midi.handleMessage (M::controllerEvent (2, 7, 64));
+    check (mixer.getStrip (1).getVolume() == 0.5f, "CC 7 = 64: volumen B al 50 %", mixer.getStrip (1).getVolume(), 0.5);
+    midi.handleMessage (M::controllerEvent (2, 7, 127));
+    check (mixer.getStrip (1).getVolume() == 1.0f, "CC 7 = 127: volumen B al maximo", mixer.getStrip (1).getVolume(), 1.0);
+    midi.handleMessage (M::controllerEvent (1, 7, 0));
+    check (mixer.getStrip (1).getVolume() == 1.0f, "el mismo CC en otro canal no hace nada", mixer.getStrip (1).getVolume(), 1.0);
+
+    // Un fader no aprende de una nota; si de un pitch bend (faders de alta resolucion).
+    midi.startLearning ("crossfader");
+    midi.handleMessage (M::noteOn (1, 50, (juce::uint8) 127));
+    check (midi.getLearningAction() == "crossfader", "aprender un fader ignora las notas", 0.0, 0.0);
+    midi.handleMessage (M::pitchWheel (3, 8192));
+    midi.handleMessage (M::pitchWheel (3, 16383));
+    check (mixer.getCrossfader() == 1.0f, "pitch bend: crossfader a la derecha", mixer.getCrossfader(), 1.0);
+    midi.handleMessage (M::pitchWheel (3, 8192));
+    check (mixer.getCrossfader() == 0.5f, "pitch bend centro: crossfader al centro", mixer.getCrossfader(), 0.5);
+
+    // Tempo A: +-16 %.
+    midi.startLearning ("deck1.tempo");
+    midi.handleMessage (M::controllerEvent (1, 1, 64));
+    check (std::abs (a.getSpeed() - 1.0) < 1e-9, "tempo CC 64: velocidad normal", a.getSpeed(), 1.0);
+    midi.handleMessage (M::controllerEvent (1, 1, 127));
+    check (std::abs (a.getSpeed() - 1.16) < 1e-9, "tempo CC 127: +16 %", a.getSpeed(), 1.16);
+    midi.handleMessage (M::controllerEvent (1, 1, 0));
+    check (std::abs (a.getSpeed() - 0.84) < 1e-9, "tempo CC 0: -16 %", a.getSpeed(), 0.84);
+    a.setSpeed (1.0);
+
+    // Jog A, encoder en complemento a dos: parado, cada paso mueve 10 ms.
+    midi.startLearning ("deck1.jog");
+    midi.handleMessage (M::controllerEvent (1, 20, 1));
+    check (midi.getMappingCopy().bindingsFor ("deck1.jog")[0].encoding == midj::MidiBinding::Encoding::relativeTwos,
+           "aprender jog: detecta complemento a dos", 0.0, 0.0);
+    a.setPositionSeconds (5.0);
+    for (int i = 0; i < 10; ++i)
+        midi.handleMessage (M::controllerEvent (1, 20, 1));
+    check (std::abs (a.getPositionSeconds() - 5.1) < 1e-6, "jog parado: 10 pasos = +0,1 s", a.getPositionSeconds(), 5.1);
+    midi.handleMessage (M::controllerEvent (1, 20, 127));
+    check (std::abs (a.getPositionSeconds() - 5.09) < 1e-6, "jog parado: paso atras", a.getPositionSeconds(), 5.09);
+
+    // Sonando, el jog empuja el tempo un momento y el empuje se desvanece.
+    a.play();
+    render (a, 0.1);
+    const double before = a.getPositionSeconds();
+    for (int i = 0; i < 10; ++i)
+        midi.handleMessage (M::controllerEvent (1, 20, 1));
+    check (std::abs (a.getJogBend() - 0.04) < 1e-9, "jog sonando: empuje de +4 %", a.getJogBend(), 0.04);
+    render (a, 1.0);
+    // render() pide bloques enteros: lo que de verdad sono es un poco mas de 1 s.
+    const double rendered = std::ceil (sr / blockSize) * blockSize / sr;
+    const double extra = a.getPositionSeconds() - before - rendered;
+    check (a.getJogBend() < 1e-4 && extra > 0.003 && extra < 0.005, "jog sonando: adelanta 4 ms (0,04 x 0,1 s) y se desvanece",
+           extra * 1000.0, 4.0);
+    a.pause();
+
+    // Navegador con encoder desplazado (65 = +1).
+    midi.startLearning ("browser.scroll");
+    midi.handleMessage (M::controllerEvent (1, 21, 65));
+    check (midi.getMappingCopy().bindingsFor ("browser.scroll")[0].encoding == midj::MidiBinding::Encoding::relativeOffset,
+           "aprender encoder: detecta el desplazado (65/63)", 0.0, 0.0);
+
+    // Botones por CC: 127 al pulsar, 0 al soltar (el 0 no hace nada).
+    midi.startLearning ("deck2.loop4");
+    midi.handleMessage (M::controllerEvent (1, 50, 0));     // un 0 no sirve para aprender un boton
+    midi.handleMessage (M::controllerEvent (1, 50, 127));
+    b.setPositionSeconds (3.0);
+    midi.handleMessage (M::controllerEvent (1, 50, 127));
+    midi.handleMessage (M::controllerEvent (1, 50, 0));
+    check (b.getLoopBeats() == 4, "boton por CC: loop de 4 en B (soltar no lo quita)", b.getLoopBeats(), 4);
+    midi.handleMessage (M::controllerEvent (1, 50, 127));
+    check (b.getLoopBeats() == 0, "boton por CC otra vez: quita el loop", b.getLoopBeats(), 0);
+
+    // Efectos: encender FX2 de A y su mando.
+    midi.startLearning ("deck1.fx2");
+    midi.handleMessage (M::noteOn (1, 40, (juce::uint8) 127));
+    midi.handleMessage (M::noteOn (1, 40, (juce::uint8) 127));
+    check (mixer.getEffects (0).isOn (1), "nota 40: enciende FX2 de A", 1.0, 1.0);
+    midi.startLearning ("deck1.fx2_amount");
+    midi.handleMessage (M::controllerEvent (1, 30, 5));
+    midi.handleMessage (M::controllerEvent (1, 30, 127));
+    check (mixer.getEffects (0).getAmount (1) == 1.0f, "CC 30: mando de FX2 de A al maximo", mixer.getEffects (0).getAmount (1), 1.0);
+
+    // EQ: graves de A al minimo (kill) y de vuelta al centro.
+    midi.startLearning ("deck1.low");
+    midi.handleMessage (M::controllerEvent (1, 31, 0));
+    midi.handleMessage (M::controllerEvent (1, 31, 0));
+    check (mixer.getStrip (0).getLow() == 0.0f, "CC 31 = 0: graves de A a cero", mixer.getStrip (0).getLow(), 0.0);
+    midi.handleMessage (M::controllerEvent (1, 31, 64));
+    check (mixer.getStrip (0).getLow() == 0.5f, "CC 31 = 64: graves de A al centro", mixer.getStrip (0).getLow(), 0.5);
+
+    // Quitar una asignacion; un mensaje sin asignar no hace nada pero se muestra.
+    midi.removeAction ("deck1.play");
+    midi.handleMessage (M::noteOn (1, 36, (juce::uint8) 127));
+    check (! a.isPlaying() && midi.getLastMessageText() == "Nota 36 (canal 1) = 127", "quitar asignacion: la nota ya no hace nada",
+           0.0, 0.0);
+
+    // Se lee un mapeo guardado y funciona igual.
+    const auto saved = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("MiDJTestsMidi3.xml");
+    midi.getMappingCopy().save (saved);
+    midj::MidiController other (surface);
+    other.loadMapping (saved);
+    other.handleMessage (M::controllerEvent (2, 7, 64));
+    check (mixer.getStrip (1).getVolume() == 0.5f, "mapeo leido de disco: CC 7 sigue moviendo el volumen B",
+           mixer.getStrip (1).getVolume(), 0.5);
+    saved.deleteFile();
+
+    // Muchos mensajes desde otro hilo mientras suena el audio: sin bloqueos ni fallos.
+    a.play();
+    juce::WaitableEvent finished;
+    juce::Thread::launch ([&midi, &finished]
+    {
+        for (int i = 0; i < 20000; ++i)
+            midi.handleMessage (M::controllerEvent (1, 31, i % 128));
+        finished.signal();
+    });
+    render (a, 2.0);
+    finished.wait (10000);
+    a.pause();
+    check (true, "MIDI desde otro hilo con el audio sonando", 0.0, 0.0);
+}
+
 }
 
 #if JUCE_WINDOWS
@@ -1173,6 +1369,10 @@ int main (int argc, char* argv[])
     std::printf ("== Canal: ganancia, EQ de 3 bandas, filtro y volumen ==\n");
     testChannelStrip();
     testMixerChannels();
+
+    std::printf ("== Controladoras MIDI ==\n");
+    testMidiValues();
+    testMidiController();
 
     std::printf ("== Efectos ==\n");
     testEffectsCommon();

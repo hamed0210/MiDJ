@@ -1,11 +1,14 @@
 #pragma once
 
+#include "Control/ControlSurface.h"
+#include "Control/MidiController.h"
 #include "Engine/Deck.h"
 #include "Engine/Mixer.h"
 #include "Library/Library.h"
 #include "UI/DarkLookAndFeel.h"
 #include "UI/DeckComponent.h"
 #include "UI/LibraryBrowser.h"
+#include "UI/MidiLearnOverlay.h"
 #include "UI/MixerComponent.h"
 
 namespace midj
@@ -13,7 +16,8 @@ namespace midj
 // Ventana principal: dos decks con el mezclador en el centro, crossfader, navegador de la
 // biblioteca abajo y el motor de audio.
 class MainComponent : public juce::AudioAppComponent,
-                      public juce::DragAndDropContainer
+                      public juce::DragAndDropContainer,
+                      private juce::Timer
 {
 public:
     MainComponent();
@@ -31,6 +35,10 @@ private:
     void loadIntoDeck (Deck& deck, const juce::File& file);
     // Doble clic en el navegador: al primer deck que no este sonando, empezando por A.
     void loadIntoFreeDeck (const juce::File& file);
+    void toggleMidiLearn();
+    void timerCallback() override;   // el crossfader sigue a la controladora
+    // Modo de prueba sin controladora: --simular-midi archivo (ver README).
+    void startMidiSimulation (const juce::File& script);
 
     DarkLookAndFeel lookAndFeel;
     juce::AudioFormatManager formatManager;
@@ -38,6 +46,8 @@ private:
     Deck deckB { formatManager };
     Mixer mixer { deckA, deckB };
     Library library { formatManager };
+    ControlSurface controlSurface { deckA, deckB, mixer };
+    MidiController midi { controlSurface };
 
     DeckComponent deckViewA { deckA, deckB, mixer.getEffects (0), "A" };
     DeckComponent deckViewB { deckB, deckA, mixer.getEffects (1), "B" };
@@ -46,6 +56,8 @@ private:
     juce::TooltipWindow tooltips { this };
     juce::Slider crossfader;
     juce::Label crossfaderLabel;
+    juce::TextButton midiButton { "MIDI" };
+    MidiLearnOverlay midiOverlay { midi };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
 };

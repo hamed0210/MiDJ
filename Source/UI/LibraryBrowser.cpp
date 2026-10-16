@@ -117,6 +117,23 @@ void LibraryBrowser::refresh()
     statusLabel.setText (library.getStatusText(), juce::dontSendNotification);
 }
 
+void LibraryBrowser::moveSelection (int steps)
+{
+    if (tracks.empty())
+        return;
+    const int current = table.getSelectedRow();
+    const int row = juce::jlimit (0, (int) tracks.size() - 1, current < 0 ? 0 : current + steps);
+    table.selectRow (row);   // tambien desplaza la lista para que se vea
+}
+
+std::optional<TrackInfo> LibraryBrowser::getSelectedTrack() const
+{
+    const int row = table.getSelectedRow();
+    if (row >= 0 && row < (int) tracks.size())
+        return tracks[(size_t) row];
+    return std::nullopt;
+}
+
 void LibraryBrowser::chooseFolder()
 {
     chooser = std::make_unique<juce::FileChooser> ("Elige una carpeta de musica",

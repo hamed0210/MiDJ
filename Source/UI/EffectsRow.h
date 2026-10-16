@@ -2,6 +2,7 @@
 
 #include "Engine/Effects.h"
 #include "UI/DarkLookAndFeel.h"
+#include "UI/MidiLearnOverlay.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -13,14 +14,19 @@ namespace midj
 //  - Clic en el nombre: enciende / apaga el efecto (se ilumina con el color del deck).
 //  - Flecha: elegir otro efecto para esa ranura.
 //  - Mando: intensidad. Doble clic lo devuelve al centro.
-class EffectsRow : public juce::Component
+class EffectsRow : public juce::Component,
+                   private juce::Timer
 {
 public:
     EffectsRow (EffectRack& rack, juce::Colour accent);
 
     void resized() override;
+    // Controles asignables por MIDI: encender cada ranura y su mando. prefix: "deck1."...
+    void addLearnTargets (std::vector<LearnTarget>& out, const juce::String& prefix);
 
 private:
+    void timerCallback() override;   // sigue los cambios que lleguen por MIDI
+
     struct Slot
     {
         juce::TextButton nameButton;

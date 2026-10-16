@@ -1,4 +1,4 @@
-﻿cmake_minimum_required(VERSION 3.22)
+cmake_minimum_required(VERSION 3.22)
 project(MiDJ VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -40,6 +40,10 @@ endif()
 
 # Motor de audio: independiente de la interfaz para poder probarlo solo
 add_library(MiDJEngine STATIC
+    Source/Control/Actions.cpp
+    Source/Control/ControlSurface.cpp
+    Source/Control/MidiController.cpp
+    Source/Control/MidiMapping.cpp
     Source/Engine/BpmDetector.cpp
     Source/Engine/ChannelStrip.cpp
     Source/Engine/Deck.cpp
@@ -74,6 +78,7 @@ target_sources(MiDJ PRIVATE
     Source/UI/EffectsRow.cpp
     Source/UI/MixerComponent.cpp
     Source/UI/LibraryBrowser.cpp
+    Source/UI/MidiLearnOverlay.cpp
     Source/UI/DarkLookAndFeel.cpp)
 target_link_libraries(MiDJ PRIVATE MiDJEngine)
 

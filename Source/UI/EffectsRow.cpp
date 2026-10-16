@@ -35,6 +35,28 @@ EffectsRow::EffectsRow (EffectRack& r, juce::Colour c) : rack (r), accent (c)
             addAndMakeVisible (comp);
         updateSlot (i);
     }
+    startTimerHz (10);
+}
+
+void EffectsRow::addLearnTargets (std::vector<LearnTarget>& out, const juce::String& prefix)
+{
+    for (size_t i = 0; i < slots.size(); ++i)
+    {
+        const auto fx = prefix + "fx" + juce::String ((int) i + 1);
+        out.push_back ({ &slots[i].nameButton, fx });
+        out.push_back ({ &slots[i].knob, fx + "_amount" });
+    }
+}
+
+void EffectsRow::timerCallback()
+{
+    for (int i = 0; i < EffectRack::numSlots; ++i)
+    {
+        updateSlot (i);
+        auto& knob = slots[(size_t) i].knob;
+        if (! knob.isMouseButtonDown())
+            knob.setValue (rack.getAmount (i), juce::dontSendNotification);
+    }
 }
 
 void EffectsRow::updateSlot (int index)

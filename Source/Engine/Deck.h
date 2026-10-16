@@ -49,6 +49,11 @@ public:
     void setSpeed (double ratio);
     double getSpeed() const { return speed.load(); }
 
+    // Jog (rueda o encoder): sonando, empuja el tempo un momento como el borde de un plato
+    // (el empuje se desvanece en ~0,1 s); parado, mueve la posicion 10 ms por paso.
+    void jog (int ticks);
+    double getJogBend() const { return jogBend.load(); }
+
     // Keylock (master tempo): activado por defecto.
     void setKeyLock (bool shouldLock) { keyLock = shouldLock; }
     bool isKeyLocked() const          { return keyLock.load(); }
@@ -127,6 +132,7 @@ private:
     std::atomic<double> loopStart { 0.0 }, loopEnd { 0.0 };
     std::atomic<int> loopBeats { 0 };
     std::atomic<int> loadGeneration { 0 };
+    std::atomic<double> jogBend { 0.0 };   // empuje del jog: velocidad x (1 + jogBend)
     std::shared_ptr<std::atomic<bool>> alive = std::make_shared<std::atomic<bool>> (true);
 
     // Solo del hilo de audio.
@@ -134,6 +140,7 @@ private:
     double feedPosition = 0.0;      // lo que se ha dado al estirador: va por delante
     double outputRate = 44100.0;
     double fileStep = 1.0;          // muestras de archivo por muestra de salida a tempo 1
+    double blockSpeed = 1.0;        // velocidad de este bloque (tempo y empuje del jog)
     bool loopActive = false;        // copia del bucle para el bloque en curso
     double loopStartSample = 0.0, loopEndSample = 0.0;
     const Track* current = nullptr; // pista del bloque en curso (bajo trackLock)

@@ -26,6 +26,9 @@ public:
     void resized() override;
     void mouseDown (const juce::MouseEvent& e) override;   // clic en la forma de onda = saltar
 
+    // Controles asignables por MIDI. prefix: "deck1." o "deck2.".
+    void addLearnTargets (std::vector<LearnTarget>& out, const juce::String& prefix);
+
     // Cargar un archivo: lo usan el boton Cargar y el arrastre. Si no se asigna, deck.load().
     std::function<void (const juce::File&)> onLoadFile;
 

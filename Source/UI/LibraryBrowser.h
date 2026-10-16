@@ -26,6 +26,11 @@ public:
     void paint (juce::Graphics& g) override;
     void resized() override;
 
+    // Controladora: mover la seleccion y saber cual es (para cargarla en un deck).
+    void moveSelection (int steps);
+    std::optional<TrackInfo> getSelectedTrack() const;
+    juce::Component& getTrackList() { return table; }
+
     // Para pruebas y para la interfaz: las canciones que se ven ahora.
     const std::vector<TrackInfo>& getVisibleTracks() const { return tracks; }
 

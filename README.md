@@ -40,6 +40,11 @@ Source/
     BpmDetector.*       detección de tempo y del primer pulso
     TimeStretcher.*     keylock: cambio de tempo sin cambio de tono (Rubber Band)
     Effects.*           efectos sincronizados al tempo y rack de 3 ranuras por deck
+  Control/              controladoras MIDI
+    Actions.*           acciones asignables (play, cue, tempo, EQ, efectos, jog...)
+    MidiMapping.*       asignaciones mensaje MIDI -> accion, guardadas en XML
+    MidiController.*    dispositivos, modo aprender y traduccion de mensajes
+    ControlSurface.*    ejecuta las acciones sobre decks, mezclador y efectos
   Library/              biblioteca de canciones
     Library.*           base SQLite, carpetas, escaneo, analisis de fondo y busqueda
     TagReader.*         etiquetas ID3 (v1, v2.2-2.4) y 'Artista - Titulo' del nombre
@@ -48,6 +53,7 @@ Source/
     MixerComponent.*    columna central del mezclador: mandos y faders de volumen
     LibraryBrowser.*    navegador: carpetas, buscador y lista (arrastrar o doble clic)
     EffectsRow.*        fila FX de un deck: elegir efecto, encender y mando
+    MidiLearnOverlay.*  capa del modo aprender MIDI
     DarkLookAndFeel.*   estilo visual oscuro
 Tests/
   TestMain.cpp          pruebas automáticas del motor (ctest) y herramientas:
@@ -55,6 +61,21 @@ Tests/
                         MiDJTests --stretch cancion 1.08 dir  keylock con una canción real
                         MiDJTests --compare a.wav b.wav       tono de b respecto de a
                         MiDJTests --benchmark                 CPU del keylock y de los efectos
+```
+
+## Controladoras MIDI
+
+Botón **MIDI** (junto al crossfader): clic en un control de la pantalla y después moverlo en la
+controladora; queda asignado (verde). Clic derecho quita la asignación. Se guarda en
+`%APPDATA%\MiDJ\midi.xml` y las controladoras que se conecten con la app abierta se detectan solas.
+
+Sin controladora se puede probar con `MiDJ.exe --simular-midi archivo.txt`. Cada línea del archivo:
+
+```text
+# milisegundos  tipo(note/cc/pb)  canal  número  valor
+20000 note 1 36 127
+30000 cc 1 7 100
+40000 pb 1 0 8192
 ```
 
 ## Licencias
@@ -77,3 +98,4 @@ SQLite es de dominio público.
 - Keylock (botón KEY, activado por defecto): cambio de tempo sin cambiar el tono con Rubber Band R2. Detector de BPM más fiable con música real: ataques de mezcla y graves en escala logarítmica y tempo elegido con un peine de 1-4 pulsos (corrige el 4/3 del reggaeton).
 - Biblioteca en SQLite (`%APPDATA%\MiDJ\library.db`) y navegador: carpetas, escaneo y análisis de BPM en segundo plano, búsqueda sin acentos ni mayúsculas, columnas ordenables; cargar arrastrando a un deck (también desde el Explorador) o con doble clic. Las canciones ya analizadas cargan sin volver a analizar.
 - Efectos: 3 ranuras por deck con Echo (medio pulso, cola al apagar), Reverb, Flanger (barrido de 8 pulsos), BitCrush (fórmula de VirtualDJ) y Gate (cuartos de pulso), todos sincronizados al BPM del deck, sin clics al encender, apagar o cambiar, y sin tocar la señal cuando están apagados.
+- Controladoras MIDI: modo aprender en la pantalla, botones por nota o CC, faders por CC o pitch bend, jog y encoders relativos (detecta complemento a dos o desplazado), los controles de la pantalla siguen a la controladora, conexión en caliente y modo de simulación.

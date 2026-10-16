@@ -36,6 +36,26 @@ MainComponent::MainComponent()
     crossfaderLabel.setJustificationType (juce::Justification::centred);
     addAndMakeVisible (crossfaderLabel);
 
+    // Controladoras MIDI: mapeo guardado, dispositivos y ganchos hacia la interfaz.
+    controlSurface.onBrowserScroll = [this] (int steps) { browser->moveSelection (steps); };
+    controlSurface.onLoadSelected = [this] (int deckIndex)
+    {
+        if (const auto track = browser->getSelectedTrack())
+            loadIntoDeck (deckIndex == 0 ? deckA : deckB, track->getFile());
+    };
+    midi.loadMapping();
+    midi.startDevices();
+    midiButton.setClickingTogglesState (true);
+    midiButton.setTooltip ("Aprender MIDI: asignar los controles de una controladora");
+    midiButton.onClick = [this] { toggleMidiLearn(); };
+    addAndMakeVisible (midiButton);
+    addChildComponent (midiOverlay);
+    startTimerHz (15);
+
+    const auto args = juce::JUCEApplicationBase::getCommandLineParameterArray();
+    if (const int i = args.indexOf ("--simular-midi"); i >= 0 && i + 1 < args.size())
+        startMidiSimulation (juce::File (args[i + 1].unquoted()));
+
     setSize (1316, 665);
     setAudioChannels (0, 2);   // sin entradas, salida estereo
 }
@@ -43,6 +63,7 @@ MainComponent::MainComponent()
 MainComponent::~MainComponent()
 {
     shutdownAudio();
+    stopTimer();
     browser.reset();
     library.close();
     setLookAndFeel (nullptr);
@@ -67,6 +88,55 @@ void MainComponent::loadIntoFreeDeck (const juce::File& file)
     else
         juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "MiDJ",
                                                 "Los dos decks estan sonando. Arrastra la cancion al deck que quieras cambiar.");
+}
+
+void MainComponent::toggleMidiLearn()
+{
+    const bool on = midiButton.getToggleState();
+    if (on)
+    {
+        std::vector<LearnTarget> targets;
+        deckViewA.addLearnTargets (targets, "deck1.");
+        deckViewB.addLearnTargets (targets, "deck2.");
+        mixerView.addLearnTargets (targets);
+        targets.push_back ({ &crossfader, "crossfader" });
+        targets.push_back ({ &browser->getTrackList(), "browser.scroll" });
+        midiOverlay.setTargets (std::move (targets));
+    }
+    midiOverlay.setVisible (on);
+    midiButton.toFront (false);   // el boton sigue accesible encima de la capa
+    midiButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffffa726).withAlpha (0.8f));
+}
+
+void MainComponent::timerCallback()
+{
+    if (! crossfader.isMouseButtonDown())
+        crossfader.setValue (mixer.getCrossfader(), juce::dontSendNotification);
+}
+
+void MainComponent::startMidiSimulation (const juce::File& script)
+{
+    // Cada linea: milisegundos desde el arranque, tipo (note/cc/pb), canal, numero, valor.
+    // Los mensajes entran por el mismo camino que los de una controladora real.
+    juce::StringArray lines;
+    script.readLines (lines);
+    for (auto line : lines)
+    {
+        line = line.upToFirstOccurrenceOf ("#", false, false).trim();
+        juce::StringArray f;
+        f.addTokens (line, " \t", "");
+        f.removeEmptyStrings();
+        if (f.size() < 5)
+            continue;
+        const int at = f[0].getIntValue(), channel = juce::jlimit (1, 16, f[2].getIntValue());
+        const int number = f[3].getIntValue(), value = f[4].getIntValue();
+        juce::MidiMessage m;
+        if (f[1] == "note")      m = value > 0 ? juce::MidiMessage::noteOn (channel, number, (juce::uint8) value) : juce::MidiMessage::noteOff (channel, number);
+        else if (f[1] == "cc")   m = juce::MidiMessage::controllerEvent (channel, number, value);
+        else if (f[1] == "pb")   m = juce::MidiMessage::pitchWheel (channel, value);
+        else continue;
+        juce::Timer::callAfterDelay (at, [this, m] { midi.handleMessage (m); });
+    }
 }
 
 void MainComponent::prepareToPlay (int samplesPerBlockExpected, double sampleRate)
@@ -102,6 +172,8 @@ void MainComponent::resized()
     deckViewA.setBounds (top.withRight (centre.getX()).reduced (6));
     deckViewB.setBounds (top.withLeft (centre.getRight()).reduced (6));
 
+    midiButton.setBounds (fader.getRight() + 24, fader.getY() + 10, 64, 28);
+    midiOverlay.setBounds (getLocalBounds());
     crossfaderLabel.setBounds (fader.removeFromTop (20));
     crossfader.setBounds (fader.reduced (0, 2));
 }

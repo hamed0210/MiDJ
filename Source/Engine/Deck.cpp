@@ -146,6 +146,22 @@ void Deck::setSpeed (double ratio)
     speed = juce::jlimit (0.5, 2.0, ratio);
 }
 
+void Deck::jog (int ticks)
+{
+    if (! hasTrack() || ticks == 0)
+        return;
+    if (isPlaying())
+    {
+        constexpr double bendPerTick = 0.004, maxBend = 0.5;
+        const double bendNow = jogBend.load();
+        jogBend.fetch_add (juce::jlimit (-maxBend, maxBend, bendNow + ticks * bendPerTick) - bendNow);
+    }
+    else
+    {
+        requestSeek (positionSeconds.load() + ticks * 0.01);
+    }
+}
+
 double Deck::beatTime (double beatIndex) const
 {
     return firstBeat.load() + beatIndex * 60.0 / juce::jmax (1.0, bpm.load());
@@ -220,7 +236,7 @@ void Deck::renderVinyl (float* left, float* right, int n)
 {
     const auto& audio = current->audio;
     const int length = audio.getNumSamples();
-    const double step = speed.load() * fileStep;
+    const double step = blockSpeed * fileStep;
     for (int i = 0; i < n; ++i)
     {
         readPosition = advance (readPosition, 0.0);
@@ -260,14 +276,14 @@ void Deck::renderKeyLocked (float* left, float* right, int n)
     if (stretcherDirty)
     {
         feedPosition = readPosition;
-        stretcher.setTempo (speed.load());
+        stretcher.setTempo (blockSpeed);
         stretcher.reset();
         stretcherDirty = false;
     }
-    stretcher.setTempo (speed.load());
+    stretcher.setTempo (blockSpeed);
     stretcher.process (left, right, n, feeder);
 
-    const double step = speed.load() * fileStep;
+    const double step = blockSpeed * fileStep;
     for (int i = 0; i < n; ++i)
     {
         readPosition = advance (readPosition, step);
@@ -306,6 +322,16 @@ void Deck::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
     {
         stretching = useStretcher;
         stretcherDirty = true;
+    }
+
+    // Empuje del jog: se aplica a este bloque y se desvanece (constante de 0,1 s). Se resta lo
+    // que decae con fetch_add para no perder los pasos que lleguen a la vez desde el hilo MIDI.
+    const double bend = jogBend.load();
+    blockSpeed = juce::jlimit (0.25, 4.0, speed.load() * (1.0 + bend));
+    if (bend != 0.0)
+    {
+        const double decayed = std::abs (bend) < 1e-4 ? 0.0 : bend * std::exp (-info.numSamples / (0.1 * outputRate));
+        jogBend.fetch_add (decayed - bend);
     }
 
     if (playing.load())

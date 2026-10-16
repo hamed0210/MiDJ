@@ -119,6 +119,20 @@ void DeckComponent::chooseFile()
                           });
 }
 
+void DeckComponent::addLearnTargets (std::vector<LearnTarget>& out, const juce::String& prefix)
+{
+    out.push_back ({ &playButton, prefix + "play" });
+    out.push_back ({ &cueButton, prefix + "cue" });
+    out.push_back ({ &syncButton, prefix + "sync" });
+    out.push_back ({ &keyButton, prefix + "keylock" });
+    out.push_back ({ &loadButton, prefix + "load" });
+    for (size_t i = 0; i < loopButtons.size(); ++i)
+        out.push_back ({ &loopButtons[i], prefix + "loop" + juce::String (loopSizes[i]) });
+    out.push_back ({ &tempoSlider, prefix + "tempo" });
+    out.push_back ({ this, prefix + "jog", waveformArea });   // la forma de onda hace de plato
+    effectsRow.addLearnTargets (out, prefix);
+}
+
 void DeckComponent::loadFile (const juce::File& file)
 {
     if (onLoadFile)

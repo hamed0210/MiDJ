@@ -3,7 +3,7 @@
 
 namespace midj
 {
-MixerComponent::MixerComponent (Mixer& mixer)
+MixerComponent::MixerComponent (Mixer& m) : mixer (m)
 {
     setUpChannel (channels[0], mixer.getStrip (0), DarkLookAndFeel::accentA);
     setUpChannel (channels[1], mixer.getStrip (1), DarkLookAndFeel::accentB);
@@ -21,6 +21,33 @@ MixerComponent::MixerComponent (Mixer& mixer)
     volumeLabel.setColour (juce::Label::textColourId, DarkLookAndFeel::textQuiet);
     volumeLabel.setFont (juce::FontOptions (12.0f, juce::Font::bold));
     addAndMakeVisible (volumeLabel);
+    startTimerHz (15);
+}
+
+void MixerComponent::addLearnTargets (std::vector<LearnTarget>& out)
+{
+    static constexpr std::array<const char*, 5> verbs { "gain", "high", "mid", "low", "filter" };
+    for (size_t c = 0; c < channels.size(); ++c)
+    {
+        const juce::String prefix = "deck" + juce::String ((int) c + 1) + ".";
+        for (size_t i = 0; i < verbs.size(); ++i)
+            out.push_back ({ &channels[c].knobs[i], prefix + verbs[i] });
+        out.push_back ({ &channels[c].volume, prefix + "volume" });
+    }
+}
+
+void MixerComponent::timerCallback()
+{
+    for (size_t c = 0; c < channels.size(); ++c)
+    {
+        auto& strip = mixer.getStrip ((int) c);
+        const std::array<float, 5> values { strip.getGain(), strip.getHigh(), strip.getMid(), strip.getLow(), strip.getFilter() };
+        for (size_t i = 0; i < values.size(); ++i)
+            if (! channels[c].knobs[i].isMouseButtonDown())
+                channels[c].knobs[i].setValue (values[i], juce::dontSendNotification);
+        if (! channels[c].volume.isMouseButtonDown())
+            channels[c].volume.setValue (strip.getVolume(), juce::dontSendNotification);
+    }
 }
 
 void MixerComponent::setUpChannel (Channel& channel, ChannelStrip& strip, juce::Colour accent)
