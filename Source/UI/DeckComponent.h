@@ -9,7 +9,7 @@
 namespace midj
 {
 // Panel de un deck: titulo, BPM, tiempo, forma de onda con rejilla de pulsos,
-// botones CUE / Play / SYNC, bucles de 1-2-4-8 pulsos, cargar y fader de tempo.
+// botones CUE / Play / SYNC, bucles de 1-2-4-8 pulsos, cargar, fader de tempo y KEY.
 class DeckComponent : public juce::Component,
                       private juce::ChangeListener,
                       private juce::Timer
@@ -40,6 +40,7 @@ private:
     juce::TextButton cueButton { "CUE" };
     juce::TextButton playButton { "Play" };
     juce::TextButton syncButton { "SYNC" };
+    juce::TextButton keyButton { "KEY" };   // keylock: tempo sin cambiar el tono
     static constexpr std::array<int, 4> loopSizes { 1, 2, 4, 8 };
     std::array<juce::TextButton, 4> loopButtons;
     juce::Label loopLabel;

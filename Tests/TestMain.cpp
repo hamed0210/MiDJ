@@ -73,6 +73,51 @@ void testBpm (double bpm, double sampleRate, double expected)
     check (std::abs (got - expected) < 0.02, name, got, expected);
 }
 
+// Ritmo de dembow (reggaeton): bombo en cada pulso y caja fuerte en el 3/4 y el 6/4 de cada
+// dos pulsos (3+3+2 semicorcheas). Las cajas suenan mas que el bombo en toda la banda, y su
+// separacion (3/4 de pulso) engaña a un detector que solo mira la energia total: da 4/3 del tempo.
+std::vector<float> dembowTrack (double bpm, double seconds, double firstBeat)
+{
+    std::vector<float> out ((size_t) (seconds * sr), 0.0f);
+    const double period = 60.0 / bpm;
+    juce::Random rng (7);
+    auto hit = [&] (double t, bool snare)
+    {
+        const auto start = (size_t) (t * sr);
+        for (size_t i = 0; i < (size_t) (0.12 * sr) && start + i < out.size(); ++i)
+        {
+            const double ph = (double) i / sr;
+            out[start + i] += snare ? (float) (0.9 * std::exp (-ph * 40.0) * (rng.nextFloat() * 2.0f - 1.0f))
+                                    : (float) (0.6 * std::exp (-ph * 25.0) * std::sin (2.0 * juce::MathConstants<double>::pi * 55.0 * ph));
+        }
+    };
+    for (int beat = 0; firstBeat + beat * period < seconds; ++beat)
+    {
+        const double t = firstBeat + beat * period;
+        hit (t, false);
+        if (beat % 2 == 0)
+        {
+            hit (t + 0.75 * period, true);
+            hit (t + 1.50 * period, true);
+        }
+    }
+    return out;
+}
+
+void testDembow (double bpm, double firstBeat)
+{
+    const auto audio = dembowTrack (bpm, 40.0, firstBeat);
+    const auto a = midj::BpmDetector::analyse (audio.data(), (int) audio.size(), sr);
+    char name[96];
+    std::snprintf (name, sizeof (name), "dembow a %.0f BPM: tempo (no 4/3)", bpm);
+    check (std::abs (a.bpm - bpm) < 0.05, name, a.bpm, bpm);
+    std::snprintf (name, sizeof (name), "dembow a %.0f BPM: pulso en el bombo (ms)", bpm);
+    const double period = 60.0 / bpm;
+    double err = std::fmod (a.firstBeat - firstBeat + 10.0 * period, period);
+    err = std::min (err, period - err);
+    check (err < 0.004, name, err * 1000.0, 0.0);
+}
+
 void testPhase (double bpm, double firstBeat)
 {
     const auto audio = clickTrack (bpm, 30.0, sr, firstBeat);
@@ -301,11 +346,316 @@ void testMixerChannels()
     const double killed = outputRms();
     check (killed < base * 0.03, "mezclador: kill de graves en A corta su bajo", killed, 0.0);
 }
+
+// --- Keylock (cambio de tempo sin cambio de tono) ----------------------------------------
+
+// Reproduce 'seconds' y devuelve la salida estereo. Si se pide, apunta la posicion de la
+// cancion (segundos) al principio de cada bloque para saber que se oia en cada momento.
+juce::AudioBuffer<float> renderOutput (midj::Deck& deck, double seconds, std::vector<double>* positions = nullptr)
+{
+    const int blocks = (int) (seconds * sr) / blockSize;
+    juce::AudioBuffer<float> out (2, blocks * blockSize);
+    for (int k = 0; k < blocks; ++k)
+    {
+        if (positions != nullptr)
+            positions->push_back (deck.getPositionSeconds());
+        juce::AudioSourceChannelInfo info (&out, k * blockSize, blockSize);
+        deck.getNextAudioBlock (info);
+    }
+    return out;
 }
 
-int main()
+// Frecuencia de un seno por cruces por cero (con interpolacion), en [from, to) muestras.
+double sineFrequency (const juce::AudioBuffer<float>& b, int from, int to)
+{
+    const float* d = b.getReadPointer (0);
+    double first = -1.0, last = -1.0;
+    int crossings = 0;
+    for (int i = from + 1; i < to; ++i)
+        if (d[i - 1] < 0.0f && d[i] >= 0.0f)
+        {
+            const double t = (i - 1) + d[i - 1] / (d[i - 1] - d[i]);
+            if (first < 0.0) first = t;
+            last = t;
+            ++crossings;
+        }
+    return crossings > 1 ? (crossings - 1) * sr / (last - first) : 0.0;
+}
+
+// Cuanto se ha desplazado en frecuencia 'processed' respecto a 'original': compara sus
+// espectros medios en escala logaritmica y busca el factor que mejor los alinea.
+// 1.00 = mismo tono; 1.08 = un 8 % mas agudo (lo que hace un vinilo a +8 %).
+double spectralShift (const juce::AudioBuffer<float>& original, const juce::AudioBuffer<float>& processed, double rate)
+{
+    constexpr int order = 13, size = 1 << order;
+    juce::dsp::FFT fft (order);
+    juce::dsp::WindowingFunction<float> window ((size_t) size, juce::dsp::WindowingFunction<float>::hann, false);
+    auto spectrum = [&] (const juce::AudioBuffer<float>& b)
+    {
+        std::vector<double> mag (size / 2, 0.0);
+        std::vector<float> frame (size * 2);
+        for (int start = 0; start + size <= b.getNumSamples(); start += size / 2)
+        {
+            std::fill (frame.begin(), frame.end(), 0.0f);
+            for (int i = 0; i < size; ++i)
+                frame[(size_t) i] = 0.5f * (b.getSample (0, start + i) + b.getSample (b.getNumChannels() - 1, start + i));
+            window.multiplyWithWindowingTable (frame.data(), (size_t) size);
+            fft.performFrequencyOnlyForwardTransform (frame.data());
+            for (int i = 0; i < size / 2; ++i)
+                mag[(size_t) i] += frame[(size_t) i];
+        }
+        for (auto& m : mag)
+            m = std::log (m + 1e-6);
+        return mag;
+    };
+    const auto a = spectrum (original), b = spectrum (processed);
+    auto at = [] (const std::vector<double>& s, double bin)
+    {
+        const int i = (int) bin;
+        const double t = bin - i;
+        return s[(size_t) i] * (1.0 - t) + s[(size_t) i + 1] * t;
+    };
+    const double binHz = rate / size;
+    double bestScale = 1.0, bestScore = -1e300;
+    for (double scale = 0.90; scale <= 1.15; scale += 0.001)
+    {
+        // Correlacion entre A(f) y B(f * scale) entre 150 y 4000 Hz.
+        double sa = 0, sb = 0, sab = 0, saa = 0, sbb = 0;
+        int count = 0;
+        for (double f = 150.0; f < 4000.0; f *= 1.002, ++count)
+        {
+            const double x = at (a, f / binHz), y = at (b, f * scale / binHz);
+            sa += x; sb += y; sab += x * y; saa += x * x; sbb += y * y;
+        }
+        const double cov = sab - sa * sb / count;
+        const double score = cov / std::sqrt ((saa - sa * sa / count) * (sbb - sb * sb / count));
+        if (score > bestScore) { bestScore = score; bestScale = scale; }
+    }
+    return bestScale;
+}
+
+void testKeyLock()
+{
+    juce::AudioFormatManager formats;
+    midj::Deck deck (formats);
+    deck.prepareToPlay (blockSize, sr);
+    check (deck.isKeyLocked(), "keylock activado por defecto", 1.0, 1.0);
+
+    // 1. El tono: un La de 440 Hz a +8 %. Con keylock sigue en 440; sin keylock sube a 475,2.
+    juce::AudioBuffer<float> tone (1, (int) (sr * 20.0));
+    for (int i = 0; i < tone.getNumSamples(); ++i)
+        tone.setSample (0, i, (float) (0.5 * std::sin (2.0 * juce::MathConstants<double>::pi * 440.0 * i / sr)));
+    deck.loadBuffer (tone, sr, "la440", { 120.0, 0.0 });
+    deck.setSpeed (1.08);
+    deck.play();
+    auto out = renderOutput (deck, 3.0);
+    const double locked = sineFrequency (out, (int) sr, out.getNumSamples());
+    check (std::abs (locked - 440.0) < 0.5, "keylock +8 %: el La sigue en 440 Hz", locked, 440.0);
+    check (std::abs (deck.getPositionSeconds() - 3.0 * 1.08) < 0.03, "keylock +8 %: la cancion avanza un 8 % mas",
+           deck.getPositionSeconds(), 3.24);
+
+    deck.setKeyLock (false);
+    out = renderOutput (deck, 2.0);
+    const double vinyl = sineFrequency (out, (int) (sr * 0.5), out.getNumSamples());
+    check (std::abs (vinyl - 475.2) < 0.5, "sin keylock +8 %: el La sube a 475,2 Hz", vinyl, 475.2);
+
+    // Se puede volver a activar con la cancion sonando.
+    deck.setKeyLock (true);
+    out = renderOutput (deck, 2.0);
+    const double relocked = sineFrequency (out, (int) (sr * 0.5), out.getNumSamples());
+    check (std::abs (relocked - 440.0) < 0.5, "keylock reactivado sonando: vuelve a 440 Hz", relocked, 440.0);
+
+    // 2. El tempo y la fase: bombos a 120 BPM tocados a +10 % con keylock.
+    //    La salida debe ir a 132 BPM y sus golpes caer donde el deck dice que esta (SYNC y
+    //    bucles dependen de eso): se mide la fase de cada golpe oido en la rejilla de la cancion.
+    deck.loadBuffer (toBuffer (clickTrack (120.0, 40.0, sr, 0.25)), sr, "clicks120", { 120.0, 0.25 });
+    deck.setSpeed (1.10);
+    deck.setPositionSeconds (2.0);
+    deck.play();
+    std::vector<double> positions;
+    out = renderOutput (deck, 16.0, &positions);
+    const auto heard = midj::BpmDetector::analyse (out, sr);
+    check (std::abs (heard.bpm - 132.0) < 0.05, "keylock +10 %: los bombos suenan a 132 BPM", heard.bpm, 132.0);
+
+    double worst = 0.0;
+    for (double t = heard.firstBeat; t < 15.0; t += 60.0 / heard.bpm)
+    {
+        if (t < 2.0)
+            continue;   // se deja asentar
+        const int block = (int) (t * sr) / blockSize;
+        const double offset = t - block * blockSize / sr;
+        const double songTime = positions[(size_t) block] + offset * 1.10;
+        const double beats = (songTime - 0.25) * 120.0 / 60.0;
+        worst = std::max (worst, std::abs (beats - std::round (beats)));
+    }
+    check (worst < 0.02, "keylock: lo que se oye coincide con la posicion (pulsos)", worst, 0.0);
+
+    // 3. Un salto (CUE) con keylock empieza en el sitio exacto: el golpe en 2,25 s suena
+    //    10 ms (de cancion) despues del salto, es decir 9,1 ms reales a +10 %.
+    deck.setPositionSeconds (2.25 - 0.01);
+    out = renderOutput (deck, 0.2);
+    int onset = -1;
+    for (int i = 0; i < out.getNumSamples() && onset < 0; ++i)
+        if (std::abs (out.getSample (0, i)) > 0.1f)
+            onset = i;
+    const double onsetMs = onset * 1000.0 / sr;
+    check (onset >= 0 && std::abs (onsetMs - 10.0 / 1.10) < 3.0, "keylock: tras un salto el golpe llega a tiempo (ms)",
+           onsetMs, 10.0 / 1.10);
+}
+
+// Coste de CPU del keylock: tiempo de calculo por segundo de audio (por deck).
+void benchmarkKeyLock (midj::TimeStretcher::Engine engine)
+{
+    juce::AudioFormatManager formats;
+    midj::Deck deck (formats);
+    deck.setKeyLockEngine (engine);
+    deck.prepareToPlay (blockSize, sr);
+    juce::Random rng (1);
+    juce::AudioBuffer<float> noise (2, (int) (sr * 30.0));
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < noise.getNumSamples(); ++i)
+            noise.setSample (ch, i, rng.nextFloat() * 0.4f - 0.2f);
+    deck.loadBuffer (noise, sr, "ruido", { 120.0, 0.0 });
+    deck.setSpeed (1.06);
+    deck.play();
+    const auto start = juce::Time::getMillisecondCounterHiRes();
+    renderOutput (deck, 10.0);
+    const double load = (juce::Time::getMillisecondCounterHiRes() - start) / 10000.0;
+    std::printf ("[INFO]  keylock %s: %.1f %% de un nucleo por deck\n",
+                 engine == midj::TimeStretcher::Engine::finer ? "R3 (finer) " : "R2 (faster)", load * 100.0);
+}
+
+// --- Herramientas de linea de comandos para probar con canciones reales ---------------
+
+std::unique_ptr<juce::AudioBuffer<float>> readFile (juce::AudioFormatManager& formats, const juce::File& file, double& rate)
+{
+    std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
+    if (reader == nullptr)
+        return nullptr;
+    rate = reader->sampleRate;
+    const int length = (int) reader->lengthInSamples;
+    auto b = std::make_unique<juce::AudioBuffer<float>> (2, length);
+    reader->read (b.get(), 0, length, 0, true, true);
+    return b;
+}
+
+int analyseFiles (const juce::StringArray& paths)
+{
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    for (const auto& p : paths)
+    {
+        double rate = 0.0;
+        const auto start = juce::Time::getMillisecondCounterHiRes();
+        auto audio = readFile (formats, juce::File (p), rate);
+        if (audio == nullptr)
+        {
+            std::printf ("No se pudo abrir: %s\n", p.toRawUTF8());
+            continue;
+        }
+        const auto a = midj::BpmDetector::analyse (*audio, rate);
+        std::printf ("%7.2f BPM  primer pulso %.3f s  (%.3f s de audio a %.0f Hz, %.0f ms)  %s\n", a.bpm, a.firstBeat,
+                     audio->getNumSamples() / rate, rate, juce::Time::getMillisecondCounterHiRes() - start,
+                     juce::File (p).getFileName().toRawUTF8());
+    }
+    return 0;
+}
+
+// Toca 30 s desde la mitad de la cancion a 'speed' con y sin keylock y mide el resultado.
+// Guarda los WAV en 'outDir' para escucharlos.
+int stretchFile (const juce::String& path, double speed, const juce::File& outDir)
+{
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    double rate = 0.0;
+    auto audio = readFile (formats, juce::File (path), rate);
+    if (audio == nullptr)
+        return 1;
+    const auto analysis = midj::BpmDetector::analyse (*audio, rate);
+    const double from = audio->getNumSamples() / rate / 2.0, seconds = 30.0;
+    juce::AudioBuffer<float> original (2, (int) (seconds * rate));
+    for (int ch = 0; ch < 2; ++ch)
+        original.copyFrom (ch, 0, *audio, ch, (int) (from * rate), original.getNumSamples());
+    const auto originalBpm = midj::BpmDetector::analyse (original, rate).bpm;
+
+    std::printf ("%s\n  original:                %.2f BPM (cancion entera %.2f)\n",
+                 juce::File (path).getFileName().toRawUTF8(), originalBpm, analysis.bpm);
+    for (bool lock : { true, false })
+    {
+        midj::Deck deck (formats);
+        deck.prepareToPlay (blockSize, rate);
+        deck.loadBuffer (*audio, rate, "cancion", analysis);
+        deck.setKeyLock (lock);
+        deck.setSpeed (speed);
+        deck.setPositionSeconds (from);
+        deck.play();
+        juce::AudioBuffer<float> out (2, (int) (seconds / speed * rate) / blockSize * blockSize);
+        const auto start = juce::Time::getMillisecondCounterHiRes();
+        for (int k = 0; k < out.getNumSamples() / blockSize; ++k)
+        {
+            juce::AudioSourceChannelInfo info (&out, k * blockSize, blockSize);
+            deck.getNextAudioBlock (info);
+        }
+        const double cpu = (juce::Time::getMillisecondCounterHiRes() - start) / 1000.0 / (out.getNumSamples() / rate);
+        const auto heard = midj::BpmDetector::analyse (out, rate);
+        const double shift = spectralShift (original, out, rate);
+        std::printf ("  %-12s a x%.3f: %.2f BPM (esperado %.2f), tono x%.3f (%+.2f semitonos), CPU %.1f %%\n",
+                     lock ? "con keylock" : "sin keylock", speed, heard.bpm, originalBpm * speed, shift,
+                     12.0 * std::log2 (shift), cpu * 100.0);
+
+        const auto file = outDir.getChildFile (juce::File (path).getFileNameWithoutExtension().substring (0, 24).trim()
+                                               + (lock ? " keylock x" : " vinilo x") + juce::String (speed, 2) + ".wav");
+        file.deleteFile();
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::AudioFormatWriter> writer (wav.createWriterFor (new juce::FileOutputStream (file), rate, 2, 16, {}, 0));
+        if (writer != nullptr)
+            writer->writeFromAudioSampleBuffer (out, 0, out.getNumSamples());
+    }
+    return 0;
+}
+
+}
+
+#if JUCE_WINDOWS
+int wmain (int argc, wchar_t* argv[])   // argumentos en Unicode: nombres con acentos
+#else
+int main (int argc, char* argv[])
+#endif
 {
     const juce::ScopedJuceInitialiser_GUI juce;   // los decks avisan a la interfaz con mensajes
+
+    // Herramientas para canciones reales (no forman parte de ctest):
+    //   MiDJTests --analyse a.mp3 b.mp3 ...           BPM de cada archivo
+    //   MiDJTests --stretch cancion.mp3 1.08 carpeta   keylock: BPM, tono y WAV para escuchar
+    //   MiDJTests --benchmark                          CPU del keylock
+    juce::StringArray args;
+    for (int i = 1; i < argc; ++i)
+        args.add (juce::String (argv[i]));
+    if (args[0] == "--analyse")
+        return analyseFiles (juce::StringArray (args.begin() + 1, args.size() - 1));
+    if (args[0] == "--stretch" && args.size() >= 4)
+        return stretchFile (args[1], args[2].getDoubleValue(), juce::File (args[3]));
+    if (args[0] == "--compare" && args.size() >= 3)   // dos grabaciones: BPM de cada una y tono de B respecto de A
+    {
+        juce::AudioFormatManager formats;
+        formats.registerBasicFormats();
+        double rateA = 0.0, rateB = 0.0;
+        auto a = readFile (formats, juce::File (args[1]), rateA);
+        auto b = readFile (formats, juce::File (args[2]), rateB);
+        if (a == nullptr || b == nullptr)
+            return 1;
+        const double shift = spectralShift (*a, *b, rateA);
+        std::printf ("A: %.2f BPM   B: %.2f BPM   tono de B = x%.3f de A (%+.2f semitonos)\n",
+                     midj::BpmDetector::analyse (*a, rateA).bpm, midj::BpmDetector::analyse (*b, rateB).bpm,
+                     shift, 12.0 * std::log2 (shift));
+        return 0;
+    }
+    if (args[0] == "--benchmark")
+    {
+        benchmarkKeyLock (midj::TimeStretcher::Engine::finer);
+        benchmarkKeyLock (midj::TimeStretcher::Engine::faster);
+        return 0;
+    }
 
     std::printf ("== Detector de BPM ==\n");
     testBpm (120.0, 44100.0, 120.0);
@@ -319,6 +669,8 @@ int main()
     testPhase (120.0, 0.25);
     testPhase (128.0, 0.50);
     testPhase (100.0, 0.10);
+    testDembow (88.0, 0.14);
+    testDembow (95.0, 0.30);
 
     std::printf ("== Crossfader (curva smooth de VirtualDJ) ==\n");
     using midj::Mixer;
@@ -331,6 +683,9 @@ int main()
     std::printf ("== Canal: ganancia, EQ de 3 bandas, filtro y volumen ==\n");
     testChannelStrip();
     testMixerChannels();
+
+    std::printf ("== Keylock: tempo sin cambiar el tono ==\n");
+    testKeyLock();
 
     std::printf ("== Deck: reproduccion, CUE y bucles ==\n");
     testDeck();

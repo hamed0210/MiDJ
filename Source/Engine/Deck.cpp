@@ -88,6 +88,8 @@ void Deck::install (std::unique_ptr<Track> newTrack, const juce::String& name, T
         const juce::SpinLock::ScopedLockType lock (trackLock);
         std::swap (track, newTrack);
         readPosition = 0.0;
+        feedPosition = 0.0;
+        stretcherDirty = true;
         pendingSeek = -1.0;
     }   // la pista vieja se libera aqui, fuera del hilo de audio
 
@@ -190,9 +192,88 @@ void Deck::exitLoop()
     sendChangeMessage();
 }
 
-void Deck::prepareToPlay (int, double sampleRate)
+void Deck::prepareToPlay (int samplesPerBlockExpected, double sampleRate)
 {
+    // Fuera del hilo de audio: aqui se reserva toda la memoria que usara el audio.
     outputRate = sampleRate;
+    renderBuffer.setSize (2, juce::jmax (samplesPerBlockExpected, 4096));
+    stretcher.prepare (sampleRate, keyLockEngine);
+    stretcherDirty = true;
+}
+
+double Deck::advance (double position, double delta) const
+{
+    position += delta;
+    if (loopActive && position >= loopEndSample && loopEndSample > loopStartSample)
+        position -= (loopEndSample - loopStartSample);   // vuelta exacta a la muestra
+    return position;
+}
+
+// Sin keylock: se lee la cancion mas deprisa o mas despacio (cambia el tono).
+void Deck::renderVinyl (float* left, float* right, int n)
+{
+    const auto& audio = current->audio;
+    const int length = audio.getNumSamples();
+    const double step = speed.load() * fileStep;
+    for (int i = 0; i < n; ++i)
+    {
+        readPosition = advance (readPosition, 0.0);
+        if (readPosition >= length - 1)
+        {
+            playing = false;   // fin de la cancion
+            std::fill (left + i, left + n, 0.0f);
+            std::fill (right + i, right + n, 0.0f);
+            return;
+        }
+        left[i] = hermite (audio.getReadPointer (0), length, readPosition);
+        right[i] = hermite (audio.getReadPointer (1), length, readPosition);
+        readPosition += step;
+    }
+}
+
+void Deck::Feeder::read (float* left, float* right, int n)
+{
+    const auto& audio = deck.current->audio;
+    const int length = audio.getNumSamples();
+    for (int i = 0; i < n; ++i)
+    {
+        deck.feedPosition = deck.advance (deck.feedPosition, 0.0);
+        const bool inside = deck.feedPosition < length - 1;   // pasado el final: silencio
+        left[i] = inside ? hermite (audio.getReadPointer (0), length, deck.feedPosition) : 0.0f;
+        right[i] = inside ? hermite (audio.getReadPointer (1), length, deck.feedPosition) : 0.0f;
+        deck.feedPosition += deck.fileStep;
+    }
+}
+
+// Con keylock: el estirador recibe la cancion a tempo original y la entrega a 'speed'.
+// Lo que se oye avanza a speed * fileStep por muestra, igual que sin keylock, asi
+// BPM, fase, SYNC y bucles funcionan igual en los dos modos.
+void Deck::renderKeyLocked (float* left, float* right, int n)
+{
+    const int length = current->audio.getNumSamples();
+    if (stretcherDirty)
+    {
+        feedPosition = readPosition;
+        stretcher.setTempo (speed.load());
+        stretcher.reset();
+        stretcherDirty = false;
+    }
+    stretcher.setTempo (speed.load());
+    stretcher.process (left, right, n, feeder);
+
+    const double step = speed.load() * fileStep;
+    for (int i = 0; i < n; ++i)
+    {
+        readPosition = advance (readPosition, step);
+        if (readPosition >= length - 1)
+        {
+            playing = false;
+            stretcherDirty = true;
+            std::fill (left + i, left + n, 0.0f);
+            std::fill (right + i, right + n, 0.0f);
+            return;
+        }
+    }
 }
 
 void Deck::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
@@ -203,40 +284,47 @@ void Deck::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
     if (! lock.isLocked() || track == nullptr)
         return;
 
-    const auto& audio = track->audio;
-    const int n = audio.getNumSamples();
-    const double rate = track->sampleRate;
+    current = track.get();
+    const double rate = current->sampleRate;
+    fileStep = rate / outputRate;
 
     const double seek = pendingSeek.exchange (-1.0);
     if (seek >= 0.0)
+    {
         readPosition = seek * rate;
+        stretcherDirty = true;
+    }
+
+    const bool useStretcher = keyLock.load() && stretcher.isPrepared();
+    if (useStretcher != stretching)
+    {
+        stretching = useStretcher;
+        stretcherDirty = true;
+    }
 
     if (playing.load())
     {
-        const double step = speed.load() * rate / outputRate;
-        const bool looping = loopBeats.load() > 0;
-        const double lStart = loopStart.load() * rate, lEnd = loopEnd.load() * rate;
-        const float* left = audio.getReadPointer (0);
-        const float* right = audio.getReadPointer (1);
-        auto& out = *info.buffer;
-        const int outChannels = out.getNumChannels();
+        loopActive = loopBeats.load() > 0;
+        loopStartSample = loopStart.load() * rate;
+        loopEndSample = loopEnd.load() * rate;
 
-        for (int i = 0; i < info.numSamples; ++i)
+        auto& out = *info.buffer;
+        for (int done = 0; done < info.numSamples && playing.load();)
         {
-            if (looping && readPosition >= lEnd && lEnd > lStart)
-                readPosition -= (lEnd - lStart);          // vuelta exacta a la muestra
-            if (readPosition >= n - 1)
-            {
-                playing = false;                            // fin de la cancion
-                break;
-            }
-            out.setSample (0, info.startSample + i, hermite (left, n, readPosition));
-            if (outChannels > 1)
-                out.setSample (1, info.startSample + i, hermite (right, n, readPosition));
-            readPosition += step;
+            const int n = juce::jmin (info.numSamples - done, renderBuffer.getNumSamples());
+            float* left = renderBuffer.getWritePointer (0);
+            float* right = renderBuffer.getWritePointer (1);
+            if (stretching) renderKeyLocked (left, right, n);
+            else            renderVinyl (left, right, n);
+
+            out.copyFrom (0, info.startSample + done, left, n);
+            if (out.getNumChannels() > 1)
+                out.copyFrom (1, info.startSample + done, right, n);
+            done += n;
         }
     }
 
     positionSeconds = readPosition / rate;
+    current = nullptr;
 }
 }

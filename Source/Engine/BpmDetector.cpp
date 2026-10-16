@@ -1,5 +1,6 @@
 #include "Engine/BpmDetector.h"
 
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
@@ -20,6 +21,67 @@ namespace
         return sum;
     }
 
+    // Paso bajo de 150 Hz (dos biquads, 24 dB/octava) que deja el bombo y el bajo.
+    // Es causal (nada antes del golpe: un filtro de fase cero "suena" un poco antes y en escala
+    // logaritmica eso ya parece un ataque) y se adelanta su retardo en graves, 2 x sqrt(2) / (2 pi fc).
+    std::vector<float> lowPass (const float* mono, int numSamples, double sampleRate)
+    {
+        constexpr double cutoff = 150.0;
+        std::vector<float> filtered (mono, mono + numSamples);
+        for (int stage = 0; stage < 2; ++stage)
+        {
+            juce::IIRFilter filter;
+            filter.setCoefficients (juce::IIRCoefficients::makeLowPass (sampleRate, cutoff));
+            filter.processSamples (filtered.data(), numSamples);
+        }
+        const auto delay = (size_t) std::lround (2.0 * std::sqrt (2.0) / (2.0 * juce::MathConstants<double>::pi * cutoff) * sampleRate);
+        std::vector<float> out ((size_t) numSamples, 0.0f);
+        if ((size_t) numSamples > delay)
+            std::copy (filtered.begin() + (std::ptrdiff_t) delay, filtered.end(), out.begin());
+        return out;
+    }
+    // Ataques: subidas del logaritmo de la energia medida en una ventana de 23 ms que termina
+    // al final de cada bloque de 'hop' muestras; normalizados a media 1.
+    //  - La ventana larga ignora la oscilacion de la propia onda (un bajo de 50 Hz tiene
+    //    ciclos de 20 ms) y, al terminar en el bloque, una subida en f empieza dentro de f.
+    //  - En escala logaritmica la subida mayor es la del primer instante (de casi nada a algo),
+    //    asi un sonido sostenido marca su comienzo y no el final de la ventana.
+    std::vector<float> rises (const float* signal, int numSamples, int hop)
+    {
+        constexpr int window = 1024;
+        std::vector<double> energy ((size_t) numSamples + 1, 0.0);   // suma acumulada de x^2
+        for (int i = 0; i < numSamples; ++i)
+            energy[(size_t) i + 1] = energy[(size_t) i] + (double) signal[i] * signal[i];
+
+        const int frames = numSamples / hop;
+        // Suelo de ruido: una diezmilesima de la energia media (-40 dB), para que el silencio
+        // no genere subidas enormes en el logaritmo.
+        const double floor = 1e-4 * energy[(size_t) numSamples] / std::max (1, numSamples) + 1e-12;
+        std::vector<float> out ((size_t) frames, 0.0f);
+        double previous = 0.0, total = 0.0;
+        for (int f = 0; f < frames; ++f)
+        {
+            const int end = (f + 1) * hop, start = std::max (0, end - window);
+            const double level = std::log ((energy[(size_t) end] - energy[(size_t) start]) / window + floor);
+            out[(size_t) f] = f > 0 ? (float) std::max (0.0, level - previous) : 0.0f;
+            previous = level;
+            total += out[(size_t) f];
+        }
+        if (total > 0.0)
+            for (auto& v : out)
+                v = (float) (v * frames / total);
+        return out;
+    }
+    // Ataques de la mezcla + ataques de los graves con el doble de peso.
+    std::vector<float> combinedOnset (const float* mono, const float* low, int numSamples, int hop)
+    {
+        auto onset = rises (mono, numSamples, hop);
+        const auto lowOnset = rises (low, numSamples, hop);
+        for (size_t i = 0; i < onset.size(); ++i)
+            onset[i] += 2.0f * lowOnset[i];
+        return onset;
+    }
+
     // Valor de los ataques en una posicion fraccionaria (interpolacion lineal).
     double onsetAt (const std::vector<float>& onset, double frame)
     {
@@ -36,55 +98,59 @@ TempoAnalysis analyse (const float* mono, int numSamples, double sampleRate)
     if (mono == nullptr || sampleRate <= 0.0 || numSamples < hopSize * 64)
         return {};
 
-    // 1. Envolvente: energia media absoluta por bloque de hopSize muestras.
-    const int frames = numSamples / hopSize;
-    std::vector<float> envelope ((size_t) frames);
-    for (int f = 0; f < frames; ++f)
-    {
-        float sum = 0.0f;
-        for (int i = 0; i < hopSize; ++i)
-            sum += std::abs (mono[f * hopSize + i]);
-        envelope[(size_t) f] = sum / (float) hopSize;
-    }
+    // 1. Ataques combinando dos bandas: toda la mezcla y los graves (< 150 Hz, bombo y bajo).
+    //    En estilos como el reggaeton las cajas fuera de pulso suenan mas que el bombo en la
+    //    mezcla completa; la banda grave asegura que el pulso real pese lo suficiente.
+    const std::vector<float> lowBand = lowPass (mono, numSamples, sampleRate);
+    const std::vector<float> onset = combinedOnset (mono, lowBand.data(), numSamples, hopSize);
+    const int frames = (int) onset.size();
 
-    // 2. Ataques: solo las subidas de energia.
-    std::vector<float> onset ((size_t) frames, 0.0f);
-    for (size_t f = 1; f < envelope.size(); ++f)
-        onset[f] = std::max (0.0f, envelope[f] - envelope[f - 1]);
-
-    // 3. Retardo con mayor autocorrelacion entre 70 y 180 BPM.
+    // 2. Autocorrelacion de los ataques, normalizada por la cantidad de datos de cada retardo.
     const double frameRate = sampleRate / hopSize;
     const int lagMin = (int) std::floor (frameRate * 60.0 / maxBpm);
     const int lagMax = (int) std::ceil (frameRate * 60.0 / minBpm);
-    if (lagMax + 2 >= frames)
+    constexpr int combTeeth = 4;
+    if (lagMax * combTeeth + 8 >= frames)
         return {};
+    std::vector<double> ac ((size_t) (lagMax * combTeeth + 8), 0.0);
+    for (size_t lag = 1; lag < ac.size(); ++lag)
+        ac[lag] = autocorrelation (onset, (int) lag) / (double) (frames - (int) lag);
 
-    int bestLag = 0;
-    double bestScore = 0.0;
-    for (int lag = lagMin; lag <= lagMax; ++lag)
+    // 3. Tempo con un "peine": el pulso de verdad se repite a 1, 2, 3 y 4 pulsos. Un falso
+    //    pulso (por ejemplo 3/4 del real, tipico del dembow) falla en alguno de esos dientes.
+    //    Se prueban retardos fraccionarios: con uno entero, 4 x 54 no da en el pico de 4 x 54,4.
+    auto acAt = [&ac] (double lag)
     {
-        const double score = autocorrelation (onset, lag);
+        const auto i = (size_t) lag;
+        const double t = lag - (double) i;
+        return ac[i] * (1.0 - t) + ac[i + 1] * t;
+    };
+    double bestLag = 0.0, bestScore = 0.0;
+    for (double lag = lagMin; lag <= lagMax; lag += 0.1)
+    {
+        double score = 0.0;
+        for (int k = 1; k <= combTeeth; ++k)
+            score += acAt (k * lag);
         if (score > bestScore) { bestScore = score; bestLag = lag; }
     }
-    if (bestLag == 0 || bestScore <= 0.0)
+    if (bestLag <= 0.0 || bestScore <= 0.0)
         return {};
-
     // 4. Ajuste fino: el pico 4 pulsos mas alla da 4 veces mas precision que el primero.
     //    Se busca alrededor de 4 x bestLag y se afina con una parabola por el maximo y sus vecinos.
     constexpr int beatsAhead = 4;
     double period = bestLag;
-    const int farCentre = bestLag * beatsAhead;
+    const int farCentre = (int) std::lround (bestLag * beatsAhead);
     if (farCentre + beatsAhead + 2 < frames)
     {
         int farLag = farCentre;
         double farScore = 0.0;
         for (int lag = farCentre - beatsAhead; lag <= farCentre + beatsAhead; ++lag)
         {
-            const double score = autocorrelation (onset, lag);
+            const double score = ac[(size_t) lag];
             if (score > farScore) { farScore = score; farLag = lag; }
         }
-        const double a = autocorrelation (onset, farLag - 1);
-        const double c = autocorrelation (onset, farLag + 1);
+        const double a = ac[(size_t) farLag - 1];
+        const double c = ac[(size_t) farLag + 1];
         const double denom = a - 2.0 * farScore + c;
         const double offset = denom != 0.0 ? 0.5 * (a - c) / denom : 0.0;
         period = (farLag + offset) / beatsAhead;
@@ -98,17 +164,8 @@ TempoAnalysis analyse (const float* mono, int numSamples, double sampleRate)
     // 6. Fase, con una envolvente 4 veces mas fina (128 muestras, ~3 ms): se prueba cada
     //    desfase dentro de un periodo y se queda el que suma mas ataques en todos los pulsos.
     constexpr int fineHop = 128;
-    const int fineFrames = numSamples / fineHop;
-    std::vector<float> fineOnset ((size_t) fineFrames, 0.0f);
-    float previous = 0.0f;
-    for (int f = 0; f < fineFrames; ++f)
-    {
-        float sum = 0.0f;
-        for (int i = 0; i < fineHop; ++i)
-            sum += std::abs (mono[f * fineHop + i]);
-        fineOnset[(size_t) f] = std::max (0.0f, sum - previous);
-        previous = sum;
-    }
+    const std::vector<float> fineOnset = combinedOnset (mono, lowBand.data(), numSamples, fineHop);
+    const int fineFrames = (int) fineOnset.size();
     const double finePeriod = period * hopSize / fineHop;
     double bestPhase = 0.0, bestPhaseScore = -1.0;
     for (double phase = 0.0; phase < finePeriod; phase += 0.25)
@@ -156,10 +213,12 @@ TempoAnalysis analyse (const float* mono, int numSamples, double sampleRate)
     else
         phaseFrames = bestPhase;
 
-    // Un ataque que empieza dentro del fotograma f se ve como subida en f; de media el
-    // pulso cae medio fotograma antes.
+    // Paso de fotograma a segundos. Con la subida logaritmica el pico (interpolado) cae un
+    // tercio de fotograma antes del golpe; medido con golpes sinteticos en tres posiciones
+    // distintas dentro del fotograma (0,13 / 0,45 / 0,77), el desfase es el mismo en todas.
+    constexpr double peakToOnsetFrames = 1.0 / 3.0;
     const double periodSeconds = 60.0 / bpm;
-    double firstBeat = (phaseFrames - 0.5) * fineHop / sampleRate;
+    double firstBeat = (phaseFrames + peakToOnsetFrames) * fineHop / sampleRate;
     while (firstBeat < 0.0) firstBeat += periodSeconds;
     while (firstBeat >= periodSeconds) firstBeat -= periodSeconds;
 

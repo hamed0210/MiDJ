@@ -36,7 +36,13 @@ DeckComponent::DeckComponent (Deck& d, Deck& other, const juce::String& name)
             juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "MiDJ",
                                                     "SYNC necesita una cancion con BPM en los dos decks.");
     };
-    for (auto* b : { &loadButton, &cueButton, &playButton, &syncButton })
+    keyButton.onClick = [this]
+    {
+        deck.setKeyLock (! deck.isKeyLocked());
+        updateLabels();
+    };
+    keyButton.setTooltip ("Keylock: cambia el tempo sin cambiar el tono");
+    for (auto* b : { &loadButton, &cueButton, &playButton, &syncButton, &keyButton })
         addAndMakeVisible (b);
     cueButton.setColour (juce::TextButton::textColourOffId, cueColour);
 
@@ -131,6 +137,8 @@ void DeckComponent::updateLabels()
     tempoLabel.setText ((percent >= 0.0 ? "+" : "") + juce::String (percent, 2) + " %", juce::dontSendNotification);
 
     playButton.setButtonText (deck.isPlaying() ? "Pausa" : "Play");
+    keyButton.setColour (juce::TextButton::buttonColourId,
+                         deck.isKeyLocked() ? accent().withAlpha (0.6f) : DarkLookAndFeel::panel.brighter (0.15f));
     for (size_t i = 0; i < loopButtons.size(); ++i)
         loopButtons[i].setColour (juce::TextButton::buttonColourId,
                                   deck.getLoopBeats() == loopSizes[i] ? accent().withAlpha (0.6f)
@@ -233,6 +241,8 @@ void DeckComponent::resized()
 
     auto right = area.removeFromRight (70);
     tempoLabel.setBounds (right.removeFromBottom (20));
+    keyButton.setBounds (right.removeFromBottom (30).reduced (6, 2));
+    right.removeFromBottom (4);
     tempoSlider.setBounds (right);
 
     // Fila inferior: CUE, Play, SYNC y Cargar a la derecha.

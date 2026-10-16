@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine/BpmDetector.h"
+#include "Engine/TimeStretcher.h"
 
 #include <juce_audio_utils/juce_audio_utils.h>
 
@@ -39,9 +40,16 @@ public:
     void cue();
     double getCuePoint() const { return cuePoint.load(); }
 
-    // 1.0 = velocidad normal. Como un vinilo: cambia tempo y tono a la vez.
+    // 1.0 = velocidad normal. Sin keylock, como un vinilo: cambia tempo y tono a la vez.
+    // Con keylock cambia solo el tempo y el tono se mantiene.
     void setSpeed (double ratio);
     double getSpeed() const { return speed.load(); }
+
+    // Keylock (master tempo): activado por defecto.
+    void setKeyLock (bool shouldLock) { keyLock = shouldLock; }
+    bool isKeyLocked() const          { return keyLock.load(); }
+    // Motor del keylock. Se aplica en el proximo prepareToPlay (al abrir el audio).
+    void setKeyLockEngine (TimeStretcher::Engine e) { keyLockEngine = e; }
 
     double getPositionSeconds() const { return positionSeconds.load(); }
     void setPositionSeconds (double seconds);
@@ -83,6 +91,18 @@ private:
 
     void install (std::unique_ptr<Track> track, const juce::String& name, TempoAnalysis analysis);
     void requestSeek (double seconds);
+    void renderVinyl (float* left, float* right, int n);
+    void renderKeyLocked (float* left, float* right, int n);
+    // Avanza una posicion (en muestras del archivo) aplicando el bucle activo.
+    double advance (double position, double delta) const;
+
+    // Lee la cancion para el estirador desde feedPosition, a tempo original.
+    struct Feeder : TimeStretcher::Source
+    {
+        explicit Feeder (Deck& d) : deck (d) {}
+        void read (float* left, float* right, int n) override;
+        Deck& deck;
+    };
 
     juce::AudioFormatManager& formats;
     juce::AudioThumbnailCache thumbnailCache { 2 };
@@ -95,7 +115,7 @@ private:
     std::unique_ptr<Track> track;
     juce::String trackName;
 
-    std::atomic<bool> loading { false }, playing { false };
+    std::atomic<bool> loading { false }, playing { false }, keyLock { true };
     std::atomic<double> speed { 1.0 }, bpm { 0.0 }, firstBeat { 0.0 }, cuePoint { 0.0 };
     std::atomic<double> positionSeconds { 0.0 }, lengthSeconds { 0.0 };
     std::atomic<double> pendingSeek { -1.0 };            // < 0 = ninguna
@@ -105,8 +125,19 @@ private:
     std::shared_ptr<std::atomic<bool>> alive = std::make_shared<std::atomic<bool>> (true);
 
     // Solo del hilo de audio.
-    double readPosition = 0.0;      // en muestras del archivo, fraccionaria
+    double readPosition = 0.0;      // lo que se oye, en muestras del archivo (fraccionaria)
+    double feedPosition = 0.0;      // lo que se ha dado al estirador: va por delante
     double outputRate = 44100.0;
+    double fileStep = 1.0;          // muestras de archivo por muestra de salida a tempo 1
+    bool loopActive = false;        // copia del bucle para el bloque en curso
+    double loopStartSample = 0.0, loopEndSample = 0.0;
+    const Track* current = nullptr; // pista del bloque en curso (bajo trackLock)
+    bool stretching = false;        // el bloque anterior uso el estirador
+    bool stretcherDirty = true;     // hay que reiniciar el estirador antes de usarlo
+    TimeStretcher stretcher;
+    TimeStretcher::Engine keyLockEngine = TimeStretcher::Engine::faster;   // R3 no da tiempo real en un A8
+    Feeder feeder { *this };
+    juce::AudioBuffer<float> renderBuffer;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Deck)
 };

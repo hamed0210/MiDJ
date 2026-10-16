@@ -32,6 +32,7 @@ private:
     DeckComponent deckViewA { deckA, deckB, "A" };
     DeckComponent deckViewB { deckB, deckA, "B" };
     MixerComponent mixerView { mixer };
+    juce::TooltipWindow tooltips { this };
     juce::Slider crossfader;
     juce::Label crossfaderLabel;
 

@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.22)
+﻿cmake_minimum_required(VERSION 3.22)
 project(MiDJ VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -8,22 +8,44 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(JUCE_DIR "D:/Tools/JUCE" CACHE PATH "Carpeta de JUCE")
 add_subdirectory(${JUCE_DIR} ${CMAKE_BINARY_DIR}/JUCE)
 
+# Rubber Band (cambio de tempo sin cambio de tono). Licencia GPL: para vender MiDJ
+# hace falta su licencia comercial. Se compila en un solo archivo, como recomienda su autor.
+set(RUBBERBAND_DIR "D:/Tools/rubberband" CACHE PATH "Carpeta de Rubber Band")
+add_library(rubberband STATIC ${RUBBERBAND_DIR}/single/RubberBandSingle.cpp)
+target_include_directories(rubberband SYSTEM PUBLIC ${RUBBERBAND_DIR})
+target_compile_definitions(rubberband PRIVATE _USE_MATH_DEFINES NOMINMAX)
+option(RUBBERBAND_KISSFFT "Rubber Band con KissFFT en vez de su FFT interna" ON)
+if(RUBBERBAND_KISSFFT)
+    target_sources(rubberband PRIVATE ${RUBBERBAND_DIR}/src/ext/kissfft/kiss_fft.c
+                                      ${RUBBERBAND_DIR}/src/ext/kissfft/kiss_fftr.c)
+    target_include_directories(rubberband PRIVATE ${RUBBERBAND_DIR}/src/ext/kissfft)
+    target_compile_definitions(rubberband PRIVATE ALREADY_CONFIGURED USE_BQRESAMPLER NO_TIMING
+                               NO_THREADING NO_THREAD_CHECKS HAVE_KISSFFT)
+endif()
+if(MSVC)
+    # Siempre optimizada, tambien en Debug: sin optimizar es ~20 veces mas lenta y no da
+    # tiempo real. /O2 es incompatible con las comprobaciones /RTC1 de Debug, que se quitan.
+    string(REPLACE "/RTC1" "" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
+    target_compile_options(rubberband PRIVATE /W0 /bigobj /arch:AVX /fp:fast $<$<CONFIG:Debug>:/O2 /Ob2>)
+endif()
+
 # Motor de audio: independiente de la interfaz para poder probarlo solo
 add_library(MiDJEngine STATIC
     Source/Engine/BpmDetector.cpp
     Source/Engine/ChannelStrip.cpp
     Source/Engine/Deck.cpp
-    Source/Engine/Mixer.cpp)
+    Source/Engine/Mixer.cpp
+    Source/Engine/TimeStretcher.cpp)
 target_include_directories(MiDJEngine PUBLIC Source)
 # Los modulos JUCE se compilan una sola vez aqui (PRIVATE) y se exportan sus
 # cabeceras y definiciones a la app y a las pruebas (patron recomendado por JUCE).
 target_link_libraries(MiDJEngine
-    PRIVATE juce::juce_audio_utils juce::juce_audio_formats juce::juce_dsp
+    PRIVATE juce::juce_audio_utils juce::juce_audio_formats juce::juce_dsp rubberband
     PUBLIC  juce::juce_recommended_config_flags juce::juce_recommended_lto_flags
             juce::juce_recommended_warning_flags)
 target_compile_definitions(MiDJEngine PUBLIC
     JUCE_USE_MP3AUDIOFORMAT=1 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
-    JUCE_STANDALONE_APPLICATION=1 JUCE_DISPLAY_SPLASH_SCREEN=0)
+    JUCE_STANDALONE_APPLICATION=1)
 target_compile_definitions(MiDJEngine INTERFACE
     $<TARGET_PROPERTY:MiDJEngine,COMPILE_DEFINITIONS>)
 target_include_directories(MiDJEngine INTERFACE

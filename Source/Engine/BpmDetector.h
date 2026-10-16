@@ -3,8 +3,8 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 
 // Detecta el tempo (BPM) y la posicion del primer pulso de una cancion.
-// Metodo: envolvente de energia -> ataques (subidas de energia) -> autocorrelacion
-// de los ataques en los retardos que corresponden a 70-180 BPM, ajuste fino con el
+// Metodo: ataques (subidas de energia) de la mezcla y de los graves -> autocorrelacion
+// -> tempo con un "peine" de 1-4 pulsos en los retardos de 70-180 BPM, ajuste fino con el
 // pico 4 pulsos mas alla y plegado de octava al rango 85-170 BPM.
 // La fase sale de plegar los ataques sobre el periodo encontrado.
 namespace midj
