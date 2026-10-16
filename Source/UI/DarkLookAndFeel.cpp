@@ -36,4 +36,38 @@ void DarkLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int wid
     else
         g.drawHorizontalLine ((int) sliderPos, thumb.getX() + 3.0f, thumb.getRight() - 3.0f);
 }
+
+// Mando de mezclador: el arco de color sale de las 12 (posicion neutra) hacia el valor,
+// asi un EQ o un filtro en el centro no muestra nada encendido.
+void DarkLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height, float sliderPos,
+                                        float startAngle, float endAngle, juce::Slider& slider)
+{
+    const auto bounds = juce::Rectangle<float> ((float) x, (float) y, (float) width, (float) height).reduced (3.0f);
+    const float radius = juce::jmin (bounds.getWidth(), bounds.getHeight()) / 2.0f;
+    const auto centre = bounds.getCentre();
+    const float arcRadius = radius - 3.0f;
+    const float centreAngle = (startAngle + endAngle) / 2.0f;
+    const float angle = startAngle + sliderPos * (endAngle - startAngle);
+
+    auto arc = [&] (float from, float to, juce::Colour colour)
+    {
+        juce::Path p;
+        p.addCentredArc (centre.x, centre.y, arcRadius, arcRadius, 0.0f, from, to, true);
+        g.setColour (colour);
+        g.strokePath (p, juce::PathStrokeType (3.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    };
+    arc (startAngle, endAngle, background);
+    if (std::abs (angle - centreAngle) > 0.01f)
+        arc (juce::jmin (centreAngle, angle), juce::jmax (centreAngle, angle),
+             slider.findColour (juce::Slider::rotarySliderFillColourId));
+
+    // Cuerpo del mando y raya indicadora.
+    const float bodyRadius = arcRadius - 5.0f;
+    g.setColour (panel.brighter (0.25f));
+    g.fillEllipse (juce::Rectangle<float> (bodyRadius * 2.0f, bodyRadius * 2.0f).withCentre (centre));
+    const auto tip = centre.getPointOnCircumference (bodyRadius - 2.0f, angle);
+    const auto base = centre.getPointOnCircumference (bodyRadius * 0.25f, angle);
+    g.setColour (text);
+    g.drawLine ({ base, tip }, 2.5f);
+}
 }

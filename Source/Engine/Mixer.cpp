@@ -14,6 +14,8 @@ void Mixer::prepareToPlay (int samplesPerBlockExpected, double sampleRate)
 {
     deckA.prepareToPlay (samplesPerBlockExpected, sampleRate);
     deckB.prepareToPlay (samplesPerBlockExpected, sampleRate);
+    stripA.prepare (sampleRate, samplesPerBlockExpected);
+    stripB.prepare (sampleRate, samplesPerBlockExpected);
     scratch.setSize (2, samplesPerBlockExpected);
 }
 
@@ -29,10 +31,12 @@ void Mixer::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
     if (scratch.getNumSamples() < n)
         scratch.setSize (2, n, false, false, true);   // solo crece si el driver cambia el tamano de bloque
 
-    // Deck A directamente en la salida, deck B en un bufer temporal.
+    // Deck A directamente en la salida, deck B en un bufer temporal; cada uno por su canal.
     deckA.getNextAudioBlock (info);
     juce::AudioSourceChannelInfo bInfo (&scratch, 0, n);
     deckB.getNextAudioBlock (bInfo);
+    stripA.process (*info.buffer, info.startSample, n);
+    stripB.process (scratch, 0, n);
 
     const float x = crossfader.load();
     const float gainA = leftGain (x), gainB = rightGain (x);

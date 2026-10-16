@@ -4,10 +4,11 @@
 #include "Engine/Mixer.h"
 #include "UI/DarkLookAndFeel.h"
 #include "UI/DeckComponent.h"
+#include "UI/MixerComponent.h"
 
 namespace midj
 {
-// Ventana principal: dos decks, crossfader y el motor de audio.
+// Ventana principal: dos decks, el mezclador en el centro, crossfader y el motor de audio.
 class MainComponent : public juce::AudioAppComponent
 {
 public:
@@ -30,6 +31,7 @@ private:
 
     DeckComponent deckViewA { deckA, deckB, "A" };
     DeckComponent deckViewB { deckB, deckA, "B" };
+    MixerComponent mixerView { mixer };
     juce::Slider crossfader;
     juce::Label crossfaderLabel;
 

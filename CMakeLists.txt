@@ -11,13 +11,14 @@ add_subdirectory(${JUCE_DIR} ${CMAKE_BINARY_DIR}/JUCE)
 # Motor de audio: independiente de la interfaz para poder probarlo solo
 add_library(MiDJEngine STATIC
     Source/Engine/BpmDetector.cpp
+    Source/Engine/ChannelStrip.cpp
     Source/Engine/Deck.cpp
     Source/Engine/Mixer.cpp)
 target_include_directories(MiDJEngine PUBLIC Source)
 # Los modulos JUCE se compilan una sola vez aqui (PRIVATE) y se exportan sus
 # cabeceras y definiciones a la app y a las pruebas (patron recomendado por JUCE).
 target_link_libraries(MiDJEngine
-    PRIVATE juce::juce_audio_utils juce::juce_audio_formats
+    PRIVATE juce::juce_audio_utils juce::juce_audio_formats juce::juce_dsp
     PUBLIC  juce::juce_recommended_config_flags juce::juce_recommended_lto_flags
             juce::juce_recommended_warning_flags)
 target_compile_definitions(MiDJEngine PUBLIC
@@ -36,6 +37,7 @@ target_sources(MiDJ PRIVATE
     Source/Main.cpp
     Source/MainComponent.cpp
     Source/UI/DeckComponent.cpp
+    Source/UI/MixerComponent.cpp
     Source/UI/DarkLookAndFeel.cpp)
 target_link_libraries(MiDJ PRIVATE MiDJEngine)
 
