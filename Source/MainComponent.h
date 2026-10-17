@@ -12,6 +12,8 @@
 #include "UI/MidiLearnOverlay.h"
 #include "UI/MixerComponent.h"
 #include "UI/SamplerPanel.h"
+#include "UI/VideoWindow.h"
+#include "Video/DeckVideo.h"
 
 namespace midj
 {
@@ -66,6 +68,14 @@ private:
     juce::Slider crossfader;
     juce::Label crossfaderLabel;
     juce::TextButton midiButton { "MIDI" };
+    // Video: un decodificador por deck y la ventana con la mezcla (se crea al abrirla).
+    DeckVideo videoA { deckA };
+    DeckVideo videoB { deckB };
+    std::unique_ptr<VideoWindow> videoWindow;
+    juce::TextButton videoButton { "VIDEO" };
+    void toggleVideoWindow();
+    juce::String videoTitleFor (int deckIndex);
+    std::array<std::pair<juce::File, juce::String>, 2> videoTitles;   // para no consultar la biblioteca a cada fotograma
     MidiLearnOverlay midiOverlay { midi };
     int timerTicks = 0;
 

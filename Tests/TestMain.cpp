@@ -15,7 +15,18 @@
 #include "Engine/StemSeparator.h"
 #include "Engine/StemsService.h"
 #include "Library/Library.h"
+#include "Video/DeckVideo.h"
+#include "Video/MediaFoundation.h"
 #include "Library/TagReader.h"
+
+#ifndef NOMINMAX
+ #define NOMINMAX
+#endif
+#include <windows.h>
+#include <mfapi.h>
+#include <mfidl.h>
+#include <mfreadwrite.h>
+#include <wrl/client.h>
 
 #include <cmath>
 #include <map>
@@ -561,19 +572,21 @@ int analyseFiles (const juce::StringArray& paths)
 {
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
+    formats.registerFormat (new midj::MediaFoundationAudioFormat(), false);   // MP4, M4A...
     for (const auto& p : paths)
     {
         double rate = 0.0;
         const auto start = juce::Time::getMillisecondCounterHiRes();
         auto audio = readFile (formats, juce::File (p), rate);
+        const double readMs = juce::Time::getMillisecondCounterHiRes() - start;
         if (audio == nullptr)
         {
             std::printf ("No se pudo abrir: %s\n", p.toRawUTF8());
             continue;
         }
         const auto a = midj::BpmDetector::analyse (*audio, rate);
-        std::printf ("%7.2f BPM  primer pulso %.3f s  (%.3f s de audio a %.0f Hz, %.0f ms)  %s\n", a.bpm, a.firstBeat,
-                     audio->getNumSamples() / rate, rate, juce::Time::getMillisecondCounterHiRes() - start,
+        std::printf ("%7.2f BPM  primer pulso %.3f s  (%.3f s de audio a %.0f Hz, lectura %.0f ms, total %.0f ms)  %s\n", a.bpm, a.firstBeat,
+                     audio->getNumSamples() / rate, rate, readMs, juce::Time::getMillisecondCounterHiRes() - start,
                      juce::File (p).getFileName().toRawUTF8());
     }
     return 0;
@@ -585,6 +598,7 @@ int stretchFile (const juce::String& path, double speed, const juce::File& outDi
 {
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
+    formats.registerFormat (new midj::MediaFoundationAudioFormat(), false);   // MP4, M4A...
     double rate = 0.0;
     auto audio = readFile (formats, juce::File (path), rate);
     if (audio == nullptr)
@@ -2022,6 +2036,246 @@ int stemsFile (const juce::String& path, bool gpu, double seconds, const juce::F
     return 0;
 }
 
+
+// --- Video ------------------------------------------------------------------------------
+
+// MP4 de prueba con Media Foundation (como el AVI de colores con que se probo VirtualDJ):
+// H.264 de 'w' x 'h' a 25 fps con un color por segundo (rojo, verde, azul, amarillo, magenta)
+// y AAC estereo a 44,1 kHz con un La de 440 Hz.
+bool writeTestVideo (const juce::File& file, int seconds, int w = 320, int h = 240)
+{
+    using Microsoft::WRL::ComPtr;
+    if (! midj::MediaFoundation::initialiseThisThread())
+        return false;
+    file.deleteFile();
+    ComPtr<IMFSinkWriter> writer;
+    if (FAILED (MFCreateSinkWriterFromURL (file.getFullPathName().toWideCharPointer(), nullptr, nullptr, &writer)))
+        return false;
+    constexpr UINT32 fps = 25, rate = 44100;
+
+    ComPtr<IMFMediaType> vOut, vIn, aOut, aIn;
+    MFCreateMediaType (&vOut);
+    vOut->SetGUID (MF_MT_MAJOR_TYPE, MFMediaType_Video);
+    vOut->SetGUID (MF_MT_SUBTYPE, MFVideoFormat_H264);
+    vOut->SetUINT32 (MF_MT_AVG_BITRATE, 1000000);
+    vOut->SetUINT32 (MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
+    MFSetAttributeSize (vOut.Get(), MF_MT_FRAME_SIZE, (UINT32) w, (UINT32) h);
+    MFSetAttributeRatio (vOut.Get(), MF_MT_FRAME_RATE, fps, 1);
+    MFSetAttributeRatio (vOut.Get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
+    DWORD videoStream = 0, audioStream = 0;
+    if (FAILED (writer->AddStream (vOut.Get(), &videoStream)))
+        return false;
+    MFCreateMediaType (&vIn);
+    vIn->SetGUID (MF_MT_MAJOR_TYPE, MFMediaType_Video);
+    vIn->SetGUID (MF_MT_SUBTYPE, MFVideoFormat_RGB32);
+    vIn->SetUINT32 (MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
+    vIn->SetUINT32 (MF_MT_DEFAULT_STRIDE, (UINT32) (w * 4));
+    MFSetAttributeSize (vIn.Get(), MF_MT_FRAME_SIZE, (UINT32) w, (UINT32) h);
+    MFSetAttributeRatio (vIn.Get(), MF_MT_FRAME_RATE, fps, 1);
+    MFSetAttributeRatio (vIn.Get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
+    if (FAILED (writer->SetInputMediaType (videoStream, vIn.Get(), nullptr)))
+        return false;
+
+    MFCreateMediaType (&aOut);
+    aOut->SetGUID (MF_MT_MAJOR_TYPE, MFMediaType_Audio);
+    aOut->SetGUID (MF_MT_SUBTYPE, MFAudioFormat_AAC);
+    aOut->SetUINT32 (MF_MT_AUDIO_BITS_PER_SAMPLE, 16);
+    aOut->SetUINT32 (MF_MT_AUDIO_SAMPLES_PER_SECOND, rate);
+    aOut->SetUINT32 (MF_MT_AUDIO_NUM_CHANNELS, 2);
+    aOut->SetUINT32 (MF_MT_AUDIO_AVG_BYTES_PER_SECOND, 16000);
+    if (FAILED (writer->AddStream (aOut.Get(), &audioStream)))
+        return false;
+    MFCreateMediaType (&aIn);
+    aIn->SetGUID (MF_MT_MAJOR_TYPE, MFMediaType_Audio);
+    aIn->SetGUID (MF_MT_SUBTYPE, MFAudioFormat_PCM);
+    aIn->SetUINT32 (MF_MT_AUDIO_BITS_PER_SAMPLE, 16);
+    aIn->SetUINT32 (MF_MT_AUDIO_SAMPLES_PER_SECOND, rate);
+    aIn->SetUINT32 (MF_MT_AUDIO_NUM_CHANNELS, 2);
+    aIn->SetUINT32 (MF_MT_AUDIO_BLOCK_ALIGNMENT, 4);
+    aIn->SetUINT32 (MF_MT_AUDIO_AVG_BYTES_PER_SECOND, rate * 4);
+    if (FAILED (writer->SetInputMediaType (audioStream, aIn.Get(), nullptr)) || FAILED (writer->BeginWriting()))
+        return false;
+
+    const uint32_t colours[] = { 0xffff0000, 0xff00ff00, 0xff0000ff, 0xffffff00, 0xffff00ff };
+    auto writeSample = [&] (DWORD stream, const void* bytes, DWORD size, LONGLONG time, LONGLONG duration)
+    {
+        ComPtr<IMFMediaBuffer> buffer;
+        ComPtr<IMFSample> sample;
+        MFCreateMemoryBuffer (size, &buffer);
+        BYTE* data = nullptr;
+        buffer->Lock (&data, nullptr, nullptr);
+        std::memcpy (data, bytes, size);
+        buffer->Unlock();
+        buffer->SetCurrentLength (size);
+        MFCreateSample (&sample);
+        sample->AddBuffer (buffer.Get());
+        sample->SetSampleTime (time);
+        sample->SetSampleDuration (duration);
+        return SUCCEEDED (writer->WriteSample (stream, sample.Get()));
+    };
+    std::vector<uint32_t> frame ((size_t) w * (size_t) h);
+    std::vector<int16_t> pcm ((size_t) rate / fps * 2);
+    for (UINT32 f = 0; f < (UINT32) seconds * fps; ++f)
+    {
+        std::fill (frame.begin(), frame.end(), colours[(f / fps) % 5]);
+        if (! writeSample (videoStream, frame.data(), (DWORD) (frame.size() * 4), (LONGLONG) f * 10000000 / fps, 10000000 / fps))
+            return false;
+        for (size_t i = 0; i < pcm.size() / 2; ++i)
+        {
+            const double t = (double) (f * (rate / fps) + i) / rate;
+            const auto v = (int16_t) (12000.0 * std::sin (2.0 * juce::MathConstants<double>::pi * 440.0 * t));
+            pcm[2 * i] = pcm[2 * i + 1] = v;
+        }
+        if (! writeSample (audioStream, pcm.data(), (DWORD) (pcm.size() * 2), (LONGLONG) f * 10000000 / fps, 10000000 / fps))
+            return false;
+    }
+    return SUCCEEDED (writer->Finalize());
+}
+
+// Color dominante del centro de una imagen: 'R', 'G', 'B', 'Y' (rojo + verde) o 'M' (rojo + azul).
+char dominantColour (const juce::Image& image)
+{
+    const auto c = image.getPixelAt (image.getWidth() / 2, image.getHeight() / 2);
+    const bool r = c.getRed() > 160, g = c.getGreen() > 160, b = c.getBlue() > 160;
+    if (r && g && ! b) return 'Y';
+    if (r && b && ! g) return 'M';
+    if (r && ! g && ! b) return 'R';
+    if (g && ! r && ! b) return 'G';
+    if (b && ! r && ! g) return 'B';
+    return '?';
+}
+
+void testVideo()
+{
+    const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("MiDJTestsVideo.mp4");
+    check (writeTestVideo (file, 5), "video: se crea un MP4 de prueba (H.264 + AAC)", 1.0, 1.0);
+
+    juce::String error;
+    auto video = midj::VideoDecoder::open (file, 160, error);
+    check (video != nullptr, ("video: Media Foundation lo abre " + error).toRawUTF8(), 1.0, 1.0);
+    if (video == nullptr)
+        return;
+    check (video->getWidth() == 160 && video->getHeight() == 120 && std::abs (video->getFrameRate() - 25.0) < 0.01
+               && std::abs (video->getDuration() - 5.0) < 0.1,
+           "video: 160x120 (reducido), 25 fps, 5 s", video->getWidth(), 160);
+
+    juce::Image image;
+    juce::String seen;
+    for (double t : { 0.5, 1.5, 2.5, 3.5, 4.5 })   // hacia delante, seguido
+        seen += video->frameAt (t, image) ? juce::String::charToString (dominantColour (image)) : "-";
+    check (seen == "RGBYM", ("video: un color por segundo en orden (" + seen + ")").toRawUTF8(), 0.0, 0.0);
+    const bool backOk = video->frameAt (0.2, image) && dominantColour (image) == 'R'
+                     && video->frameAt (3.9, image) && dominantColour (image) == 'Y';
+    check (backOk, "video: saltar atras y adelante da el fotograma correcto", 0.0, 0.0);
+    // Salto con limite de fotogramas: entrega uno anterior enseguida y alcanza en las vueltas siguientes.
+    video->frameAt (0.0, image);
+    bool catchUpOk = video->frameAt (4.6, image, 1) && video->getCurrentFrameTime() < 4.6 && video->isCatchingUp();
+    int rounds = 0;
+    while (catchUpOk && video->isCatchingUp() && rounds++ < 200)
+        catchUpOk = video->frameAt (4.6, image, 2);
+    check (catchUpOk && ! video->isCatchingUp() && std::abs (video->getCurrentFrameTime() - 4.6) < 1e-3 && dominantColour (image) == 'M',
+           "video: tras un salto avanza por partes hasta alcanzar (4,6 s = fotograma 115)", video->getCurrentFrameTime(), 4.6);
+    const bool exactOk = video->frameAt (1.04, image);
+    check (exactOk && std::abs (video->getCurrentFrameTime() - 1.04) < 1e-3,
+           "video: fotograma exacto (1,04 s = fotograma 26)", video->getCurrentFrameTime(), 1.04);
+
+    // El sonido del MP4 entra en un deck como cualquier cancion.
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    formats.registerFormat (new midj::MediaFoundationAudioFormat(), false);
+    double rate = 0.0;
+    auto audio = readFile (formats, file, rate);
+    check (audio != nullptr && rate == 44100.0 && std::abs (audio->getNumSamples() / rate - 5.0) < 0.1,
+           "video: su audio se lee (44,1 kHz, 5 s)", audio ? audio->getNumSamples() / rate : 0.0, 5.0);
+    if (audio != nullptr)
+        check (std::abs (sineFrequency (*audio, (int) (1.0 * rate), (int) (4.0 * rate)) - 440.0) < 0.5,
+               "video: el audio es el La de 440 Hz", sineFrequency (*audio, (int) (1.0 * rate), (int) (4.0 * rate)), 440.0);
+
+    // Lectura con saltos (lo que hace un lector al pedir trozos sueltos).
+    std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
+    juce::AudioBuffer<float> part (2, 4410);
+    bool same = reader != nullptr && audio != nullptr;
+    if (same)
+        for (juce::int64 start : { (juce::int64) 88200, (juce::int64) 22050, (juce::int64) 150000 })
+        {
+            reader->read (&part, 0, 4410, start, true, true);
+            for (int i = 0; i < 4410 && same; ++i)
+                same = std::abs (part.getSample (0, i) - audio->getSample (0, (int) start + i)) < 1e-4f;
+        }
+    check (same, "video: leer trozos sueltos da lo mismo que leer seguido", 0.0, 0.0);
+    reader.reset();
+
+    // El video de un deck sigue la posicion del deck (saltos adelante y atras).
+    {
+        midj::Deck deck (formats);
+        deck.loadBuffer (juce::AudioBuffer<float> (2, 5 * 44100), 44100.0, "video", { 120.0, 0.0 });
+        midj::DeckVideo deckVideo (deck, 160);
+        deckVideo.setFile (file);
+        auto colourAt = [&] (double seconds)
+        {
+            deck.setPositionSeconds (seconds);
+            for (int i = 0; i < 200; ++i)   // hasta 2 s
+            {
+                juce::Thread::sleep (10);
+                const auto frame = deckVideo.getFrame();
+                if (frame.isValid() && std::abs (deckVideo.getFrameTime() - std::floor (seconds * 25.0) / 25.0) < 1e-3)
+                    return dominantColour (frame);
+            }
+            return '-';
+        };
+        juce::String followed;
+        for (double t : { 2.5, 0.5, 4.5, 1.5 })
+            followed += juce::String::charToString (colourAt (t));
+        check (deckVideo.hasVideo() && followed == "BRMG", ("video: el video del deck sigue su posicion (" + followed + ")").toRawUTF8(), 0.0, 0.0);
+        deckVideo.setFile ({});
+        juce::Thread::sleep (100);
+        check (! deckVideo.hasVideo() && ! deckVideo.getFrame().isValid(), "video: cancion sin video = sin imagen", 0.0, 0.0);
+    }
+    file.deleteFile();
+}
+
+// MiDJTests --video archivo: datos del video y velocidad de decodificacion.
+int videoInfo (const juce::File& file)
+{
+    juce::String error;
+    auto video = midj::VideoDecoder::open (file, 640, error);
+    if (video == nullptr)
+    {
+        std::printf ("%s\n", error.toRawUTF8());
+        return 1;
+    }
+    std::printf ("%s: %dx%d (reducido), %.2f fps, %.1f s\n", file.getFileName().toRawUTF8(), video->getWidth(), video->getHeight(),
+                 video->getFrameRate(), video->getDuration());
+    juce::Image image;
+    const auto start = juce::Time::getMillisecondCounterHiRes();
+    int frames = 0;
+    for (double t = 10.0; t < 20.0; t += 1.0 / video->getFrameRate(), ++frames)
+        if (! video->frameAt (t, image))
+            break;
+    const double took = (juce::Time::getMillisecondCounterHiRes() - start) / 1000.0;
+    std::printf ("  10 s de video (%d fotogramas) decodificados en %.2f s: %.0f %% del tiempo real\n", frames, took, took / 10.0 * 100.0);
+    const auto seekStart = juce::Time::getMillisecondCounterHiRes();
+    video->frameAt (60.0, image);
+    video->frameAt (30.0, image);
+    std::printf ("  dos saltos (a 60 s y atras a 30 s): %.0f ms\n", juce::Time::getMillisecondCounterHiRes() - seekStart);
+    // Lo que hace un deck tras un salto: entregar enseguida un fotograma y seguir hasta alcanzar.
+    const auto jumpStart = juce::Time::getMillisecondCounterHiRes();
+    video->frameAt (100.0, image, 1);
+    const double firstFrame = juce::Time::getMillisecondCounterHiRes() - jumpStart;
+    const double keyFrame = video->getCurrentFrameTime();
+    while (video->isCatchingUp() && video->frameAt (100.0, image, 6)) {}
+    std::printf ("  salto a 100 s: primer fotograma (el clave de %.2f s) en %.0f ms, alcanzado en %.0f ms\n",
+                 keyFrame, firstFrame, juce::Time::getMillisecondCounterHiRes() - jumpStart);
+    video->frameAt (30.0, image);
+    // El fotograma de los 30 s, para mirarlo.
+    const auto png = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("MiDJ video 30s.png");
+    png.deleteFile();
+    juce::FileOutputStream out (png);
+    if (image.isValid() && juce::PNGImageFormat().writeImageToStream (image, out))
+        std::printf ("  fotograma de los 30 s: %s\n", png.getFullPathName().toRawUTF8());
+    return 0;
+}
+
 }
 
 #if JUCE_WINDOWS
@@ -2047,6 +2301,7 @@ int main (int argc, char* argv[])
     {
         juce::AudioFormatManager formats;
         formats.registerBasicFormats();
+        formats.registerFormat (new midj::MediaFoundationAudioFormat(), false);   // MP4, M4A...
         double rateA = 0.0, rateB = 0.0;
         auto a = readFile (formats, juce::File (args[1]), rateA);
         auto b = readFile (formats, juce::File (args[2]), rateB);
@@ -2062,6 +2317,7 @@ int main (int argc, char* argv[])
     {
         juce::AudioFormatManager formats;
         formats.registerBasicFormats();
+        formats.registerFormat (new midj::MediaFoundationAudioFormat(), false);   // MP4, M4A...
         const auto s = midj::SampleData::loadFile (juce::File (args[1]), formats);
         if (s == nullptr)
         {
@@ -2078,6 +2334,7 @@ int main (int argc, char* argv[])
     {
         juce::AudioFormatManager formats;
         formats.registerBasicFormats();
+        formats.registerFormat (new midj::MediaFoundationAudioFormat(), false);   // MP4, M4A...
         for (int i = 1; i < args.size(); ++i)
         {
             double rate = 0.0;
@@ -2095,6 +2352,8 @@ int main (int argc, char* argv[])
     if (args[0] == "--stems" && args.size() >= 2)
         return stemsFile (args[1], args[2] == "gpu", args.size() >= 4 ? args[3].getDoubleValue() : 30.0,
                           juce::File ("D:/Hamed/VirtualDJ/Pruebas stems"));
+    if (args[0] == "--video" && args.size() >= 2)
+        return videoInfo (juce::File (args[1]));
     if (args[0] == "--benchmark")
     {
         benchmarkKeyLock (midj::TimeStretcher::Engine::finer);
@@ -2129,6 +2388,9 @@ int main (int argc, char* argv[])
     std::printf ("== Canal: ganancia, EQ de 3 bandas, filtro y volumen ==\n");
     testChannelStrip();
     testMixerChannels();
+
+    std::printf ("== Video ==\n");
+    testVideo();
 
     std::printf ("== Stems con IA ==\n");
     testStemStft();

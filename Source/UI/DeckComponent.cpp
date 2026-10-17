@@ -119,7 +119,7 @@ void DeckComponent::chooseFile()
 {
     chooser = std::make_unique<juce::FileChooser> ("Elige una cancion",
                                                    juce::File::getSpecialLocation (juce::File::userMusicDirectory),
-                                                   "*.mp3;*.wav;*.flac;*.ogg;*.aif;*.aiff");
+                                                   "*.mp3;*.wav;*.flac;*.ogg;*.aif;*.aiff;*.mp4;*.m4a;*.mov;*.m4v;*.wmv;*.wma;*.aac");
     chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
                           [this] (const juce::FileChooser& fc)
                           {

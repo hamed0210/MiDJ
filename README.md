@@ -48,6 +48,9 @@ Source/
     StemSeparator.*     separacion de voz con IA (Spleeter en ONNX Runtime)
     StemsService.*      cola de separacion en segundo plano y cache de stems
     SampleData.*        sonidos del sampler: audio y .vdjsample de VirtualDJ
+  Video/                video
+    MediaFoundation.*   audio y video de MP4/MOV/WMV/M4A con Media Foundation de Windows
+    DeckVideo.*         hilo de video de un deck: el fotograma que toca segun su posicion
   Control/              controladoras MIDI
     Actions.*           acciones asignables (play, cue, tempo, EQ, efectos, jog...)
     MidiMapping.*       asignaciones mensaje MIDI -> accion, guardadas en XML
@@ -63,6 +66,7 @@ Source/
     EffectsRow.*        fila FX de un deck: elegir efecto, encender y mando
     MidiLearnOverlay.*  capa del modo aprender MIDI
     SamplerPanel.*      panel del sampler: pads, volumen y STOP
+    VideoWindow.*       ventana de video: mezcla de los decks segun el crossfader
     DarkLookAndFeel.*   estilo visual oscuro
 Tests/
   TestMain.cpp          pruebas automáticas del motor (ctest) y herramientas:
@@ -72,6 +76,7 @@ Tests/
                         MiDJTests --sample archivo            datos de un sonido (.vdjsample o audio)
                         MiDJTests --mixpoints canciones...    puntos de automix
                         MiDJTests --stems cancion [cpu|gpu] [s] separa voz e instrumental (WAV)
+                        MiDJTests --video archivo             datos y velocidad de decodificacion de un video
                         MiDJTests --benchmark                 CPU del keylock y de los efectos
 ```
 
@@ -90,6 +95,14 @@ canción) y después aparecen **VOZ** e **INSTR** para apagar cada parte. Tambi�
 **Preparar stems**. La voz se guarda en `%APPDATA%\MiDJ\Stems` (FLAC) y la próxima vez se lee de ahí en segundos.
 Por defecto se usa la CPU; la tarjeta gráfica (DirectML) se activa escribiendo `<STEMS device="gpu"/>` en
 `%APPDATA%\MiDJ\stems.xml` (en la Radeon R5 de este portátil DirectML se cuelga, por eso no se prueba sola).
+
+## Video
+
+Los MP4, MOV, M4V, WMV y 3GP se cargan en un deck como cualquier canción (también M4A, AAC y WMA), con los
+codecs de Windows (Media Foundation, sin FFmpeg). Botón **VIDEO** (junto a MIDI): abre la ventana de video, que
+mezcla los dos decks según el crossfader; una canción sin video se ve como un rótulo con el título y el
+artista. Doble clic en la ventana: pantalla completa, en el segundo monitor si hay uno (Esc para salir).
+El video sigue la posición que se oye del deck: pitch, saltos, CUE y bucles.
 
 ## Sampler
 
@@ -139,3 +152,4 @@ los pesos de Spleeter son de Deezer con licencia MIT (exportados a ONNX por el p
 - Sampler de 8 pads: disparo on/off, mantener y repetir; tempo libre, sincronizado (plegado a 0,66-1,5) o bloqueado al pulso; fundidos de 128 muestras; grabación de 4/8/16 pulsos de un deck empezando en el pulso; lee los .vdjsample de VirtualDJ; banco guardado; pads asignables por MIDI.
 - Automix de dos decks con puntos de automix calculados al cargar cada canción (sonido, fundido y parte rítmica, con las reglas de VirtualDJ): mezcla a tempo o con fundido, mezclar ya, saltar, lista guardada y acciones MIDI.
 - Stems con IA: voz e instrumental con Spleeter 2 stems (ONNX Runtime, CPU o DirectML) separados en segundo plano con caché en disco; mezcla en el deck sin clics y exacta con los dos encendidos; botones VOZ/INSTR, preparar desde el navegador y acciones MIDI.
+- Video: MP4/MOV/WMV (y M4A/AAC/WMA) en los decks con Media Foundation de Windows; un hilo de video por deck que sigue la posición que se oye (tras un salto, primer fotograma en ~0,1 s y alcanza al audio sin congelarse); ventana VIDEO con la mezcla según el crossfader, rótulo con título y artista para las canciones sin video y pantalla completa sin bordes en el segundo monitor.

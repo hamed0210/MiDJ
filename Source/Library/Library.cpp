@@ -220,7 +220,8 @@ juce::String Library::normalise (const juce::String& text)
 
 bool Library::isAudioFile (const juce::File& file)
 {
-    return file.hasFileExtension ("mp3;wav;flac;ogg;aif;aiff");
+    // Mas los de Media Foundation: videos (MP4, MOV, WMV) y M4A/AAC/WMA.
+    return file.hasFileExtension ("mp3;wav;flac;ogg;aif;aiff;mp4;m4a;mov;m4v;wmv;wma;aac;3gp");
 }
 
 void Library::addFolder (const juce::File& folder)

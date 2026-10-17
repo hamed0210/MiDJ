@@ -6,6 +6,7 @@ MainComponent::MainComponent()
 {
     setLookAndFeel (&lookAndFeel);
     formatManager.registerBasicFormats();   // WAV, AIFF, FLAC, Ogg y MP3
+    formatManager.registerFormat (new MediaFoundationAudioFormat(), false);   // el sonido de MP4/MOV/WMV y M4A
 
     // Biblioteca: lo que un deck analiza se guarda para la proxima vez.
     if (! library.open())
@@ -91,6 +92,10 @@ MainComponent::MainComponent()
     midiButton.setTooltip ("Aprender MIDI: asignar los controles de una controladora");
     midiButton.onClick = [this] { toggleMidiLearn(); };
     addAndMakeVisible (midiButton);
+    videoButton.setClickingTogglesState (true);
+    videoButton.setTooltip ("Ventana de video (doble clic en ella: pantalla completa)");
+    videoButton.onClick = [this] { toggleVideoWindow(); };
+    addAndMakeVisible (videoButton);
     addChildComponent (midiOverlay);
     startTimerHz (30);   // automix (decisiones y correccion de fase) y crossfader en pantalla
 
@@ -104,6 +109,7 @@ MainComponent::MainComponent()
 
 MainComponent::~MainComponent()
 {
+    videoWindow.reset();
     shutdownAudio();
     stopTimer();
     saveSamplerBank();
@@ -175,6 +181,8 @@ void MainComponent::timerCallback()
             if (file != juce::File() && stems.isCached (file))
                 stems.request (file, true);
         }
+        // El video del deck sigue a su cancion (mientras carga otra, no se ve la anterior).
+        (d == 0 ? videoA : videoB).setFile (deck.isLoading() ? juce::File() : file);
     }
     if (++timerTicks % 8 == 0)
         browser->updateAutomixStatus();
@@ -242,8 +250,41 @@ void MainComponent::resized()
     deckViewB.setBounds (top.withLeft (centre.getRight()).reduced (6));
 
     midiButton.setBounds (fader.getRight() + 24, fader.getY() + 10, 64, 28);
+    videoButton.setBounds (midiButton.getBounds().translated (72, 0));
     midiOverlay.setBounds (getLocalBounds());
     crossfaderLabel.setBounds (fader.removeFromTop (20));
     crossfader.setBounds (fader.reduced (0, 2));
+}
+
+void MainComponent::toggleVideoWindow()
+{
+    if (videoWindow == nullptr)
+    {
+        videoWindow = std::make_unique<VideoWindow> (std::array<DeckVideo*, 2> { &videoA, &videoB },
+                                                     std::array<const Deck*, 2> { &deckA, &deckB }, mixer);
+        videoWindow->getOutput().getTitle = [this] (int d) { return videoTitleFor (d); };
+        videoWindow->onClosed = [this] { videoButton.setToggleState (false, juce::dontSendNotification); };
+        videoWindow->centreWithSize (640, 360 + 32);
+    }
+    videoWindow->setVisible (videoButton.getToggleState());
+    if (videoButton.getToggleState())
+        videoWindow->toFront (true);
+}
+
+juce::String MainComponent::videoTitleFor (int deckIndex)
+{
+    const auto& deck = deckIndex == 0 ? deckA : deckB;
+    const auto file = deck.isLoading() ? juce::File() : deck.getLoadedFile();
+    if (file == juce::File())
+        return {};
+    auto& cached = videoTitles[(size_t) deckIndex];
+    if (cached.first != file)
+    {
+        // "Artista - Titulo" de la biblioteca; si no esta, el nombre del archivo.
+        cached = { file, file.getFileNameWithoutExtension() };
+        if (const auto track = library.findByFile (file); track && track->title.isNotEmpty())
+            cached.second = track->artist.isNotEmpty() ? track->artist + " - " + track->title : track->title;
+    }
+    return cached.second;
 }
 }
