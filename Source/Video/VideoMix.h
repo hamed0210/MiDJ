@@ -29,6 +29,9 @@ public:
     Compositor::Layer picture (int deckIndex);
     Compositor::Layer logoLayer() const;
     float getCrossfader() const { return mixer.getCrossfader(); }
+    // Nivel de video de cada deck (los faders de la pestana Video, como en VirtualDJ): 0 = no se ve.
+    void setLevel (int deckIndex, float level) { levels[(size_t) deckIndex] = juce::jlimit (0.0f, 1.0f, level); }
+    float getLevel (int deckIndex) const { return levels[(size_t) deckIndex].load(); }
 
     // El rotulo de una cancion sin video, del tamano del programa.
     static juce::Image renderCard (const juce::String& title, double bpm, int deckIndex, int width, int height);
@@ -52,5 +55,6 @@ private:
     juce::SpinLock cardLock;
     std::array<Card, 2> cards;
     juce::Image logo;
+    std::array<std::atomic<float>, 2> levels { 1.0f, 1.0f };
 };
 }

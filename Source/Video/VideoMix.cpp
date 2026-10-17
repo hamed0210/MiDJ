@@ -70,6 +70,7 @@ Compositor::Layer VideoMix::picture (int d)
         layer.version = cards[(size_t) d].version;
         layer.slot = d == 0 ? cardA : cardB;
     }
+    layer.opacity = getLevel (d);
     return layer;
 }
 
@@ -98,15 +99,15 @@ void VideoMix::buildLayers (std::vector<Compositor::Layer>& layers)
     // Fundido cruzado: A debajo y B encima con su parte del total (en luz lineal, en la GPU).
     if (w[0] > 0.0f && w[1] > 0.0f)
     {
-        picture[0].opacity = 1.0f;
-        picture[1].opacity = w[1] / (w[0] + w[1]);
+        picture[0].opacity = getLevel (0);
+        picture[1].opacity = w[1] / (w[0] + w[1]) * getLevel (1);
         layers.push_back (std::move (picture[0]));
         layers.push_back (std::move (picture[1]));
     }
     else
     {
         auto& only = picture[w[0] > 0.0f ? 0 : 1];
-        only.opacity = 1.0f;
+        only.opacity = getLevel (w[0] > 0.0f ? 0 : 1);
         layers.push_back (std::move (only));
     }
 }

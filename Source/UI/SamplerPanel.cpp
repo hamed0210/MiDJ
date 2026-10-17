@@ -272,6 +272,20 @@ void SamplerPanel::paint (juce::Graphics& g)
 void SamplerPanel::resized()
 {
     auto area = getLocalBounds().reduced (8);
+    if (area.getWidth() > area.getHeight() * 4)
+    {
+        // Ancho y bajo (en la fila del medio): nombre, volumen y STOP a la izquierda y los 8 pads en fila.
+        auto side = area.removeFromLeft (120);
+        auto top = side.removeFromTop (side.getHeight() / 2);
+        title.setBounds (top.removeFromLeft (70));
+        stopButton.setBounds (top.reduced (0, 2));
+        volume.setBounds (side);
+        area.removeFromLeft (8);
+        const int w = area.getWidth() / Sampler::numPads;
+        for (int i = 0; i < Sampler::numPads; ++i)
+            pads[(size_t) i]->setBounds (area.getX() + i * w, area.getY(), w, area.getHeight());
+        return;
+    }
     auto header = area.removeFromTop (28);
     title.setBounds (header.removeFromLeft (76));
     stopButton.setBounds (header.removeFromRight (56).reduced (0, 2));

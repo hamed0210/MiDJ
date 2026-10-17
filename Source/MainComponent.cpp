@@ -17,10 +17,18 @@ MainComponent::MainComponent()
         deck->onAnalysed = [this] (const juce::File& file, const TempoAnalysis& analysis) { library.setAnalysis (file, analysis); };
     deckViewA.onLoadFile = [this] (const juce::File& file) { loadIntoDeck (deckA, file); };
     deckViewB.onLoadFile = [this] (const juce::File& file) { loadIntoDeck (deckB, file); };
+    deckViewA.onActivated = [this] { setActiveDeck (0); };
+    deckViewB.onActivated = [this] { setActiveDeck (1); };
+    deckViewA.setActive (true);
 
     browser = std::make_unique<LibraryBrowser> (library);
     browser->onLoadRequest = [this] (const TrackInfo& track) { loadIntoFreeDeck (track.getFile()); };
-    browser->onLoadToDeck = [this] (const TrackInfo& track, int deckIndex) { loadIntoDeck (deckIndex == 0 ? deckA : deckB, track.getFile()); };
+    browser->onReturnKey = [this] (const TrackInfo& track) { loadIntoDeck (activeDeck == 0 ? deckA : deckB, track.getFile()); };
+    browser->onLoadToDeck = [this] (const TrackInfo& track, int deckIndex)
+    {
+        if (loadIntoDeck (deckIndex == 0 ? deckA : deckB, track.getFile()))
+            setActiveDeck (deckIndex);
+    };
 
     // Automix: la lista se guarda al cerrar y se recupera al abrir.
     automix.loadTrack = [this] (int deckIndex, const juce::File& file) { return loadIntoDeck (deckIndex == 0 ? deckA : deckB, file); };
@@ -63,23 +71,36 @@ MainComponent::MainComponent()
     addAndMakeVisible (deckViewB);
     addAndMakeVisible (mixerView);
     addAndMakeVisible (*browser);
+    addAndMakeVisible (automixPanel);
 
     // Sampler: el banco se lee al arrancar y se guarda cada vez que cambia.
     mixer.getSampler().loadBank (getDataFolder().getChildFile ("sampler.xml"), formatManager);
     samplerPanel.onBankChanged = [this] { saveSamplerBank(); };
     addAndMakeVisible (samplerPanel);
 
-    crossfader.setSliderStyle (juce::Slider::LinearHorizontal);
-    crossfader.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-    crossfader.setRange (0.0, 1.0);
-    crossfader.setValue (0.5, juce::dontSendNotification);
-    crossfader.setDoubleClickReturnValue (true, 0.5);
-    crossfader.onValueChange = [this] { mixer.setCrossfader ((float) crossfader.getValue()); };
-    addAndMakeVisible (crossfader);
+    // Video: el escenario existe siempre (las escenas y fuentes estan en la ventana principal);
+    // solo compone mientras se ve la pestana VIDEO o hay un proyector.
+    videoStage = std::make_unique<VideoStage> (std::array<DeckVideo*, 2> { &videoA, &videoB },
+                                               std::array<const Deck*, 2> { &deckA, &deckB }, mixer, formatManager, videoSettings(),
+                                               getDataFolder().getChildFile ("scenes.xml"));
+    videoStage->getTitle = [this] (int d) { return videoTitleFor (d); };
+    mixerView.setVideoStage (videoStage.get());
+    scenesPanel = std::make_unique<ScenesPanel> (*videoStage);
+    sourcesPanel = std::make_unique<SourcesPanel> (*videoStage);
+    addAndMakeVisible (*scenesPanel);
+    addAndMakeVisible (*sourcesPanel);
 
-    crossfaderLabel.setText ("CROSSFADER", juce::dontSendNotification);
-    crossfaderLabel.setJustificationType (juce::Justification::centred);
-    addAndMakeVisible (crossfaderLabel);
+    // Divisores de abajo: biblioteca | automix | escenas y fuentes.
+    bottomLayout.setItemLayout (0, 380, -1.0, -0.56);
+    bottomLayout.setItemLayout (1, 8, 8, 8);
+    bottomLayout.setItemLayout (2, 170, 600, 260);
+    bottomLayout.setItemLayout (3, 8, 8, 8);
+    bottomLayout.setItemLayout (4, 190, 700, 280);
+    for (auto* bar : { &bottomBar1, &bottomBar2 })
+    {
+        bar->setMouseCursor (juce::MouseCursor::LeftRightResizeCursor);
+        addAndMakeVisible (bar);
+    }
 
     // Controladoras MIDI: mapeo guardado, dispositivos y ganchos hacia la interfaz.
     controlSurface.onBrowserScroll = [this] (int steps) { browser->moveSelection (steps); };
@@ -94,23 +115,36 @@ MainComponent::MainComponent()
     midiButton.setTooltip ("Aprender MIDI: asignar los controles de una controladora");
     midiButton.onClick = [this] { toggleMidiLearn(); };
     addAndMakeVisible (midiButton);
-    videoButton.setClickingTogglesState (true);
-    videoButton.setTooltip ("Ventana de video (doble clic en ella: proyector en la otra pantalla; clic derecho: proyectores)");
-    videoButton.onClick = [this] { toggleVideoWindow(); };
-    addAndMakeVisible (videoButton);
+    helpButton.setTooltip ("Atajos de teclado");
+    helpButton.onClick = [this]
+    {
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Atajos de teclado", shortcutsHelp(), {}, this);
+    };
+    addAndMakeVisible (helpButton);
     addChildComponent (midiOverlay);
-    startTimerHz (30);   // automix (decisiones y correccion de fase) y crossfader en pantalla
+    startTimerHz (30);   // automix (decisiones y correccion de fase) y estado en pantalla
 
     const auto args = juce::JUCEApplicationBase::getCommandLineParameterArray();
     if (const int i = args.indexOf ("--simular-midi"); i >= 0 && i + 1 < args.size())
         startMidiSimulation (juce::File (args[i + 1].unquoted()));
 
-    setSize (1316, 665);
+    // Teclado: los atajos llegan aqui desde cualquier control que no los use.
+    setWantsKeyboardFocus (true);
+    addKeyListener (this);
+    keepFocusForShortcuts (*this);
+
+    loadLayout();
+    setSize (1316, 700);
     setAudioChannels (0, 2);   // sin entradas, salida estereo
 }
 
 MainComponent::~MainComponent()
 {
+    saveLayout();
+    removeKeyListener (this);
+    mixerView.setVideoStage (nullptr);
+    scenesPanel.reset();
+    sourcesPanel.reset();
     videoStage.reset();
     shutdownAudio();
     stopTimer();
@@ -120,6 +154,134 @@ MainComponent::~MainComponent()
     browser.reset();
     library.close();
     setLookAndFeel (nullptr);
+}
+
+void MainComponent::parentHierarchyChanged()
+{
+    // Con la ventana ya creada, el foco del teclado empieza aqui (para los atajos).
+    juce::Component::SafePointer<MainComponent> self (this);
+    juce::MessageManager::callAsync ([self] { if (self != nullptr && self->isShowing()) self->grabKeyboardFocus(); });
+}
+
+void MainComponent::keepFocusForShortcuts (juce::Component& root)
+{
+    for (auto* c : root.getChildren())
+    {
+        const bool keepsFocus = dynamic_cast<juce::TextEditor*> (c) != nullptr || dynamic_cast<juce::ListBox*> (c) != nullptr
+                             || dynamic_cast<ProjectorView*> (c) != nullptr;
+        if (! keepsFocus)
+        {
+            c->setMouseClickGrabsKeyboardFocus (false);
+            c->setWantsKeyboardFocus (false);
+        }
+        if (dynamic_cast<juce::ListBox*> (c) == nullptr)   // dentro de las listas JUCE gestiona su foco
+            keepFocusForShortcuts (*c);
+    }
+}
+
+juce::String MainComponent::shortcutsHelp()
+{
+    return "Espacio\tPlay / Pausa del deck activo\n"
+           "Tab\tCambiar de deck activo (el del borde de color; tambien con un clic en el deck)\n"
+           "C / S / K\tCUE / SYNC / Keylock del deck activo\n"
+           "Intro\tCargar la cancion elegida en el deck activo\n"
+           "Flechas arriba / abajo\tMoverse por la lista de canciones\n"
+           "Flechas izquierda / derecha\tCrossfader (con Mayus: del todo)\n"
+           "A\tAgregar la cancion elegida al automix\n"
+           "1 - 8\tPads del sampler\n"
+           "F1 - F9\tPasar a la escena 1 - 9\n"
+           "V\tPestana AUDIO / VIDEO del mezclador\n"
+           "Ctrl+F\tBuscar en la biblioteca (Esc o Intro: salir del buscador)\n"
+           "Supr\tQuitar la fuente elegida (vista previa o panel Fuentes)";
+}
+
+void MainComponent::setActiveDeck (int deckIndex)
+{
+    activeDeck = deckIndex;
+    deckViewA.setActive (deckIndex == 0);
+    deckViewB.setActive (deckIndex == 1);
+}
+
+bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
+{
+    const auto mods = key.getModifiers();
+    const int code = key.getKeyCode();
+    if (mods.isCommandDown())
+    {
+        if (code == 'F')
+        {
+            browser->focusSearch();
+            return true;
+        }
+        return false;
+    }
+    if (mods.isAltDown())
+        return false;
+
+    if (code == juce::KeyPress::spaceKey)                 { activeView().togglePlay(); return true; }
+    if (code == juce::KeyPress::tabKey)                   { setActiveDeck (1 - activeDeck); return true; }
+    if (code == juce::KeyPress::upKey)                    { browser->moveSelection (-1); return true; }
+    if (code == juce::KeyPress::downKey)                  { browser->moveSelection (+1); return true; }
+    if (code == juce::KeyPress::pageUpKey)                { browser->moveSelection (-10); return true; }
+    if (code == juce::KeyPress::pageDownKey)              { browser->moveSelection (+10); return true; }
+    if (code == juce::KeyPress::returnKey)
+    {
+        if (const auto track = browser->getSelectedTrack())
+            loadIntoDeck (activeDeck == 0 ? deckA : deckB, track->getFile());
+        return true;
+    }
+    if (code == juce::KeyPress::leftKey || code == juce::KeyPress::rightKey)
+    {
+        const float step = code == juce::KeyPress::leftKey ? -1.0f : 1.0f;
+        mixer.setCrossfader (mods.isShiftDown() ? (step < 0.0f ? 0.0f : 1.0f) : mixer.getCrossfader() + step * 0.05f);
+        return true;
+    }
+    if (code >= juce::KeyPress::F1Key && code <= juce::KeyPress::F9Key)
+    {
+        const int index = code - juce::KeyPress::F1Key;
+        const auto& scenes = videoStage->getScenes().scenes;
+        if (index < (int) scenes.size())
+            videoStage->switchToScene (scenes[(size_t) index].id);
+        return true;
+    }
+    const auto ch = juce::CharacterFunctions::toUpperCase (key.getTextCharacter());
+    if (ch >= '1' && ch <= '8')
+    {
+        const int pad = (int) (ch - '1');
+        if (! padKeyDown[(size_t) pad])   // la repeticion del teclado no vuelve a dispararlo
+        {
+            padKeyDown[(size_t) pad] = true;
+            mixer.getSampler().press (pad);
+        }
+        return true;
+    }
+    switch (ch)
+    {
+        case 'C': activeView().pressCue(); return true;
+        case 'S': activeView().pressSync(); return true;
+        case 'K': activeView().toggleKeyLock(); return true;
+        case 'V': mixerView.showVideoTab (! mixerView.isVideoTabShowing()); return true;
+        case 'A':
+            if (const auto track = browser->getSelectedTrack())
+                automix.add ({ track->getFile(), track->title, track->artist, track->bpm });
+            return true;
+        default: break;
+    }
+    return false;
+}
+
+bool MainComponent::keyStateChanged (bool, juce::Component*)
+{
+    // Soltar la tecla de un pad lo suelta (en los pads de modo mantener deja de sonar).
+    bool any = false;
+    for (int pad = 0; pad < Sampler::numPads; ++pad)
+        if (padKeyDown[(size_t) pad] && ! juce::KeyPress::isKeyCurrentlyDown ('1' + pad))
+        {
+            padKeyDown[(size_t) pad] = false;
+            mixer.getSampler().release (pad);
+            any = true;
+        }
+    return any;
 }
 
 bool MainComponent::loadIntoDeck (Deck& deck, const juce::File& file)
@@ -136,10 +298,17 @@ bool MainComponent::loadIntoDeck (Deck& deck, const juce::File& file)
 
 void MainComponent::loadIntoFreeDeck (const juce::File& file)
 {
+    // El deck donde se carga queda activo: el espacio la pone a sonar.
     if (! deckA.isPlaying())
-        loadIntoDeck (deckA, file);
+    {
+        if (loadIntoDeck (deckA, file))
+            setActiveDeck (0);
+    }
     else if (! deckB.isPlaying())
-        loadIntoDeck (deckB, file);
+    {
+        if (loadIntoDeck (deckB, file))
+            setActiveDeck (1);
+    }
     else
         juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "MiDJ",
                                                 "Los dos decks estan sonando. Arrastra la cancion al deck que quieras cambiar.");
@@ -155,8 +324,8 @@ void MainComponent::toggleMidiLearn()
         deckViewB.addLearnTargets (targets, "deck2.");
         mixerView.addLearnTargets (targets);
         samplerPanel.addLearnTargets (targets);
-        targets.push_back ({ &crossfader, "crossfader" });
         browser->addLearnTargets (targets);
+        automixPanel.addLearnTargets (targets);
         midiOverlay.setTargets (std::move (targets));
     }
     midiOverlay.setVisible (on);
@@ -187,9 +356,7 @@ void MainComponent::timerCallback()
         (d == 0 ? videoA : videoB).setFile (deck.isLoading() ? juce::File() : file);
     }
     if (++timerTicks % 8 == 0)
-        browser->updateAutomixStatus();
-    if (! crossfader.isMouseButtonDown())
-        crossfader.setValue (mixer.getCrossfader(), juce::dontSendNotification);
+        automixPanel.updateStatus();
 }
 
 void MainComponent::startMidiSimulation (const juce::File& script)
@@ -242,45 +409,62 @@ void MainComponent::paint (juce::Graphics& g)
 
 void MainComponent::resized()
 {
-    // Arriba los decks y el mezclador, en medio el crossfader y abajo el navegador.
+    // Arriba los decks y el mezclador, en medio el sampler y abajo los paneles.
     auto area = getLocalBounds().reduced (6);
-    auto top = area.removeFromTop (juce::jmax (330, area.getHeight() * 52 / 100));
-    auto fader = area.removeFromTop (46).withSizeKeepingCentre (360, 46);
-    samplerPanel.setBounds (area.removeFromRight (330).reduced (6));
-    browser->setBounds (area.reduced (6));
+    auto top = area.removeFromTop (juce::jmax (340, area.getHeight() * 50 / 100));
+    auto middle = area.removeFromTop (76);
 
-    const auto centre = top.withSizeKeepingCentre (250, top.getHeight());
+    const auto centre = top.withSizeKeepingCentre (270, top.getHeight());
     mixerView.setBounds (centre.reduced (6));
     deckViewA.setBounds (top.withRight (centre.getX()).reduced (6));
     deckViewB.setBounds (top.withLeft (centre.getRight()).reduced (6));
 
-    midiButton.setBounds (fader.getRight() + 24, fader.getY() + 10, 64, 28);
-    videoButton.setBounds (midiButton.getBounds().translated (72, 0));
+    // El sampler donde estaba el crossfader: bajo el deck A y el mezclador.
+    samplerPanel.setBounds (middle.withRight (centre.getRight()).reduced (6, 2));
+    auto buttons = middle.withLeft (centre.getRight() + 6).withSizeKeepingCentre (middle.getWidth() - centre.getRight() - 12, 30);
+    midiButton.setBounds (buttons.removeFromLeft (64));
+    buttons.removeFromLeft (8);
+    helpButton.setBounds (buttons.removeFromLeft (72));
+
+    // Abajo: biblioteca | automix | escenas y fuentes (divisores arrastrables).
+    auto bottom = area.reduced (6, 4);
+    juce::Component* columns[] = { browser.get(), &bottomBar1, &automixPanel, &bottomBar2, &videoColumn };
+    bottomLayout.layOutComponents (columns, 5, bottom.getX(), bottom.getY(), bottom.getWidth(), bottom.getHeight(), false, true);
+    auto video = videoColumn.getBounds();
+    scenesPanel->setBounds (video.removeFromTop (video.getHeight() * 45 / 100));
+    video.removeFromTop (6);
+    sourcesPanel->setBounds (video);
+
     midiOverlay.setBounds (getLocalBounds());
-    crossfaderLabel.setBounds (fader.removeFromTop (20));
-    crossfader.setBounds (fader.reduced (0, 2));
 }
 
-void MainComponent::toggleVideoWindow()
+void MainComponent::saveLayout()
 {
-    if (videoStage == nullptr)
-    {
-        videoStage = std::make_unique<VideoStage> (std::array<DeckVideo*, 2> { &videoA, &videoB },
-                                                   std::array<const Deck*, 2> { &deckA, &deckB }, mixer, videoSettings(),
-                                                   getDataFolder().getChildFile ("scenes.xml"));
-        if (! videoStage->isReady())
-        {
-            const auto error = videoStage->getError();
-            videoStage.reset();
-            videoButton.setToggleState (false, juce::dontSendNotification);
-            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Video",
-                                                    "No se pudo iniciar Direct3D 11: " + error);
-            return;
-        }
-        videoStage->getTitle = [this] (int d) { return videoTitleFor (d); };
-        videoStage->onPreviewClosed = [this] { videoButton.setToggleState (false, juce::dontSendNotification); };
-    }
-    videoStage->showPreview (videoButton.getToggleState());
+    juce::XmlElement xml ("LAYOUT");
+    xml.setAttribute ("library", (int) bottomLayout.getItemCurrentAbsoluteSize (0));
+    xml.setAttribute ("automix", (int) bottomLayout.getItemCurrentAbsoluteSize (2));
+    xml.setAttribute ("video", (int) bottomLayout.getItemCurrentAbsoluteSize (4));
+    xml.setAttribute ("folders", browser->getFoldersWidth());
+    xml.setAttribute ("tab", mixerView.isVideoTabShowing() ? "video" : "audio");
+    xml.writeTo (getDataFolder().getChildFile ("layout.xml"));
+}
+
+void MainComponent::loadLayout()
+{
+    const auto xml = juce::XmlDocument::parse (getDataFolder().getChildFile ("layout.xml"));
+    if (xml == nullptr)
+        return;
+    // Los anchos guardados como preferidos (si la ventana es mas estrecha, se reparten).
+    if (const int w = xml->getIntAttribute ("library"); w > 0)
+        bottomLayout.setItemLayout (0, 380, -1.0, w);
+    if (const int w = xml->getIntAttribute ("automix"); w > 0)
+        bottomLayout.setItemLayout (2, 170, 600, w);
+    if (const int w = xml->getIntAttribute ("video"); w > 0)
+        bottomLayout.setItemLayout (4, 190, 700, w);
+    if (const int w = xml->getIntAttribute ("folders"); w > 0)
+        browser->setFoldersWidth (w);
+    if (xml->getStringAttribute ("tab") == "video")
+        mixerView.showVideoTab (true);
 }
 
 juce::String MainComponent::videoTitleFor (int deckIndex)

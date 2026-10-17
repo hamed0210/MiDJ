@@ -37,6 +37,15 @@ public:
     // Cargar un archivo: lo usan el boton Cargar y el arrastre. Si no se asigna, deck.load().
     std::function<void (const juce::File&)> onLoadFile;
 
+    // Deck activo: el de los atajos de teclado (Espacio, C, S...). Se marca con un borde fino.
+    std::function<void()> onActivated;
+    void setActive (bool isActive);
+    // Atajos: los mismos botones de la pantalla.
+    void togglePlay() { playButton.triggerClick(); }
+    void pressCue() { cueButton.triggerClick(); }
+    void pressSync() { syncButton.triggerClick(); }
+    void toggleKeyLock() { keyButton.triggerClick(); }
+
     // Arrastre desde el navegador de la biblioteca y desde el Explorador de Windows.
     bool isInterestedInDragSource (const SourceDetails& details) override;
     void itemDragEnter (const SourceDetails&) override { setDragHighlight (true); }
@@ -75,7 +84,7 @@ private:
     juce::Label titleLabel, bpmLabel, timeLabel, tempoLabel;
     juce::Rectangle<int> waveformArea;
     std::unique_ptr<juce::FileChooser> chooser;
-    bool dragHighlight = false;
+    bool dragHighlight = false, active = false;
     EffectsRow effectsRow;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (DeckComponent)

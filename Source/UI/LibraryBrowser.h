@@ -8,8 +8,9 @@
 
 namespace midj
 {
-// Navegador de la biblioteca: carpetas a la izquierda, buscador y lista de canciones.
-// Una cancion se carga arrastrandola a un deck o con doble clic.
+// Navegador de la biblioteca: carpetas a la izquierda (con un divisor para ensancharlas),
+// buscador y lista de canciones (con un icono de audio o video). Una cancion se carga
+// arrastrandola a un deck o con doble clic.
 class LibraryBrowser : public juce::Component,
                        private juce::ChangeListener,
                        private juce::Timer,
@@ -21,15 +22,16 @@ public:
 
     // Doble clic en una cancion.
     std::function<void (const TrackInfo&)> onLoadRequest;
+    // Intro en la lista: cargar la cancion elegida (en el deck activo).
+    std::function<void (const TrackInfo&)> onReturnKey;
     // Menu de una cancion: cargar en un deck concreto (0 = A, 1 = B).
     std::function<void (const TrackInfo&, int deckIndex)> onLoadToDeck;
     // Menu de una cancion: preparar sus stems en segundo plano.
     std::function<void (const TrackInfo&)> onPrepareStems;
 
-    // La lista de automix aparece como un origen mas, con su barra de control.
-    void setAutomix (Automix* automix);
-    void updateAutomixStatus();   // la ventana lo llama a menudo (cuenta atras, avance)
-    // Controles asignables por MIDI: la lista (mover) y los botones del automix.
+    // Para el menu de una cancion (Agregar a automix); la lista esta en su propio panel.
+    void setAutomix (Automix* a) { automix = a; }
+    // Controles asignables por MIDI: la lista (mover).
     void addLearnTargets (std::vector<LearnTarget>& out);
 
     // Descripcion de arrastre: prefijo + ruta del archivo. Los decks la reconocen.
@@ -38,22 +40,27 @@ public:
     void paint (juce::Graphics& g) override;
     void resized() override;
 
-    // Controladora: mover la seleccion y saber cual es (para cargarla en un deck).
+    // Controladora y teclado: mover la seleccion y saber cual es (para cargarla en un deck).
     void moveSelection (int steps);
     std::optional<TrackInfo> getSelectedTrack() const;
     juce::Component& getTrackList() { return table; }
+    void focusSearch() { searchBox.grabKeyboardFocus(); }
+
+    // Ancho de la columna de carpetas (para guardarlo).
+    int getFoldersWidth() const { return sourceList.getWidth(); }
+    void setFoldersWidth (int w);
 
     // Para pruebas y para la interfaz: las canciones que se ven ahora.
     const std::vector<TrackInfo>& getVisibleTracks() const { return tracks; }
 
 private:
-    enum Columns { titleCol = 1, artistCol, bpmCol, durationCol, albumCol, genreCol };
+    enum Columns { typeCol = 1, titleCol, artistCol, bpmCol, durationCol, albumCol, genreCol };
 
     // Lista de origenes: "Toda la musica" y cada carpeta.
     struct SourceList : juce::ListBoxModel
     {
         explicit SourceList (LibraryBrowser& b) : owner (b) {}
-        int getNumRows() override { return 1 + owner.folders.size() + (owner.automix != nullptr ? 1 : 0); }
+        int getNumRows() override { return 1 + owner.folders.size(); }
         void paintListBoxItem (int row, juce::Graphics&, int width, int height, bool selected) override;
         void selectedRowsChanged (int) override { owner.refresh(); }
         juce::String getTooltipForRow (int row) override;
@@ -65,7 +72,6 @@ private:
     void chooseFolder();
     void removeSelectedFolder();
     juce::File selectedFolder() const;
-    bool isAutomixView() const { return automix != nullptr && sourceList.getSelectedRow() == folders.size() + 1; }
     static Automix::Item itemFor (const TrackInfo& t) { return { t.getFile(), t.title, t.artist, t.bpm }; }
     void showTrackMenu (int row);
 
@@ -79,6 +85,7 @@ private:
     void sortOrderChanged (int columnId, bool forwards) override;
     void cellDoubleClicked (int row, int column, const juce::MouseEvent&) override;
     void cellClicked (int row, int column, const juce::MouseEvent&) override;
+    void returnKeyPressed (int row) override;
     juce::var getDragSourceDescription (const juce::SparseSet<int>& rows) override;
 
     Library& library;
@@ -94,11 +101,11 @@ private:
     juce::TextEditor searchBox;
     juce::TableListBox table { "canciones", this };
 
+    // Divisor entre las carpetas y la lista (se arrastra a lo ancho).
+    juce::StretchableLayoutManager layout;
+    juce::StretchableLayoutResizerBar divider { &layout, 1, true };
+
     Automix* automix = nullptr;
-    juce::TextButton automixButton { "AUTOMIX" }, mixNowButton { "Mezclar ya" }, skipButton { "Saltar" },
-                     removeButton { "Quitar" }, clearButton { "Vaciar" };
-    juce::ComboBox fadeBox;
-    juce::Label automixStatus;
     std::unique_ptr<juce::FileChooser> chooser;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LibraryBrowser)

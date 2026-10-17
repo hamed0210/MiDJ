@@ -164,6 +164,8 @@ void MediaFileSource::setClockPosition (double seconds)
 
 void MediaFileSource::play()
 {
+    if (! file.existsAsFile())
+        return;   // sin archivo no hay nada que reproducir
     if (! opened)
         openFile();
     if (ended)
@@ -262,7 +264,7 @@ void MediaFileSource::tick()
 juce::String MediaFileSource::getStatus() const
 {
     if (! file.existsAsFile())
-        return "No se encuentra el archivo";
+        return file == juce::File() ? "Elige un archivo con Examinar" : "No se encuentra el archivo";
     if (! opened)
         return "Cerrado mientras no esta al aire";
     if (videoFailed.load() && ! audioOpen.load())

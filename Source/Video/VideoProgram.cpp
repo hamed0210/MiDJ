@@ -276,7 +276,7 @@ void VideoProgram::sceneLayers (const PreparedScene& scene, std::vector<Composit
                     add (a, (float) a.image.getWidth(), (float) a.image.getHeight());
                 if (w[1] > 0.0f)
                 {
-                    b.opacity = w[0] > 0.0f ? w[1] / (w[0] + w[1]) : 1.0f;
+                    b.opacity *= w[0] > 0.0f ? w[1] / (w[0] + w[1]) : 1.0f;
                     add (b, (float) b.image.getWidth(), (float) b.image.getHeight());
                 }
                 break;

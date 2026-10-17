@@ -39,6 +39,7 @@ Source/
     Deck.*              un plato: carga, reproduce, velocidad, BPM
     Mixer.*             mezcla de dos decks con crossfader
     MasterTap.*         lo que sale por el master y su pulso, para el visualizador
+    AuxAudio.*          sonidos que no son de los decks al master (multimedia, capturadora)
     ChannelStrip.*      canal de un deck: ganancia, EQ de 3 bandas, filtro, volumen
     BpmDetector.*       detección de tempo y del primer pulso
     TimeStretcher.*     keylock: cambio de tempo sin cambio de tono (Rubber Band)
@@ -58,6 +59,7 @@ Source/
     VideoProgram.*      la escena al aire, sus capas y las transiciones entre escenas
     Capture.*           captura de pantalla (DXGI) y de ventana (Windows Graphics Capture) en la GPU
     Visualizer.*        visualizador del master: espectro, onda y pulso
+    MediaSources.*      fuentes Multimedia (archivo) y Dispositivo de captura de video
   Control/              controladoras MIDI
     Actions.*           acciones asignables (play, cue, tempo, EQ, efectos, jog...)
     MidiMapping.*       asignaciones mensaje MIDI -> accion, guardadas en XML
@@ -68,13 +70,16 @@ Source/
     TagReader.*         etiquetas ID3 (v1, v2.2-2.4) y 'Artista - Titulo' del nombre
   UI/                   interfaz
     DeckComponent.*     panel de un deck: forma de onda, botones, tempo
-    MixerComponent.*    columna central del mezclador: mandos y faders de volumen
-    LibraryBrowser.*    navegador: carpetas, buscador y lista (arrastrar o doble clic)
+    MixerComponent.*    mezclador con pestanas AUDIO / VIDEO (vista previa) y crossfader
+    LibraryBrowser.*    navegador: carpetas, buscador y lista con icono audio/video
+    AutomixPanel.*      panel del automix: lista, encender, mezclar ya, saltar
     EffectsRow.*        fila FX de un deck: elegir efecto, encender y mando
     MidiLearnOverlay.*  capa del modo aprender MIDI
     SamplerPanel.*      panel del sampler: pads, volumen y STOP
-    VideoWindow.*       vista previa y proyectores a pantalla completa (uno por monitor)
-    ScenePanel.*        panel de escenas, fuentes, transicion y propiedades
+    VideoWindow.*       escenario de video: vista previa, proyectores y edicion con el raton
+    ScenePanel.*        paneles Escenas y Fuentes (como los de OBS)
+    SourceDialogs.*     dialogos Anadir fuente y Propiedades (como los de OBS)
+    Icons.*             iconos dibujados de botones, fuentes y tipos de archivo
     DarkLookAndFeel.*   estilo visual oscuro
 Tests/
   TestMain.cpp          pruebas automáticas del motor (ctest) y herramientas:
@@ -88,10 +93,43 @@ Tests/
                         MiDJTests --benchmark                 CPU del keylock y de los efectos
 ```
 
+## Interfaz y atajos de teclado
+
+Como VirtualDJ: arriba los dos decks (una sola forma de onda por deck) con el mezclador en el centro, que
+tiene las pestañas **AUDIO** (GAIN, HIGH, MID, LOW, FILTER y volumen de cada deck) y **VIDEO** (vista previa,
+nivel de video de cada deck y transición) y, abajo de las dos, el crossfader (línea roja a la izquierda y
+azul a la derecha, marca del centro, doble clic para centrarlo). En medio, el sampler. Abajo, de izquierda a
+derecha: carpetas, canciones, automix y escenas/fuentes; los divisores entre ellos se arrastran a lo ancho y
+los anchos (y la pestaña elegida) se guardan en `%APPDATA%\MiDJ\layout.xml`. En la lista de canciones, un
+icono distingue los videos (fotograma azul) del audio (nota gris). El automix tiene su propio panel: se le
+arrastran canciones (o menú de la canción > Agregar a automix, o tecla A).
+
+El **deck activo** (borde fino del color del deck) es el de los atajos: se elige con un clic en el deck, con
+Tab o cargando una canción en él. Botón **Atajos** junto a MIDI:
+
+| Tecla | Acción |
+|---|---|
+| Espacio | Play / Pausa del deck activo |
+| Tab | Cambiar de deck activo |
+| C / S / K | CUE / SYNC / Keylock del deck activo |
+| Intro | Cargar la canción elegida en el deck activo |
+| Flechas arriba / abajo (RePág / AvPág) | Moverse por la lista de canciones |
+| Flechas izquierda / derecha | Crossfader a pasos del 5 % (con Mayús: del todo) |
+| A | Agregar la canción elegida al automix |
+| 1 - 8 | Pads del sampler (al soltar, se suelta el pad) |
+| F1 - F9 | Pasar a la escena 1 - 9 |
+| V | Pestaña AUDIO / VIDEO del mezclador |
+| Ctrl+F | Buscar (Esc o Intro: salir del buscador) |
+| Supr | Quitar la fuente elegida (vista previa o panel Fuentes) |
+
+Mientras se escribe en el buscador o en un texto, las teclas escriben (no son atajos). Los botones no se
+quedan con el foco al hacer clic, así que el espacio nunca vuelve a pulsar el último botón.
+
 ## Automix
 
-En el navegador, clic derecho en una canción > **Agregar a automix**. La lista aparece como **Automix** a la
-izquierda, con su barra: AUTOMIX (encender), Mezclar ya, Saltar, Quitar, Vaciar y la duración del fundido.
+Panel **AUTOMIX** abajo, entre las canciones y las escenas: se le arrastran canciones (o clic derecho en una
+canción > **Agregar a automix**, o tecla A). Encendido/Apagado, Mezclar ya, Saltar, Quitar, Vaciar y la
+duración del fundido.
 Cada transición se planifica como el modo Smart de VirtualDJ: **a tempo** (16 pulsos, compases alineados y el
 tempo deslizándose de una canción a la otra) si la actual tiene fin de parte rítmica, la siguiente tiene inicio
 y sus BPM difieren menos de un 6 %; si no, **fundido**. La lista se guarda al cerrar.
@@ -107,19 +145,23 @@ Por defecto se usa la CPU; la tarjeta gráfica (DirectML) se activa escribiendo 
 ## Video
 
 Los MP4, MOV, M4V, WMV y 3GP se cargan en un deck como cualquier canción (también M4A, AAC y WMA), con los
-codecs de Windows (Media Foundation, sin FFmpeg). Botón **VIDEO** (junto a MIDI): abre la vista previa, que
-mezcla los dos decks según el crossfader; una canción sin video se ve como un rótulo con el título y el
-artista. El video sigue la posición que se oye del deck: pitch, saltos, CUE y bucles.
+codecs de Windows (Media Foundation, sin FFmpeg). Pestaña **VIDEO** del mezclador (como en VirtualDJ; tecla
+V): la vista previa del programa, que por defecto mezcla los dos decks según el crossfader (una canción sin
+video se ve como un rótulo con el título y el artista); a los lados, el nivel de video de cada deck (0 = no se
+ve) y debajo la transición entre escenas. El video sigue la posición que se oye del deck: pitch, saltos, CUE
+y bucles.
 
 Como en OBS, un compositor en la tarjeta gráfica (Direct3D 11) arma la imagen una vez por fotograma a ritmo
 fijo (1280x720 a 30 fps) y la dibuja en cada salida; el fundido entre decks se hace en luz lineal (a la mitad
 no oscurece). Salidas:
-- **Vista previa** (ventana VIDEO), para el DJ.
+- **Vista previa** (pestaña VIDEO), para el DJ. Clic derecho > **Vista previa grande**: la misma en su propia
+  ventana, para colocar las fuentes con comodidad.
 - **Proyectores a pantalla completa**, uno por monitor, sin bordes ni cursor: doble clic en la vista previa
   abre o cierra el del segundo monitor; clic derecho, el menú con todas las pantallas y el estado del
   compositor (tarjeta, ms por fotograma, fotogramas perdidos). En el proyector: Esc o doble clic lo cierra.
 
-Solo se compone y se decodifica mientras hay alguna de estas ventanas abierta. El video se decodifica en la
+Solo se compone y se decodifica mientras se ve la pestaña VIDEO, la vista previa grande o un proyector (el
+sonido de las fuentes multimedia sigue aunque no se vea). El video se decodifica en la
 tarjeta gráfica (DXVA) y, si falla, en la CPU. Ajustes en `%APPDATA%\MiDJ\video.xml`:
 `<VIDEO device="cpu" width="1280" height="720" fps="30"/>` (`device="cpu"` fuerza la CPU; el resto, el
 tamaño y el ritmo del programa). En este portátil (A8 + Radeon R5, Release) un video en un deck cuesta ~34 %
@@ -127,16 +169,20 @@ de un núcleo con la vista previa y ~5 % más con un proyector; componer, ~1,2 m
 
 ### Escenas
 
-A la derecha de la vista previa está el panel de escenas, como el de OBS (se guarda en
+Abajo a la derecha están los paneles **Escenas** y **Fuentes**, como los de OBS (se guarda en
 `%APPDATA%\MiDJ\scenes.xml`; por defecto, una escena "Mezcla" con la mezcla de los decks):
-- **Escenas**: clic para ponerla al aire con la transición elegida (Corte, Fundido, Fundido a negro,
-  Deslizar o Barrido, de 0 a 3 s). Botones para crear, borrar y renombrar.
-- **Fuentes** de la escena (la de arriba se ve encima): Mezcla de decks, Deck A, Deck B, Imagen (PNG, JPG,
-  GIF), Texto, Color, Captura de pantalla, Captura de ventana y Visualizador. En el texto, `{titulo}`, `{artista}` y
-  `{bpm}` se cambian por la canción del deck que más se ve (por ejemplo "Ahora suena: {titulo}"). Clic en
-  el punto: mostrar u ocultar; Subir y Bajar.
-- **Propiedades** de la fuente elegida: texto, tamaño, negrita, sombra, color, imagen, opacidad, giro,
-  recorte, Ajustar a pantalla y Restablecer.
+- **Escenas**: clic para ponerla al aire con la transición elegida en la pestaña VIDEO (Corte, Fundido,
+  Fundido a negro, Deslizar o Barrido, de 0 a 3 s); F1-F9 pasan a las nueve primeras. Botones para crear,
+  borrar, renombrar y ordenar; clic derecho para duplicar.
+- **Fuentes** de la escena (la de arriba se ve encima), con su ojo (mostrar u ocultar) y su candado (no se
+  mueve en la vista previa). Botones: **+** abre **Añadir fuente** (a la izquierda los tipos: Mezcla de decks,
+  Deck A, Deck B, Captura de pantalla, Captura de ventana, Dispositivo de captura de video, Imagen,
+  Multimedia, Texto, Color y Visualizador; a la derecha "Crear nueva fuente" o "Añadir existente", la misma
+  fuente de otra escena, que comparte la captura o el video), quitar, propiedades y subir/bajar. Doble clic
+  o el engranaje: **Propiedades para 'fuente'**, con su imagen arriba, sus ajustes (se ven al momento), la
+  colocación (opacidad, giro, recorte, Ajustar a la pantalla, Restablecer) y Por defecto / Aceptar /
+  Cancelar (Cancelar deja todo como estaba). En el texto, `{titulo}`, `{artista}` y `{bpm}` se cambian por la
+  canción del deck que más se ve (por ejemplo "Ahora suena: {titulo}").
 - En la vista previa: clic para elegir una fuente (recuadro rojo), arrastrar para moverla (se pega a los
   bordes y al centro; Mayús para no pegarse), arrastrar una esquina para escalarla sin deformar (Mayús para
   deformar), flechas para mover de 1 en 1 (Mayús: de 10 en 10) y Supr para quitarla.
@@ -156,6 +202,29 @@ Como en OBS, la imagen capturada no sale de la tarjeta gráfica (se copia de tex
 - Debajo se ve el estado: tamaño capturado y método (DXGI o WGC), o por qué no captura. Dos fuentes que
   capturan lo mismo comparten la captura.
 
+### Multimedia
+
+Como la fuente Multimedia de OBS: un archivo de video o de audio (MP4, MOV, M4V, WMV, AVI, MKV, WebM, MP3,
+M4A, WAV, FLAC...) con sus propiedades: **Archivo local** (Examinar), **Bucle**, **Reiniciar la reproducción
+cuando la fuente esté activa** (al salir al aire empieza de cero y al dejar de estarlo se para), **Utilizar la
+decodificación por hardware**, **No mostrar nada al terminar la reproducción**, **Cerrar archivo cuando esté
+inactivo**, **Velocidad** (1-200 %), **Volumen** y **Silenciar**, y los controles Reproducir/Pausa, Detener y
+Reiniciar con el tiempo. Su sonido va al master (se oye y lo ve el visualizador) y la imagen sigue al sonido;
+sin pista de audio, sigue a su propio reloj. "Activa" es lo mismo que en OBS: visible en la escena al aire.
+
+### Dispositivo de captura de video
+
+Como el de OBS, para **capturadoras de video** (USB/HDMI) y webcams: las que Windows ve con su controlador UVC
+o de Media Foundation (OBS usa DirectShow, que además ve algunas capturadoras antiguas). Propiedades:
+**Dispositivo**, **Activar/Desactivar**, **Desactivar cuando no se muestre**, **Tipo de resolución/FPS**
+(Dispositivo predeterminado o Personalizado, con **Resolución**, **FPS** y **Formato de video**: NV12, YUY2,
+MJPG...), **Voltear verticalmente** y **decodificación por hardware** (el MJPG y la conversión a RGB en la
+tarjeta gráfica). En las capturadoras USB/HDMI el sonido HDMI aparece en Windows como una entrada de audio
+aparte ("USB3. 0 capture", "Digital Audio Interface"...): en **Dispositivo de audio** se elige (se propone
+sola la que parece de la capturadora) y va al master con su **Volumen**, con una cola de 40 ms que corrige la
+diferencia de reloj entre la capturadora y la tarjeta de sonido. El dispositivo solo se abre mientras se ve el
+video (el audio sigue) y, si se desconecta, se vuelve a probar cada 2 s.
+
 ### Visualizador
 
 Fuente que dibuja lo que suena por el master (lo que se oye, descontando la latencia de la tarjeta):
@@ -173,7 +242,7 @@ Fuente que dibuja lo que suena por el master (lo que se oye, descontando la late
 
 ## Sampler
 
-8 pads a la derecha del navegador. Clic en un pad vacío o arrastrar encima un archivo (o una canción del
+8 pads en la fila del medio, bajo el deck A y el mezclador (teclas 1-8). Clic en un pad vacío o arrastrar encima un archivo (o una canción del
 navegador) para cargarlo; acepta audio y los `.vdjsample` de VirtualDJ con su tempo y bucle. Clic: disparar.
 Clic derecho: grabar 4, 8 o 16 pulsos de un deck (empieza en el siguiente pulso y queda como bucle bloqueado),
 modo de disparo (on/off, mantener, repetir), bucle, tempo (libre, sincronizado, bloqueado) y quitar.
@@ -224,3 +293,5 @@ los pesos de Spleeter son de Deezer con licencia MIT (exportados a ONNX por el p
 - Compositor de video en la GPU como el de OBS (Direct3D 11, 1280x720 a 30 fps, fundido en luz lineal) con vista previa y proyectores a pantalla completa en cualquier monitor, sin bordes ni cursor; sin copias de fotogramas entre el decodificador y la GPU más allá de la subida.
 - Escenas como en OBS: fuentes (mezcla de decks, deck A/B, imagen, texto con título/artista/BPM de la canción que suena, color) con posición, escala, giro, recorte y opacidad; edición con el ratón en la vista previa; transiciones Corte, Fundido, Fundido a negro, Deslizar y Barrido compuestas en la GPU; guardadas en `scenes.xml`.
 - Captura de pantalla (duplicación de DXGI, con el puntero del ratón y sin el borde amarillo de Windows 10) y de ventana (Windows Graphics Capture, solo el contenido o con bordes) como fuentes de escena, sin salir de la GPU; la ventana se vuelve a encontrar al reabrir MiDJ o al reabrirla.
+- Fuentes **Multimedia** (archivo de video o audio con bucle, reiniciar al activarse, no mostrar nada al terminar, cerrar si está inactiva, velocidad y su sonido al master) y **Dispositivo de captura de video** (capturadoras USB/HDMI y webcams con Media Foundation: resolución, FPS y formato, volteo, decodificación por hardware y el audio HDMI de su entrada de Windows, remuestreado con corrección de reloj), como en OBS.
+- Interfaz como VirtualDJ + OBS: video integrado en la pestaña VIDEO del mezclador (vista previa, nivel de video por deck, transición), crossfader dentro del mezclador, sampler en la fila del medio, paneles inferiores ajustables a lo ancho (carpetas, canciones, automix en su propio panel, escenas y fuentes), diálogos Añadir fuente y Propiedades como los de OBS, ojo y candado por fuente, icono de audio o video en la lista, una sola forma de onda por deck y atajos de teclado (Espacio, Tab, C/S/K, Intro, flechas, A, 1-8, F1-F9, V, Ctrl+F).

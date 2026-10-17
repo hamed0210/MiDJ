@@ -1,4 +1,5 @@
 #include "UI/VideoWindow.h"
+#include "UI/SourceDialogs.h"
 
 #ifndef NOMINMAX
  #define NOMINMAX
@@ -120,68 +121,46 @@ void ProjectorView::mouseDoubleClick (const juce::MouseEvent& e)
         onDoubleClick();
 }
 
-// --- Ventana de vista previa -----------------------------------------------------------------
+bool ProjectorView::keyPressed (const juce::KeyPress& key)
+{
+    return onKey != nullptr && onKey (key);
+}
 
-class VideoStage::PreviewWindow : public juce::DocumentWindow
+// --- Vista previa grande ------------------------------------------------------------------------
+
+class VideoStage::BigPreview : public juce::DocumentWindow
 {
 public:
-    PreviewWindow (VideoStage& s)
-        : juce::DocumentWindow ("MiDJ - Video", juce::Colours::black, juce::DocumentWindow::allButtons), stage (s)
+    explicit BigPreview (VideoStage& s)
+        : juce::DocumentWindow ("MiDJ - Vista previa", juce::Colours::black, juce::DocumentWindow::allButtons), stage (s)
     {
-        auto* content = new Content (stage);
-        content->setSize (980, 640);
-        setContentOwned (content, true);
+        auto* view = new ProjectorView (stage.compositor);
+        view->setSize (960, 540);
+        stage.attachEditing (*view);
+        setContentOwned (view, true);
         setUsingNativeTitleBar (true);
         setResizable (true, true);
-        setResizeLimits (640, 480, 8192, 8192);
-        setWantsKeyboardFocus (true);
+        setResizeLimits (480, 270, 8192, 8192);
+        centreWithSize (960, 540 + 32);
     }
 
-    ProjectorView& getView() { return dynamic_cast<Content*> (getContentComponent())->view; }
-    ScenePanel& getPanel() { return dynamic_cast<Content*> (getContentComponent())->panel; }
+    ProjectorView& getView() { return *dynamic_cast<ProjectorView*> (getContentComponent()); }
 
     void closeButtonPressed() override
     {
-        stage.showPreview (false);
-        if (stage.onPreviewClosed)
-            stage.onPreviewClosed();
-    }
-
-    bool keyPressed (const juce::KeyPress& key) override
-    {
-        return stage.previewKey (key) || juce::DocumentWindow::keyPressed (key);
+        juce::Component::SafePointer<BigPreview> self (this);
+        juce::MessageManager::callAsync ([self]
+        {
+            if (self != nullptr)
+            {
+                auto& st = self->stage;
+                st.bigPreview.reset();
+                st.updateRunning();
+            }
+        });
     }
 
 private:
-    // La vista previa a la izquierda y el panel de escenas a la derecha.
-    struct Content : public juce::Component
-    {
-        explicit Content (VideoStage& s)
-            : view (s.compositor), panel (s.scenes, s.program, s.compositor.getWidth(), s.compositor.getHeight())
-        {
-            view.onDoubleClick = [&s] { s.toggleProjector (VideoStage::audienceDisplay()); };
-            view.onRightClick = [&s] (const juce::MouseEvent&) { s.showMenu(); };
-            view.onMouseDown = [&s] (const juce::MouseEvent& e) { s.previewMouseDown (e); };
-            view.onMouseDrag = [&s] (const juce::MouseEvent& e) { s.previewMouseDrag (e); };
-            view.onMouseUp = [&s] (const juce::MouseEvent& e) { s.previewMouseUp (e); };
-            panel.onChanged = [&s] { s.scenesChanged(); };
-            panel.onSceneChosen = [&s] (int id) { s.switchToScene (id); };
-            panel.onItemSelected = [&s] (int id) { s.selectItem (id); };
-            addAndMakeVisible (view);
-            addAndMakeVisible (panel);
-        }
-
-        void resized() override
-        {
-            auto r = getLocalBounds();
-            panel.setBounds (r.removeFromRight (320));
-            view.setBounds (r);
-        }
-
-        ProjectorView view;
-        ScenePanel panel;
-    };
-
     VideoStage& stage;
 };
 
@@ -203,6 +182,13 @@ public:
             juce::PopupMenu menu;
             menu.addItem ("Cerrar proyector", [this] { closeLater(); });
             menu.showMenuAsync (juce::PopupMenu::Options().withMousePosition());
+        };
+        view.onKey = [this] (const juce::KeyPress& key)
+        {
+            if (key != juce::KeyPress::escapeKey)
+                return false;
+            closeLater();
+            return true;
         };
         addAndMakeVisible (view);
         setWantsKeyboardFocus (true);
@@ -245,9 +231,11 @@ private:
 
 // --- Escenario ---------------------------------------------------------------------------------
 
-VideoStage::VideoStage (std::array<DeckVideo*, 2> v, std::array<const Deck*, 2> d, const Mixer& mixer,
-                        Compositor::Settings settings, juce::File file)
-    : compositor (settings), captures (compositor.getDevice()), mix (v, d, mixer), program (mix, compositor.getWidth(), compositor.getHeight()),
+VideoStage::VideoStage (std::array<DeckVideo*, 2> v, std::array<const Deck*, 2> d, Mixer& mixer,
+                        juce::AudioFormatManager& formats, Compositor::Settings settings, juce::File file)
+    : compositor (settings), captures (compositor.getDevice()),
+      media (mixer.getAuxBus(), formats, compositor.getWidth()),
+      mix (v, d, mixer), program (mix, compositor.getWidth(), compositor.getHeight()),
       videos (v), decks (d), scenesFile (std::move (file))
 {
     mix.setProgramSize (compositor.getWidth(), compositor.getHeight());
@@ -255,9 +243,15 @@ VideoStage::VideoStage (std::array<DeckVideo*, 2> v, std::array<const Deck*, 2> 
     scenes = xml != nullptr ? SceneCollection::fromXml (*xml, compositor.getWidth(), compositor.getHeight())
                             : SceneCollection::createDefault (compositor.getWidth(), compositor.getHeight());
     program.setCaptures (&captures);
+    program.setMediaSources (&media);
     program.setMasterTap (&mixer.getTap());
     program.setScenes (scenes);
     compositor.buildFrame = [this] (Compositor::Frame& frame) { program.buildFrame (frame); };
+
+    preview = std::make_unique<ProjectorView> (compositor);
+    attachEditing (*preview);
+    media.setOnAir (program.liveItems());   // las fuentes multimedia de la escena al aire empiezan ya
+    startTimerHz (10);
 }
 
 VideoStage::~VideoStage()
@@ -265,11 +259,24 @@ VideoStage::~VideoStage()
     stopTimer();
     if (dirty)
         save();
+    closeDialogs();
     compositor.stop();
     projectors.clear();
+    bigPreview.reset();
     preview.reset();
     for (auto* video : videos)
         video->setActive (false);
+}
+
+void VideoStage::attachEditing (ProjectorView& view)
+{
+    view.setWantsKeyboardFocus (true);
+    view.onDoubleClick = [this] { toggleProjector (audienceDisplay()); };
+    view.onRightClick = [this] (const juce::MouseEvent&) { showMenu(); };
+    view.onMouseDown = [this, &view] (const juce::MouseEvent& e) { previewMouseDown (view, e); };
+    view.onMouseDrag = [this, &view] (const juce::MouseEvent& e) { previewMouseDrag (view, e); };
+    view.onMouseUp = [this] (const juce::MouseEvent&) { previewMouseUp(); };
+    view.onKey = [this] (const juce::KeyPress& key) { return previewKey (key); };
 }
 
 void VideoStage::save()
@@ -282,11 +289,13 @@ void VideoStage::save()
 void VideoStage::scenesChanged()
 {
     program.setScenes (scenes);
+    media.setOnAir (program.liveItems());
     dirty = true;
     lastChange = juce::Time::getMillisecondCounter();
     if (selectedItem() == nullptr)
         selected = 0;
     updateOverlay();
+    sendChangeMessage();
 }
 
 void VideoStage::switchToScene (int sceneId)
@@ -296,12 +305,12 @@ void VideoStage::switchToScene (int sceneId)
     scenes.currentScene = sceneId;
     program.setScenes (scenes);
     program.switchTo (sceneId);
+    media.setOnAir (program.liveItems());
     dirty = true;
     lastChange = juce::Time::getMillisecondCounter();
     selected = 0;
-    if (preview != nullptr)
-        preview->getPanel().refresh();
     updateOverlay();
+    sendChangeMessage();
 }
 
 SceneItem* VideoStage::selectedItem()
@@ -315,31 +324,70 @@ SceneItem* VideoStage::selectedItem()
 
 void VideoStage::selectItem (int itemId)
 {
+    if (selected == itemId)
+        return;
     selected = itemId;
-    if (preview != nullptr && preview->getPanel().getSelectedItem() != itemId)
-        preview->getPanel().setSelectedItem (itemId);
     updateOverlay();
+    sendChangeMessage();
+}
+
+void VideoStage::deleteItem (int itemId)
+{
+    auto* scene = scenes.findScene (scenes.currentScene);
+    if (scene == nullptr)
+        return;
+    std::erase_if (scene->items, [itemId] (const SceneItem& i) { return i.id == itemId; });
+    if (selected == itemId)
+        selected = 0;
+    scenesChanged();
+}
+
+void VideoStage::fitToScreen (int itemId)
+{
+    auto* item = scenes.findItem (itemId);
+    if (item == nullptr)
+        return;
+    const auto natural = program.naturalSize (*item);
+    const float cw = juce::jmax (1.0f, (float) natural.x - item->cropLeft - item->cropRight);
+    const float ch = juce::jmax (1.0f, (float) natural.y - item->cropTop - item->cropBottom);
+    const auto fit = Compositor::fitInside (cw, ch, { (float) compositor.getWidth(), (float) compositor.getHeight() });
+    item->position = fit.getPosition();
+    item->scaleX = item->scaleY = fit.getWidth() / cw;
+    item->rotation = 0.0f;
+    scenesChanged();
+}
+
+void VideoStage::resetTransform (int itemId)
+{
+    auto* item = scenes.findItem (itemId);
+    if (item == nullptr)
+        return;
+    item->position = {};
+    item->scaleX = item->scaleY = 1.0f;
+    item->rotation = 0.0f;
+    item->cropLeft = item->cropTop = item->cropRight = item->cropBottom = 0.0f;
+    scenesChanged();
 }
 
 void VideoStage::updateOverlay()
 {
-    if (preview == nullptr)
-        return;
     std::vector<Compositor::Quad> boxes;
     if (auto* item = selectedItem())
         boxes.push_back (SceneGeometry::quad (*item, program.naturalSize (*item)));
-    compositor.setOverlay (preview->getView().getSurface(), std::move (boxes));
+    if (preview != nullptr)
+        compositor.setOverlay (preview->getSurface(), boxes);
+    if (bigPreview != nullptr)
+        compositor.setOverlay (bigPreview->getView().getSurface(), std::move (boxes));
 }
 
-void VideoStage::previewMouseDown (const juce::MouseEvent& e)
+void VideoStage::previewMouseDown (ProjectorView& view, const juce::MouseEvent& e)
 {
-    auto& view = preview->getView();
     const auto p = view.toProgram (e.position);
     drag = Drag::none;
-    preview->grabKeyboardFocus();
+    view.grabKeyboardFocus();
 
     // Una esquina del elemento elegido: escalar (la de enfrente queda fija).
-    if (auto* item = selectedItem())
+    if (auto* item = selectedItem(); item != nullptr && ! item->locked)
     {
         const auto q = SceneGeometry::quad (*item, program.naturalSize (*item));
         const float grab = 10.0f * (float) compositor.getWidth() / juce::jmax (1.0f, view.programArea().getWidth());
@@ -352,7 +400,7 @@ void VideoStage::previewMouseDown (const juce::MouseEvent& e)
                 return;
             }
     }
-    // Si no, el de mas arriba bajo el raton: elegirlo y moverlo.
+    // Si no, el de mas arriba bajo el raton: elegirlo y moverlo (si no esta bloqueado).
     int hit = 0;
     if (auto* scene = scenes.findScene (scenes.currentScene))
         for (auto it = scene->items.rbegin(); it != scene->items.rend(); ++it)
@@ -360,18 +408,18 @@ void VideoStage::previewMouseDown (const juce::MouseEvent& e)
             {
                 hit = it->id;
                 dragOffset = p - it->position;
-                drag = Drag::move;
+                drag = it->locked ? Drag::none : Drag::move;
                 break;
             }
     selectItem (hit);
 }
 
-void VideoStage::previewMouseDrag (const juce::MouseEvent& e)
+void VideoStage::previewMouseDrag (ProjectorView& view, const juce::MouseEvent& e)
 {
     auto* item = selectedItem();
     if (item == nullptr || drag == Drag::none)
         return;
-    const auto p = preview->getView().toProgram (e.position);
+    const auto p = view.toProgram (e.position);
     const auto natural = program.naturalSize (*item);
     const float W = (float) compositor.getWidth(), H = (float) compositor.getHeight();
     if (drag == Drag::move)
@@ -419,10 +467,8 @@ void VideoStage::previewMouseDrag (const juce::MouseEvent& e)
     scenesChanged();
 }
 
-void VideoStage::previewMouseUp (const juce::MouseEvent&)
+void VideoStage::previewMouseUp()
 {
-    if (drag != Drag::none && preview != nullptr)
-        preview->getPanel().refresh();
     drag = Drag::none;
 }
 
@@ -433,9 +479,11 @@ bool VideoStage::previewKey (const juce::KeyPress& key)
         return false;
     if (key == juce::KeyPress::deleteKey)
     {
-        preview->getPanel().deleteSelectedItem();
+        deleteItem (item->id);
         return true;
     }
+    if (item->locked)
+        return false;
     // Flechas: mover 1 pixel (10 con Mayus).
     const float step = key.getModifiers().isShiftDown() ? 10.0f : 1.0f;
     juce::Point<float> delta;
@@ -476,25 +524,19 @@ NowPlaying VideoStage::nowPlaying() const
     return now;
 }
 
-void VideoStage::showPreview (bool shouldShow)
+void VideoStage::setPreviewShowing (bool shouldShow)
 {
-    if (shouldShow && preview == nullptr)
-    {
-        preview = std::make_unique<PreviewWindow> (*this);
-        preview->centreWithSize (980, 640 + 32);
-    }
-    if (preview != nullptr)
-    {
-        preview->setVisible (shouldShow);
-        if (shouldShow)
-            preview->toFront (true);
-    }
+    previewShowing = shouldShow;
     updateRunning();
 }
 
-bool VideoStage::isPreviewShowing() const
+void VideoStage::showBigPreview()
 {
-    return preview != nullptr && preview->isVisible();
+    if (bigPreview == nullptr)
+        bigPreview = std::make_unique<BigPreview> (*this);
+    bigPreview->setVisible (true);
+    bigPreview->toFront (true);
+    updateRunning();
 }
 
 int VideoStage::audienceDisplay()
@@ -521,7 +563,7 @@ bool VideoStage::hasProjector (int displayIndex) const
 void VideoStage::toggleProjector (int displayIndex)
 {
     const auto& displays = juce::Desktop::getInstance().getDisplays().displays;
-    if (! juce::isPositiveAndBelow (displayIndex, displays.size()))
+    if (! isReady() || ! juce::isPositiveAndBelow (displayIndex, displays.size()))
         return;
     const auto area = displays.getReference (displayIndex).totalArea;
     if (hasProjector (displayIndex))
@@ -548,33 +590,54 @@ void VideoStage::closeProjectors()
 
 void VideoStage::updateRunning()
 {
-    const bool anyOpen = isPreviewShowing() || ! projectors.empty();
-    // Nadie mira: no se compone ni se decodifica (no se gasta CPU ni GPU).
+    const bool anyOpen = isReady() && (previewShowing || bigPreview != nullptr || ! projectors.empty());
+    if (anyOpen == running)
+        return;
+    running = anyOpen;
+    // Nadie mira: no se compone ni se decodifica (no se gasta CPU ni GPU). El sonido de las
+    // fuentes multimedia sigue.
     for (auto* video : videos)
         video->setActive (anyOpen);
+    media.setViewing (anyOpen);
     if (anyOpen)
     {
         timerCallback();   // rotulos al dia antes del primer fotograma
-        startTimerHz (10);
         compositor.start();
+        updateOverlay();
     }
     else
     {
-        stopTimer();
         compositor.stop();
     }
 }
 
 void VideoStage::timerCallback()
 {
+    media.tick();                           // fin de los videos multimedia
+    // Un video o una capturadora recien elegidos se encajan cuando llega su primer fotograma.
+    for (auto it = pendingFit.begin(); it != pendingFit.end();)
+    {
+        auto source = program.frameSourceFor (*it);
+        if (scenes.findItem (*it) == nullptr)
+            it = pendingFit.erase (it);
+        else if (source != nullptr && source->getSize().x > 0)
+        {
+            fitToScreen (*it);
+            it = pendingFit.erase (it);
+        }
+        else
+            ++it;
+    }
+    // Se guarda un segundo despues del ultimo cambio (no a cada movimiento del raton).
+    if (dirty && drag == Drag::none && juce::Time::getMillisecondCounter() - lastChange > 1000)
+        save();
+    if (! running)
+        return;
     for (int d = 0; d < 2; ++d)
         mix.setTitle (d, getTitle != nullptr ? getTitle (d) : juce::String());
     captures.tick();                        // capturas perdidas (ventana cerrada y vuelta a abrir...)
     program.setNowPlaying (nowPlaying());   // los textos con {titulo} se rehacen solo si cambia
     updateOverlay();                        // (y un texto que cambia cambia de tamano)
-    // Se guarda un segundo despues del ultimo cambio (no a cada movimiento del raton).
-    if (dirty && drag == Drag::none && juce::Time::getMillisecondCounter() - lastChange > 1000)
-        save();
 
     // Un monitor desconectado: su proyector se cierra.
     const auto& displays = juce::Desktop::getInstance().getDisplays().displays;
@@ -604,6 +667,13 @@ void VideoStage::showMenu()
                            + " a " + juce::String (compositor.getFps()) + " fps");
     menu.addItem (statusText(), false, false, nullptr);
     menu.addSeparator();
+    if (auto* item = selectedItem())
+    {
+        const int id = item->id;
+        menu.addItem ("Propiedades de '" + item->name + "'...", [this, id] { showProperties (id); });
+        menu.addSeparator();
+    }
+    menu.addItem ("Vista previa grande (para colocar las fuentes)", [this] { showBigPreview(); });
     juce::PopupMenu screens;
     const auto& displays = juce::Desktop::getInstance().getDisplays().displays;
     for (int i = 0; i < displays.size(); ++i)
@@ -617,5 +687,25 @@ void VideoStage::showMenu()
     menu.addSubMenu ("Proyector a pantalla completa", screens);
     menu.addItem ("Cerrar proyectores", ! projectors.empty(), false, [this] { closeProjectors(); });
     menu.showMenuAsync (juce::PopupMenu::Options().withMousePosition());
+}
+
+void VideoStage::showAddSource()
+{
+    propertiesWindow.reset();
+    addSourceWindow = std::make_unique<AddSourceWindow> (*this);
+}
+
+void VideoStage::showProperties (int itemId)
+{
+    if (scenes.findItem (itemId) == nullptr)
+        return;
+    addSourceWindow.reset();
+    propertiesWindow = std::make_unique<SourcePropertiesWindow> (*this, itemId);
+}
+
+void VideoStage::closeDialogs()
+{
+    addSourceWindow.reset();
+    propertiesWindow.reset();
 }
 }

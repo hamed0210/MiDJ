@@ -23,6 +23,7 @@ DeckComponent::DeckComponent (Deck& d, Deck& other, EffectRack& effects, const j
       effectsRow (effects, name == "A" ? DarkLookAndFeel::accentA : DarkLookAndFeel::accentB)
 {
     addAndMakeVisible (effectsRow);
+    addMouseListener (this, true);   // los clics en botones y mandos tambien hacen activo el deck
     deck.addChangeListener (this);
     deck.getThumbnail().addChangeListener (this);
 
@@ -267,6 +268,11 @@ void DeckComponent::paint (juce::Graphics& g)
 {
     g.setColour (DarkLookAndFeel::panel);
     g.fillRoundedRectangle (getLocalBounds().toFloat(), 8.0f);
+    if (active && ! dragHighlight)   // el deck activo (el de los atajos de teclado): marco fino
+    {
+        g.setColour (accent().withAlpha (0.7f));
+        g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (1.0f), 8.0f, 1.5f);
+    }
     if (dragHighlight)   // se esta arrastrando una cancion encima: marco del color del deck
     {
         g.setColour (accent());
@@ -294,7 +300,7 @@ void DeckComponent::paint (juce::Graphics& g)
     if (thumb.getTotalLength() > 0.0)
     {
         g.setColour (accent().withAlpha (0.85f));
-        thumb.drawChannels (g, waveformArea.reduced (2), 0.0, thumb.getTotalLength(), 1.0f);
+        thumb.drawChannel (g, waveformArea.reduced (2), 0.0, thumb.getTotalLength(), 0, 1.0f);   // una sola onda (no una por canal)
     }
 
     // Punto CUE: linea y triangulo naranjas arriba.
@@ -360,10 +366,24 @@ void DeckComponent::resized()
 
 void DeckComponent::mouseDown (const juce::MouseEvent& e)
 {
+    // Un clic en cualquier parte del deck lo hace el deck activo (el de los atajos de teclado).
+    if (onActivated)
+        onActivated();
+    if (e.eventComponent != this)
+        return;   // un boton o un mando del deck
     if (waveformArea.contains (e.getPosition()) && deck.getLengthSeconds() > 0.0)
     {
         const double ratio = (double) (e.x - waveformArea.getX()) / (double) waveformArea.getWidth();
         deck.setPositionSeconds (ratio * deck.getLengthSeconds());
+    }
+}
+
+void DeckComponent::setActive (bool a)
+{
+    if (active != a)
+    {
+        active = a;
+        repaint();
     }
 }
 }
