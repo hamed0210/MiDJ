@@ -15,7 +15,9 @@
 #include "Engine/StemSeparator.h"
 #include "Engine/StemsService.h"
 #include "Library/Library.h"
+#include "Video/Compositor.h"
 #include "Video/DeckVideo.h"
+#include "Video/VideoMix.h"
 #include "Video/MediaFoundation.h"
 #include "Library/TagReader.h"
 
@@ -2251,6 +2253,146 @@ void testVideo()
     file.deleteFile();
 }
 
+juce::Image solidImage (int w, int h, juce::Colour colour)
+{
+    juce::Image image (juce::Image::ARGB, w, h, true, juce::SoftwareImageType());
+    image.clear (image.getBounds(), colour);
+    return image;
+}
+
+void testCompositor()
+{
+    using midj::Compositor;
+    const auto fitted = Compositor::fitInside (640.0f, 480.0f, { 1280.0f, 720.0f });
+    check (fitted == juce::Rectangle<float> (160.0f, 0.0f, 960.0f, 720.0f), "compositor: 4:3 en 16:9 con bandas a los lados", fitted.getX(), 160.0);
+
+    Compositor compositor ({ 1280, 720, 30, true });
+    check (compositor.isReady(), ("compositor: Direct3D 11 listo " + compositor.getError()).toRawUTF8(), 1.0, 1.0);
+    if (! compositor.isReady())
+        return;
+    const auto stats = compositor.getStats();
+    std::printf ("        (en %s: %s)\n", stats.hardware ? "la GPU" : "WARP", stats.adapter.toRawUTF8());
+
+    auto pixel = [] (const juce::Image& image, int x, int y) { return image.isValid() ? image.getPixelAt (x, y) : juce::Colour(); };
+
+    // Una imagen 4:3 sin area: encajada en el centro, negro a los lados.
+    Compositor::Layer red;
+    red.slot = 0;
+    red.image = solidImage (160, 120, juce::Colours::red);
+    red.version = 1;
+    compositor.renderOnce ({ red });
+    auto program = compositor.readProgram();
+    const auto centre = pixel (program, 640, 360), side = pixel (program, 80, 360);
+    check (program.getWidth() == 1280 && centre.getRed() > 250 && centre.getGreen() < 5 && side.getRed() < 5 && side.getBrightness() < 0.02f,
+           "compositor: la capa se ve en el centro y bandas negras", centre.getRed(), 255.0);
+
+    // Fundido a la mitad en luz lineal (como OBS): blanco y negro al 50 % = 188, no 128.
+    Compositor::Layer white, black;
+    white.slot = 1;
+    white.image = solidImage (64, 36, juce::Colours::white);
+    white.version = 1;
+    black.slot = 2;
+    black.image = solidImage (64, 36, juce::Colours::black);
+    black.version = 1;
+    black.opacity = 0.5f;
+    compositor.renderOnce ({ white, black });
+    program = compositor.readProgram();
+    const int mid = pixel (program, 640, 360).getRed();
+    check (std::abs (mid - 188) <= 2, "compositor: fundido 50 % en luz lineal (188)", mid, 188.0);
+
+    // Imagen semitransparente de JUCE (premultiplicada): blanco al 50 % sobre negro = lo mismo.
+    Compositor::Layer translucent;
+    translucent.slot = 3;
+    translucent.image = solidImage (64, 36, juce::Colours::white.withAlpha (0.5f));
+    translucent.version = 1;
+    compositor.renderOnce ({ translucent });
+    const int half = pixel (compositor.readProgram(), 640, 360).getRed();
+    check (std::abs (half - 188) <= 3, "compositor: alfa premultiplicado de JUCE", half, 188.0);
+
+    // Un area concreta y una nueva version de la misma ranura (se vuelve a subir).
+    red.area = { 0.0f, 0.0f, 640.0f, 360.0f };
+    red.image = solidImage (160, 120, juce::Colours::blue);
+    red.version = 2;
+    compositor.renderOnce ({ red });
+    program = compositor.readProgram();
+    check (pixel (program, 320, 180).getBlue() > 250 && pixel (program, 960, 540).getBrightness() < 0.02f,
+           "compositor: capa en su area y la imagen nueva se sube", pixel (program, 320, 180).getBlue(), 255.0);
+
+    // Una salida (ventana) y el hilo a ritmo fijo: unos 30 fotogramas en un segundo.
+    HWND window = CreateWindowExW (WS_EX_TOOLWINDOW, L"STATIC", L"MiDJ prueba", WS_POPUP, 0, 0, 320, 180, nullptr, nullptr, nullptr, nullptr);
+    compositor.addOutput (window);
+    std::atomic<int> builds { 0 };
+    compositor.buildFrame = [&] (std::vector<Compositor::Layer>& layers)
+    {
+        ++builds;
+        layers.push_back (white);
+    };
+    const auto before = compositor.getStats().frames;
+    compositor.start();
+    juce::Thread::sleep (1000);
+    compositor.stop();
+    const auto after = compositor.getStats();
+    const auto done = (double) (after.frames - before);
+    check (done >= 27 && done <= 33 && builds.load() == (int) done, "compositor: 30 fps en el hilo (fotogramas en 1 s)", done, 30.0);
+    std::printf ("        (%.2f ms por fotograma, %llu perdidos)\n", after.renderMs, (unsigned long long) after.lagged);
+    check (compositor.getNumOutputs() == 1, "compositor: la salida sigue registrada", compositor.getNumOutputs(), 1.0);
+    compositor.removeOutput (window);
+    DestroyWindow (window);
+    check (compositor.getNumOutputs() == 0, "compositor: salida quitada", compositor.getNumOutputs(), 0.0);
+}
+
+void testVideoMix()
+{
+    using midj::VideoMix;
+    auto w = VideoMix::weights (0.25f, true, true);
+    check (w[0] == 0.75f && w[1] == 0.25f, "mezcla de video: pesos del crossfader", w[1], 0.25);
+    w = VideoMix::weights (0.0f, false, true);
+    check (w[0] == 0.0f && w[1] == 1.0f, "mezcla de video: deck vacio = solo el otro", w[1], 1.0);
+
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    midj::Deck a (formats), b (formats);
+    midj::Mixer mixer (a, b);
+    const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("MiDJTestsMix.mp4");
+    writeTestVideo (file, 5);
+    a.loadBuffer (juce::AudioBuffer<float> (2, 5 * 44100), 44100.0, "video", { 120.0, 0.0 });
+    a.setPositionSeconds (1.5);   // verde
+    midj::DeckVideo videoA (a, 160), videoB (b, 160);
+    VideoMix mix ({ &videoA, &videoB }, { &a, &b }, mixer);
+    mix.setProgramSize (320, 180);
+
+    std::vector<midj::Compositor::Layer> layers;
+    mix.buildLayers (layers);
+    check (layers.size() == 1 && layers[0].slot == 4, "mezcla de video: sin nada, el logo", (double) layers.size(), 1.0);
+
+    videoA.setFile (file);
+    videoA.setActive (true);
+    for (int i = 0; i < 300 && videoA.getFrameTime() < 1.4; ++i)   // tras alcanzar a la posicion del deck
+        juce::Thread::sleep (10);
+    mix.setTitle (1, "Artista - Cancion");
+    mixer.setCrossfader (0.5f);
+    layers.clear();
+    mix.buildLayers (layers);
+    check (layers.size() == 2 && layers[0].slot == 0 && layers[1].slot == 3 && std::abs (layers[1].opacity - 0.5f) < 1e-6f,
+           "mezcla de video: video A debajo y rotulo de B encima al 50 %", (double) layers.size(), 2.0);
+    mixer.setCrossfader (0.0f);
+    layers.clear();
+    mix.buildLayers (layers);
+    check (layers.size() == 1 && layers[0].slot == 0 && dominantColour (layers[0].image) == 'G',
+           "mezcla de video: crossfader a la izquierda = solo el video de A", (double) layers.size(), 1.0);
+
+    // De la mezcla al programa en la GPU: el video verde de A.
+    midj::Compositor compositor ({ 320, 180, 30, true });
+    if (compositor.isReady())
+    {
+        compositor.renderOnce (layers);
+        check (dominantColour (compositor.readProgram()) == 'G', "mezcla de video: el programa compuesto es el video de A", 0.0, 0.0);
+    }
+    videoA.setFile ({});
+    juce::Thread::sleep (50);
+    file.deleteFile();
+}
+
 // Tiempo de CPU del proceso en segundos (todos sus hilos: Media Foundation decodifica con varios).
 double processCpuSeconds()
 {
@@ -2422,6 +2564,8 @@ int main (int argc, char* argv[])
 
     std::printf ("== Video ==\n");
     testVideo();
+    testCompositor();
+    testVideoMix();
 
     std::printf ("== Stems con IA ==\n");
     testStemStft();

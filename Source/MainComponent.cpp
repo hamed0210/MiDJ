@@ -95,7 +95,7 @@ MainComponent::MainComponent()
     midiButton.onClick = [this] { toggleMidiLearn(); };
     addAndMakeVisible (midiButton);
     videoButton.setClickingTogglesState (true);
-    videoButton.setTooltip ("Ventana de video (doble clic en ella: pantalla completa)");
+    videoButton.setTooltip ("Ventana de video (doble clic en ella: proyector en la otra pantalla; clic derecho: proyectores)");
     videoButton.onClick = [this] { toggleVideoWindow(); };
     addAndMakeVisible (videoButton);
     addChildComponent (midiOverlay);
@@ -111,7 +111,7 @@ MainComponent::MainComponent()
 
 MainComponent::~MainComponent()
 {
-    videoWindow.reset();
+    videoStage.reset();
     shutdownAudio();
     stopTimer();
     saveSamplerBank();
@@ -260,25 +260,23 @@ void MainComponent::resized()
 
 void MainComponent::toggleVideoWindow()
 {
-    if (videoWindow == nullptr)
+    if (videoStage == nullptr)
     {
-        videoWindow = std::make_unique<VideoWindow> (std::array<DeckVideo*, 2> { &videoA, &videoB },
-                                                     std::array<const Deck*, 2> { &deckA, &deckB }, mixer);
-        videoWindow->getOutput().getTitle = [this] (int d) { return videoTitleFor (d); };
-        videoWindow->onClosed = [this]
+        videoStage = std::make_unique<VideoStage> (std::array<DeckVideo*, 2> { &videoA, &videoB },
+                                                   std::array<const Deck*, 2> { &deckA, &deckB }, mixer, videoSettings());
+        if (! videoStage->isReady())
         {
+            const auto error = videoStage->getError();
+            videoStage.reset();
             videoButton.setToggleState (false, juce::dontSendNotification);
-            videoA.setActive (false);   // nadie mira: no se gasta CPU ni GPU en decodificar
-            videoB.setActive (false);
-        };
-        videoWindow->centreWithSize (640, 360 + 32);
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Video",
+                                                    "No se pudo iniciar Direct3D 11: " + error);
+            return;
+        }
+        videoStage->getTitle = [this] (int d) { return videoTitleFor (d); };
+        videoStage->onPreviewClosed = [this] { videoButton.setToggleState (false, juce::dontSendNotification); };
     }
-    const bool show = videoButton.getToggleState();
-    videoA.setActive (show);
-    videoB.setActive (show);
-    videoWindow->setVisible (show);
-    if (videoButton.getToggleState())
-        videoWindow->toFront (true);
+    videoStage->showPreview (videoButton.getToggleState());
 }
 
 juce::String MainComponent::videoTitleFor (int deckIndex)
@@ -302,5 +300,17 @@ bool MainComponent::videoGpuAllowed()
 {
     const auto xml = juce::XmlDocument::parse (getDataFolder().getChildFile ("video.xml"));
     return xml == nullptr || xml->getStringAttribute ("device") != "cpu";
+}
+
+Compositor::Settings MainComponent::videoSettings()
+{
+    Compositor::Settings s;
+    if (const auto xml = juce::XmlDocument::parse (getDataFolder().getChildFile ("video.xml")))
+    {
+        s.width = xml->getIntAttribute ("width", s.width);
+        s.height = xml->getIntAttribute ("height", s.height);
+        s.fps = xml->getIntAttribute ("fps", s.fps);
+    }
+    return s;
 }
 }

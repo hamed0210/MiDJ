@@ -1,59 +1,74 @@
 #pragma once
 
-#include "Engine/Mixer.h"
-#include "Video/DeckVideo.h"
+#include "Video/Compositor.h"
+#include "Video/VideoMix.h"
 
-#include <juce_gui_basics/juce_gui_basics.h>
+#include <juce_gui_extra/juce_gui_extra.h>
 
 namespace midj
 {
-// La salida de video: la mezcla de los dos decks segun el crossfader (como el crossfader de
-// video de VirtualDJ, que por defecto sigue al de audio). Una cancion sin video se ve como un
-// rotulo con el titulo y el artista. Doble clic: pantalla completa (en el segundo monitor si hay).
-class VideoOutput : public juce::Component, private juce::Timer
+// Una superficie donde el compositor dibuja el programa (una ventana hija de Windows con su
+// cadena de intercambio de Direct3D). Los clics pasan a traves de ella al componente de JUCE.
+class ProjectorView : public juce::Component
 {
 public:
-    VideoOutput (std::array<DeckVideo*, 2> videos, std::array<const Deck*, 2> decks, const Mixer& mixer);
+    explicit ProjectorView (Compositor& compositor);
+    ~ProjectorView() override;
 
-    // Titulo que se rotula para la cancion de un deck sin video ("" = deck vacio).
-    std::function<juce::String (int deckIndex)> getTitle;
     std::function<void()> onDoubleClick;
+    std::function<void (const juce::MouseEvent&)> onRightClick;
 
-    // Peso de cada deck en la imagen: el crossfader, y si un deck esta vacio la imagen es del otro.
-    static std::array<float, 2> weights (float crossfader, bool aHasPicture, bool bHasPicture);
-
+    void resized() override;
     void paint (juce::Graphics& g) override;
-    void mouseDoubleClick (const juce::MouseEvent&) override;
+    void mouseDown (const juce::MouseEvent& e) override;
+    void mouseDoubleClick (const juce::MouseEvent& e) override;
 
 private:
-    void timerCallback() override;
-    void drawSource (juce::Graphics& g, int deckIndex, float alpha);
-
-    std::array<DeckVideo*, 2> videos;
-    std::array<const Deck*, 2> decks;
-    const Mixer& mixer;
-    std::array<double, 2> shownTimes { -2.0, -2.0 };
-    float shownCrossfader = -1.0f;
-    std::array<juce::String, 2> shownTitles;
+    Compositor& compositor;
+    juce::HWNDComponent surface;
 };
 
-// Ventana aparte con la salida de video.
-class VideoWindow : public juce::DocumentWindow
+// La salida de video de MiDJ, como los proyectores de OBS: el compositor (un fotograma a ritmo
+// fijo en la GPU), la ventana de vista previa y los proyectores a pantalla completa, uno por
+// monitor. Solo se compone y se decodifica mientras hay alguna ventana abierta.
+class VideoStage : private juce::Timer
 {
 public:
-    VideoWindow (std::array<DeckVideo*, 2> videos, std::array<const Deck*, 2> decks, const Mixer& mixer);
+    VideoStage (std::array<DeckVideo*, 2> videos, std::array<const Deck*, 2> decks, const Mixer& mixer,
+                Compositor::Settings settings);
+    ~VideoStage() override;
 
-    VideoOutput& getOutput() { return *output; }
-    void toggleFullScreen();   // pantalla completa sin barra ni borde (Esc o doble clic para salir)
-    bool isShowingFullScreen() const { return fullScreenMode; }
-    std::function<void()> onClosed;
+    std::function<juce::String (int deckIndex)> getTitle;   // titulo de la cancion de un deck
+    std::function<void()> onPreviewClosed;                     // el usuario cerro la vista previa
 
-    void closeButtonPressed() override;
-    bool keyPressed (const juce::KeyPress& key) override;
+    bool isReady() const { return compositor.isReady(); }
+    juce::String getError() const { return compositor.getError(); }
+
+    void showPreview (bool shouldShow);
+    bool isPreviewShowing() const;
+    // Proyector a pantalla completa en un monitor (indice de Displays); de nuevo lo cierra.
+    void toggleProjector (int displayIndex);
+    bool hasProjector (int displayIndex) const;
+    void closeProjectors();
+    // El monitor que no es el principal (el del publico); si solo hay uno, ese.
+    static int audienceDisplay();
+
+    Compositor& getCompositor() { return compositor; }
+    void showMenu();   // menu de proyectores (clic derecho en la vista previa)
 
 private:
-    VideoOutput* output = nullptr;   // lo posee la ventana (setContentOwned)
-    juce::Rectangle<int> windowedBounds;
-    bool fullScreenMode = false;
+    class PreviewWindow;
+    class FullScreenProjector;
+
+    void timerCallback() override;
+    void updateRunning();
+    void closeProjectorAt (juce::Rectangle<int> area);
+    juce::String statusText() const;
+
+    Compositor compositor;
+    VideoMix mix;
+    std::array<DeckVideo*, 2> videos;
+    std::unique_ptr<PreviewWindow> preview;
+    std::vector<std::unique_ptr<FullScreenProjector>> projectors;
 };
 }

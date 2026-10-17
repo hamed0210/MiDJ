@@ -29,6 +29,7 @@ public:
     juce::Image getFrame() const;
     bool hasVideo() const { return videoOpen.load(); }
     double getFrameTime() const { return frameTime.load(); }   // instante del fotograma entregado
+    juce::uint64 getFrameNumber() const { return frameNumber.load(); }   // cambia con cada fotograma entregado
 
     static bool isVideoFile (const juce::File& file);
 
@@ -44,5 +45,6 @@ private:
     juce::File wanted;
     std::atomic<bool> videoOpen { false };
     std::atomic<double> frameTime { -1.0 };
+    std::atomic<juce::uint64> frameNumber { 0 };
 };
 }

@@ -1,5 +1,7 @@
 #include "Video/DeckVideo.h"
 
+#include <algorithm>
+
 namespace midj
 {
 DeckVideo::DeckVideo (const Deck& d, int width, bool gpu)
@@ -48,7 +50,9 @@ void DeckVideo::run()
     MediaFoundation::initialiseThisThread();
     std::unique_ptr<VideoDecoder> decoder;
     juce::File current;
-    juce::Image decoded;   // solo de este hilo; lo que se entrega es una copia
+    // Tres imagenes que se turnan: una es la entregada, otra la puede estar subiendo el compositor
+    // a la GPU y en la libre (nadie mas la tiene) se decodifica. Asi no se copia cada fotograma.
+    std::array<juce::Image, 3> pool;
     double delivered = -1.0;
 
     while (! threadShouldExit())
@@ -68,7 +72,7 @@ void DeckVideo::run()
         {
             current = file;
             decoder.reset();
-            decoded = {};
+            pool = {};
             delivered = -1.0;
             juce::String error;
             if (file != juce::File() && isVideoFile (file))
@@ -81,6 +85,7 @@ void DeckVideo::run()
             videoOpen = decoder != nullptr;
             usingGpu = decoder != nullptr && decoder->isUsingGpu();
             frameTime = -1.0;
+            ++frameNumber;
         }
 
         if (decoder == nullptr)
@@ -92,15 +97,20 @@ void DeckVideo::run()
         // La posicion que se oye: el video va con el audio (tambien con pitch, saltos y bucles).
         const double position = juce::jlimit (0.0, juce::jmax (0.0, decoder->getDuration() - 0.001), deck.getPositionSeconds());
         // Como mucho 6 fotogramas por vuelta: tras un salto se ve el video avanzar hasta alcanzar al audio.
-        if (decoder->frameAt (position, decoded, 6) && decoder->getCurrentFrameTime() != delivered)
+        auto free = std::find_if (pool.begin(), pool.end(), [] (const juce::Image& i) { return ! i.isValid() || i.getReferenceCount() == 1; });
+        if (free == pool.end())
+            *(free = pool.end() - 1) = {};   // las tres en uso (no deberia pasar): una nueva
+        auto& target = *free;
+        if (decoder->frameAt (position, target, 6) && decoder->getCurrentFrameTime() != delivered)
         {
             delivered = decoder->getCurrentFrameTime();
-            auto copy = decoded.createCopy();
+            auto published = target;
             {
                 const juce::SpinLock::ScopedLockType sl (lock);
-                std::swap (latest, copy);
+                std::swap (latest, published);
             }
             frameTime = delivered;   // la imagen vieja se libera fuera del cerrojo
+            ++frameNumber;
         }
         // Se mira la posicion cada pocos milisegundos (mas a menudo que los fotogramas de cualquier video).
         wait (deck.isPlaying() ? 8 : 25);

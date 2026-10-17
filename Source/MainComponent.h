@@ -68,12 +68,14 @@ private:
     juce::Slider crossfader;
     juce::Label crossfaderLabel;
     juce::TextButton midiButton { "MIDI" };
-    // Video: un decodificador por deck y la ventana con la mezcla (se crea al abrirla).
-    // GPU por defecto; <VIDEO device="cpu"/> en %APPDATA%MiDJvideo.xml la desactiva.
+    // Video: un decodificador por deck y el compositor con sus ventanas (se crea al abrirlo).
+    // %APPDATA%MiDJvideo.xml: <VIDEO device="cpu" width="1280" height="720" fps="30"/>
+    // (device="cpu" decodifica sin la tarjeta grafica; los demas, el tamano y ritmo del programa).
     static bool videoGpuAllowed();
-    DeckVideo videoA { deckA, 960, videoGpuAllowed() };
-    DeckVideo videoB { deckB, 960, videoGpuAllowed() };
-    std::unique_ptr<VideoWindow> videoWindow;
+    static Compositor::Settings videoSettings();
+    DeckVideo videoA { deckA, videoSettings().width, videoGpuAllowed() };
+    DeckVideo videoB { deckB, videoSettings().width, videoGpuAllowed() };
+    std::unique_ptr<VideoStage> videoStage;
     juce::TextButton videoButton { "VIDEO" };
     void toggleVideoWindow();
     juce::String videoTitleFor (int deckIndex);

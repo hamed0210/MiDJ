@@ -51,6 +51,8 @@ Source/
   Video/                video
     MediaFoundation.*   audio y video de MP4/MOV/WMV/M4A con Media Foundation de Windows
     DeckVideo.*         hilo de video de un deck: el fotograma que toca segun su posicion
+    Compositor.*        compositor en la GPU (Direct3D 11) a ritmo fijo y sus salidas (como OBS)
+    VideoMix.*          capas de cada fotograma: los decks segun el crossfader, rotulos y logo
   Control/              controladoras MIDI
     Actions.*           acciones asignables (play, cue, tempo, EQ, efectos, jog...)
     MidiMapping.*       asignaciones mensaje MIDI -> accion, guardadas en XML
@@ -66,7 +68,7 @@ Source/
     EffectsRow.*        fila FX de un deck: elegir efecto, encender y mando
     MidiLearnOverlay.*  capa del modo aprender MIDI
     SamplerPanel.*      panel del sampler: pads, volumen y STOP
-    VideoWindow.*       ventana de video: mezcla de los decks segun el crossfader
+    VideoWindow.*       vista previa y proyectores a pantalla completa (uno por monitor)
     DarkLookAndFeel.*   estilo visual oscuro
 Tests/
   TestMain.cpp          pruebas automáticas del motor (ctest) y herramientas:
@@ -99,13 +101,23 @@ Por defecto se usa la CPU; la tarjeta gráfica (DirectML) se activa escribiendo 
 ## Video
 
 Los MP4, MOV, M4V, WMV y 3GP se cargan en un deck como cualquier canción (también M4A, AAC y WMA), con los
-codecs de Windows (Media Foundation, sin FFmpeg). Botón **VIDEO** (junto a MIDI): abre la ventana de video, que
+codecs de Windows (Media Foundation, sin FFmpeg). Botón **VIDEO** (junto a MIDI): abre la vista previa, que
 mezcla los dos decks según el crossfader; una canción sin video se ve como un rótulo con el título y el
-artista. Doble clic en la ventana: pantalla completa, en el segundo monitor si hay uno (Esc para salir).
-El video sigue la posición que se oye del deck: pitch, saltos, CUE y bucles.
-Se decodifica en la tarjeta gráfica (DXVA con Direct3D 11) y solo mientras la ventana de video está abierta;
-si la GPU falla se usa la CPU. Para forzar la CPU: `<VIDEO device="cpu"/>` en `%APPDATA%\MiDJ\video.xml`.
-En este portátil (A8 + Radeon R5) un video cuesta 24 % de un núcleo en la GPU frente a 204 % en la CPU.
+artista. El video sigue la posición que se oye del deck: pitch, saltos, CUE y bucles.
+
+Como en OBS, un compositor en la tarjeta gráfica (Direct3D 11) arma la imagen una vez por fotograma a ritmo
+fijo (1280x720 a 30 fps) y la dibuja en cada salida; el fundido entre decks se hace en luz lineal (a la mitad
+no oscurece). Salidas:
+- **Vista previa** (ventana VIDEO), para el DJ.
+- **Proyectores a pantalla completa**, uno por monitor, sin bordes ni cursor: doble clic en la vista previa
+  abre o cierra el del segundo monitor; clic derecho, el menú con todas las pantallas y el estado del
+  compositor (tarjeta, ms por fotograma, fotogramas perdidos). En el proyector: Esc o doble clic lo cierra.
+
+Solo se compone y se decodifica mientras hay alguna de estas ventanas abierta. El video se decodifica en la
+tarjeta gráfica (DXVA) y, si falla, en la CPU. Ajustes en `%APPDATA%\MiDJ\video.xml`:
+`<VIDEO device="cpu" width="1280" height="720" fps="30"/>` (`device="cpu"` fuerza la CPU; el resto, el
+tamaño y el ritmo del programa). En este portátil (A8 + Radeon R5, Release) un video en un deck cuesta ~34 %
+de un núcleo con la vista previa y ~5 % más con un proyector; componer, ~1,2 ms por fotograma.
 
 ## Sampler
 
@@ -157,3 +169,4 @@ los pesos de Spleeter son de Deezer con licencia MIT (exportados a ONNX por el p
 - Stems con IA: voz e instrumental con Spleeter 2 stems (ONNX Runtime, CPU o DirectML) separados en segundo plano con caché en disco; mezcla en el deck sin clics y exacta con los dos encendidos; botones VOZ/INSTR, preparar desde el navegador y acciones MIDI.
 - Video: MP4/MOV/WMV (y M4A/AAC/WMA) en los decks con Media Foundation de Windows; un hilo de video por deck que sigue la posición que se oye (tras un salto, primer fotograma en ~0,1 s y alcanza al audio sin congelarse); ventana VIDEO con la mezcla según el crossfader, rótulo con título y artista para las canciones sin video y pantalla completa sin bordes en el segundo monitor.
 - Video en la GPU: decodificación DXVA con Direct3D 11 (8 veces menos CPU en este equipo; saltos en ~45 ms) con vuelta a la CPU si falla, y sin decodificar mientras la ventana de video está cerrada.
+- Compositor de video en la GPU como el de OBS (Direct3D 11, 1280x720 a 30 fps, fundido en luz lineal) con vista previa y proyectores a pantalla completa en cualquier monitor, sin bordes ni cursor; sin copias de fotogramas entre el decodificador y la GPU más allá de la subida.
