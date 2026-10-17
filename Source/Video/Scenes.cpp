@@ -4,7 +4,8 @@ namespace midj
 {
 namespace
 {
-    const char* typeIds[] = { "decks", "deckA", "deckB", "image", "text", "colour", "screen", "window" };
+    const char* typeIds[] = { "decks", "deckA", "deckB", "image", "text", "colour", "screen", "window", "visualizer" };
+    const char* visualizerIds[] = { "spectrum", "wave", "pulse" };
     const char* transitionIds[] = { "cut", "fade", "fadeToBlack", "slide", "swipe" };
 
     template <typename Enum, size_t N>
@@ -85,6 +86,13 @@ SceneItem SceneCollection::makeItem (SourceType type, int w, int h)
             item.height = h / 5;
             item.position = { 0.0f, (float) (h - item.height) };
             break;
+        case SourceType::visualizer:
+            // Un espectro en el tercio de abajo, a lo ancho.
+            item.colour = juce::Colour (0xff36c8ff);
+            item.width = w;
+            item.height = h / 3;
+            item.position = { 0.0f, (float) (h - item.height) };
+            break;
         case SourceType::decks:
         case SourceType::deckA:
         case SourceType::deckB:
@@ -109,6 +117,18 @@ juce::String SceneCollection::typeName (SourceType type)
         case SourceType::colour: return "Color";
         case SourceType::screen: return "Captura de pantalla";
         case SourceType::window: return "Captura de ventana";
+        case SourceType::visualizer: return "Visualizador";
+    }
+    return {};
+}
+
+juce::String SceneCollection::visualizerName (VisualizerStyle style)
+{
+    switch (style)
+    {
+        case VisualizerStyle::spectrum: return "Espectro";
+        case VisualizerStyle::wave:     return "Onda";
+        case VisualizerStyle::pulse:    return "Pulso";
     }
     return {};
 }
@@ -163,9 +183,11 @@ std::unique_ptr<juce::XmlElement> SceneCollection::toXml() const
                 e->setAttribute ("bold", i.bold);
                 e->setAttribute ("shadow", i.shadow);
             }
-            if (i.type == SourceType::text || i.type == SourceType::colour)
+            if (i.type == SourceType::text || i.type == SourceType::colour || i.type == SourceType::visualizer)
                 e->setAttribute ("colour", i.colour.toString());
-            if (i.type == SourceType::colour)
+            if (i.type == SourceType::visualizer)
+                e->setAttribute ("style", visualizerIds[(int) i.visualizer]);
+            if (i.type == SourceType::colour || i.type == SourceType::visualizer)
             {
                 e->setAttribute ("width", i.width);
                 e->setAttribute ("height", i.height);
@@ -231,6 +253,7 @@ SceneCollection SceneCollection::fromXml (const juce::XmlElement& xml, int w, in
             i.windowExe = e->getStringAttribute ("windowExe");
             i.clientArea = e->getBoolAttribute ("clientArea", true);
             i.cursor = e->getBoolAttribute ("cursor", true);
+            i.visualizer = parseId (e->getStringAttribute ("style"), visualizerIds, VisualizerStyle::spectrum);
             s.items.push_back (std::move (i));
         }
         c.scenes.push_back (std::move (s));

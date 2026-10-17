@@ -71,6 +71,8 @@ private:
     juce::ToggleButton boldToggle { "Negrita" }, shadowToggle { "Sombra" };
     juce::TextButton colourButton { "Color..." }, fileButton { "Imagen..." }, fitButton { "Ajustar a pantalla" },
                      resetButton { "Restablecer" };
+    juce::ComboBox visualizerStyle;
+    juce::Label visualizerLabel { {}, "Estilo" };
     juce::ComboBox captureTarget;
     juce::TextButton refreshTargets { "Actualizar" };
     juce::ToggleButton cursorToggle { "Capturar el puntero" }, clientToggle { "Solo el contenido (sin bordes)" };

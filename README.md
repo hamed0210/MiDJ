@@ -38,6 +38,7 @@ Source/
   Engine/               motor de audio (sin interfaz, se puede probar solo)
     Deck.*              un plato: carga, reproduce, velocidad, BPM
     Mixer.*             mezcla de dos decks con crossfader
+    MasterTap.*         lo que sale por el master y su pulso, para el visualizador
     ChannelStrip.*      canal de un deck: ganancia, EQ de 3 bandas, filtro, volumen
     BpmDetector.*       detección de tempo y del primer pulso
     TimeStretcher.*     keylock: cambio de tempo sin cambio de tono (Rubber Band)
@@ -56,6 +57,7 @@ Source/
     Scenes.*            escenas y elementos (como OBS): fuentes, colocacion, recorte y XML
     VideoProgram.*      la escena al aire, sus capas y las transiciones entre escenas
     Capture.*           captura de pantalla (DXGI) y de ventana (Windows Graphics Capture) en la GPU
+    Visualizer.*        visualizador del master: espectro, onda y pulso
   Control/              controladoras MIDI
     Actions.*           acciones asignables (play, cue, tempo, EQ, efectos, jog...)
     MidiMapping.*       asignaciones mensaje MIDI -> accion, guardadas en XML
@@ -130,7 +132,7 @@ A la derecha de la vista previa está el panel de escenas, como el de OBS (se gu
 - **Escenas**: clic para ponerla al aire con la transición elegida (Corte, Fundido, Fundido a negro,
   Deslizar o Barrido, de 0 a 3 s). Botones para crear, borrar y renombrar.
 - **Fuentes** de la escena (la de arriba se ve encima): Mezcla de decks, Deck A, Deck B, Imagen (PNG, JPG,
-  GIF), Texto, Color, Captura de pantalla y Captura de ventana. En el texto, `{titulo}`, `{artista}` y
+  GIF), Texto, Color, Captura de pantalla, Captura de ventana y Visualizador. En el texto, `{titulo}`, `{artista}` y
   `{bpm}` se cambian por la canción del deck que más se ve (por ejemplo "Ahora suena: {titulo}"). Clic en
   el punto: mostrar u ocultar; Subir y Bajar.
 - **Propiedades** de la fuente elegida: texto, tamaño, negrita, sombra, color, imagen, opacidad, giro,
@@ -153,6 +155,19 @@ Como en OBS, la imagen capturada no sale de la tarjeta gráfica (se copia de tex
   cierra y se vuelve a abrir, la captura vuelve sola.
 - Debajo se ve el estado: tamaño capturado y método (DXGI o WGC), o por qué no captura. Dos fuentes que
   capturan lo mismo comparten la captura.
+
+### Visualizador
+
+Fuente que dibuja lo que suena por el master (lo que se oye, descontando la latencia de la tarjeta):
+- **Espectro**: 48 barras de 40 Hz a 16 kHz, de -60 a 0 dB (con +3 dB por octava para que la música, que
+  tiene más graves, se vea pareja). Suben rápido, bajan despacio y dejan una marca de pico.
+- **Onda**: la forma de onda de los últimos 23 ms, empezando en un cruce por cero para que no tiemble.
+- **Pulso**: un círculo que crece con el volumen y late con el pulso del deck que manda (el que suena; si
+  suenan los dos, el que el crossfader deja más alto), más fuerte en el primero de cada compás, con un aro que
+  sale en cada pulso. Sin ningún deck con BPM, late con los golpes de volumen.
+- Propiedades: estilo y color (el resto, como cualquier fuente). Al cambiar de estilo se coloca en su sitio:
+  espectro y onda abajo a lo ancho; pulso, un cuadrado en el centro.
+- Se dibuja en la CPU en una imagen de como mucho 640 px de lado y la tarjeta gráfica la escala.
 
 ## Sampler
 

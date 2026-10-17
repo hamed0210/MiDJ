@@ -16,7 +16,16 @@ enum class SourceType
     text,     // texto; {titulo}, {artista} y {bpm} se cambian por la cancion que suena
     colour,   // un rectangulo de color
     screen,   // captura de una pantalla (monitor)
-    window    // captura de una ventana
+    window,   // captura de una ventana
+    visualizer   // espectro, onda o pulso de lo que suena por el master
+};
+
+// Como dibuja el visualizador lo que suena.
+enum class VisualizerStyle
+{
+    spectrum,   // barras por frecuencias (de graves a agudos)
+    wave,       // la forma de onda (osciloscopio)
+    pulse       // un circulo que late con el ritmo y crece con el volumen
 };
 
 struct SceneItem
@@ -40,14 +49,16 @@ struct SceneItem
     float fontSize = 72.0f;
     bool bold = true;
     bool shadow = true;
-    juce::Colour colour { juce::Colours::white };    // del texto o del rectangulo
-    int width = 1280, height = 720;                  // del rectangulo de color
+    juce::Colour colour { juce::Colours::white };    // del texto, del rectangulo o del visualizador
+    int width = 1280, height = 720;                  // del rectangulo de color o del visualizador
 
     int monitor = 0;                                 // captura de pantalla: numero y nombre de Windows (p. ej. DISPLAY1)
     juce::String monitorId;
     juce::String windowTitle, windowClass, windowExe;   // captura de ventana: cual (como la guarda OBS)
     bool cursor = true;                              // capturar el puntero del raton
     bool clientArea = true;                          // ventana: solo el contenido, sin bordes ni barra de titulo
+
+    VisualizerStyle visualizer = VisualizerStyle::spectrum;   // visualizador: estilo (usa el color y el tamano)
 };
 
 struct Scene
@@ -98,6 +109,7 @@ public:
 
     static juce::String typeName (SourceType type);
     static juce::String transitionName (TransitionType type);
+    static juce::String visualizerName (VisualizerStyle style);
 
 private:
     int lastId = 0;

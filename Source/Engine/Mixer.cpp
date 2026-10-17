@@ -37,6 +37,7 @@ void Mixer::prepareToPlay (int samplesPerBlockExpected, double sampleRate)
     effectsA.prepare (sampleRate, samplesPerBlockExpected);
     effectsB.prepare (sampleRate, samplesPerBlockExpected);
     sampler.prepare (sampleRate, samplesPerBlockExpected);
+    tap.prepare (sampleRate);
     scratch.setSize (2, samplesPerBlockExpected);
 }
 
@@ -98,5 +99,8 @@ void Mixer::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
         ref.beatAtStart = master->beatAtStart;
     }
     sampler.process (out.getWritePointer (0, info.startSample), out.getWritePointer (juce::jmin (1, out.getNumChannels() - 1), info.startSample), n, ref);
+
+    tap.push (out.getReadPointer (0, info.startSample), out.getNumChannels() > 1 ? out.getReadPointer (1, info.startSample) : nullptr, n);
+    tap.setBeat (ref.valid, ref.valid ? ref.beatAtStart + n / ref.samplesPerBeat : 0.0, ref.bpm);
 }
 }

@@ -21,6 +21,7 @@ juce::Point<int> VideoProgram::naturalSize (const SceneItem& item) const
                 return { it->second.image.getWidth(), it->second.image.getHeight() };
             return { width / 4, height / 4 };
         case SourceType::colour:
+        case SourceType::visualizer:
             return { juce::jmax (1, item.width), juce::jmax (1, item.height) };
         case SourceType::screen:
         case SourceType::window:
@@ -59,6 +60,9 @@ VideoProgram::Prepared VideoProgram::prepare (const SceneItem& item)
                 p.capture = captures->get (item);
             p.natural = naturalSize (item);
             return p;   // la imagen la pone la captura en la GPU en cada fotograma
+        case SourceType::visualizer:
+            p.natural = naturalSize (item);
+            return p;   // se dibuja en el hilo del compositor en cada fotograma
         case SourceType::decks:
         case SourceType::deckA:
         case SourceType::deckB:
@@ -271,6 +275,21 @@ void VideoProgram::sceneLayers (const PreparedScene& scene, std::vector<Composit
                     layers.push_back (std::move (layer));
                 break;
             }
+            case SourceType::visualizer:
+            {
+                if (tap == nullptr)
+                    break;
+                auto& vis = visualizers[item.id];
+                if (vis == nullptr)
+                    vis = std::make_unique<Visualizer> (*tap);
+                visualizersSeen.insert (item.id);
+                Compositor::Layer layer;
+                layer.slot = itemSlotBase + item.id;
+                layer.image = vis->render (item, juce::Time::getMillisecondCounterHiRes());
+                layer.version = (1ull << 62) + ++visualizerFrame;   // cambia en cada fotograma (otra serie que la de las imagenes)
+                add (layer, (float) p.natural.x, (float) p.natural.y);
+                break;
+            }
             case SourceType::image:
             case SourceType::text:
             case SourceType::colour:
@@ -322,14 +341,20 @@ void VideoProgram::buildFrame (Compositor::Frame& frame)
     const auto* outgoing = inTransition ? find (prev) : nullptr;
     if (incoming == nullptr)
         return;
+    visualizersSeen.clear();
     if (outgoing == nullptr)
     {
         sceneLayers (*incoming, frame.layers);
-        return;
     }
-    sceneLayers (*outgoing, frame.scenes[0]);
-    sceneLayers (*incoming, frame.scenes[1]);
-    frame.useScene = { true, true };
-    transitionLayers (type, t, (float) width, (float) height, frame.layers);
+    else
+    {
+        sceneLayers (*outgoing, frame.scenes[0]);
+        sceneLayers (*incoming, frame.scenes[1]);
+        frame.useScene = { true, true };
+        transitionLayers (type, t, (float) width, (float) height, frame.layers);
+    }
+    // Los visualizadores que no salen en este fotograma se sueltan (al volver, empiezan de cero).
+    for (auto it = visualizers.begin(); it != visualizers.end();)
+        it = visualizersSeen.count (it->first) > 0 ? std::next (it) : visualizers.erase (it);
 }
 }

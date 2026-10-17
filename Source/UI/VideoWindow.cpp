@@ -255,6 +255,7 @@ VideoStage::VideoStage (std::array<DeckVideo*, 2> v, std::array<const Deck*, 2> 
     scenes = xml != nullptr ? SceneCollection::fromXml (*xml, compositor.getWidth(), compositor.getHeight())
                             : SceneCollection::createDefault (compositor.getWidth(), compositor.getHeight());
     program.setCaptures (&captures);
+    program.setMasterTap (&mixer.getTap());
     program.setScenes (scenes);
     compositor.buildFrame = [this] (Compositor::Frame& frame) { program.buildFrame (frame); };
 }

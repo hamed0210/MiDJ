@@ -100,6 +100,8 @@ public:
             label << ": " << item->windowTitle;
         else if (item->type == SourceType::screen)
             label << ": " << juce::String (item->monitor + 1);
+        else if (item->type == SourceType::visualizer)
+            label << ": " << SceneCollection::visualizerName (item->visualizer);
         g.drawText (label, 24, 0, w - 28, h, juce::Justification::centredLeft, true);
     }
 
@@ -218,7 +220,7 @@ ScenePanel::ScenePanel (SceneCollection& s, const VideoProgram& p, int w, int h)
     {
         juce::PopupMenu menu;
         for (auto type : { SourceType::decks, SourceType::deckA, SourceType::deckB, SourceType::image, SourceType::text, SourceType::colour,
-                           SourceType::screen, SourceType::window })
+                           SourceType::screen, SourceType::window, SourceType::visualizer })
             menu.addItem (SceneCollection::typeName (type), [this, type] { addItem (type); });
         menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (addItemButton));
     };
@@ -269,6 +271,37 @@ ScenePanel::ScenePanel (SceneCollection& s, const VideoProgram& p, int w, int h)
     resetButton.onClick = [this] { resetSelected(); };
     for (auto* c : std::initializer_list<juce::Component*> { &boldToggle, &shadowToggle, &colourButton, &fileButton, &fitButton, &resetButton })
         addChildComponent (*c);
+
+    for (int style = 0; style < 3; ++style)
+        visualizerStyle.addItem (SceneCollection::visualizerName ((VisualizerStyle) style), style + 1);
+    visualizerStyle.setTooltip ("Espectro: barras de graves a agudos; Onda: osciloscopio; Pulso: late con el ritmo");
+    visualizerStyle.onChange = [this]
+    {
+        auto* i = selected();
+        if (i == nullptr || updating)
+            return;
+        i->visualizer = (VisualizerStyle) (visualizerStyle.getSelectedId() - 1);
+        // Cada estilo con su sitio de siempre: el pulso, un cuadrado en el centro; los otros, abajo a lo ancho.
+        if (i->visualizer == VisualizerStyle::pulse)
+        {
+            i->width = i->height = height / 2;
+            i->position = { (float) (width - i->width) * 0.5f, (float) (height - i->height) * 0.5f };
+        }
+        else
+        {
+            i->width = width;
+            i->height = height / 3;
+            i->position = { 0.0f, (float) (height - i->height) };
+        }
+        i->scaleX = i->scaleY = 1.0f;
+        i->rotation = 0.0f;
+        i->cropLeft = i->cropTop = i->cropRight = i->cropBottom = 0.0f;
+        changed();
+        updateProperties();
+    };
+    visualizerLabel.setFont (juce::FontOptions (13.0f));
+    addChildComponent (visualizerStyle);
+    addChildComponent (visualizerLabel);
 
     captureTarget.setTextWhenNothingSelected ("Elige...");
     captureTarget.onChange = [this] { if (! updating) chooseCaptureTarget(); };
@@ -376,7 +409,9 @@ void ScenePanel::updateProperties()
     fontSizeLabel.setVisible (isText);
     boldToggle.setVisible (isText);
     shadowToggle.setVisible (isText);
-    colourButton.setVisible (any && (type == SourceType::text || type == SourceType::colour));
+    colourButton.setVisible (any && (type == SourceType::text || type == SourceType::colour || type == SourceType::visualizer));
+    visualizerStyle.setVisible (any && type == SourceType::visualizer);
+    visualizerLabel.setVisible (visualizerStyle.isVisible());
     fileButton.setVisible (any && type == SourceType::image);
     const bool isCapture = any && (type == SourceType::screen || type == SourceType::window);
     captureTarget.setVisible (isCapture);
@@ -396,6 +431,7 @@ void ScenePanel::updateProperties()
         shadowToggle.setToggleState (item->shadow, juce::dontSendNotification);
         cursorToggle.setToggleState (item->cursor, juce::dontSendNotification);
         clientToggle.setToggleState (item->clientArea, juce::dontSendNotification);
+        visualizerStyle.setSelectedId ((int) item->visualizer + 1, juce::dontSendNotification);
         if (isCapture)
             fillCaptureTargets();
         opacity.setValue (item->opacity * 100.0, juce::dontSendNotification);
@@ -690,6 +726,8 @@ void ScenePanel::resized()
         boldToggle.setBounds (a.removeFromLeft (a.getWidth() / 2));
         shadowToggle.setBounds (a);
     }
+    if (visualizerStyle.isVisible())
+        labelled (visualizerLabel, visualizerStyle);
     if (colourButton.isVisible())
         colourButton.setBounds (row (24));
     if (fileButton.isVisible())

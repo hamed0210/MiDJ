@@ -220,6 +220,9 @@ void MainComponent::startMidiSimulation (const juce::File& script)
 void MainComponent::prepareToPlay (int samplesPerBlockExpected, double sampleRate)
 {
     mixer.prepareToPlay (samplesPerBlockExpected, sampleRate);
+    // El visualizador muestra lo que se oye: lo calculado hace la latencia de la tarjeta y un bloque.
+    if (auto* device = deviceManager.getCurrentAudioDevice())
+        mixer.getTap().setOutputLatency (device->getOutputLatencyInSamples() + samplesPerBlockExpected);
 }
 
 void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)

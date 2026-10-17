@@ -3,6 +3,7 @@
 #include "Video/Capture.h"
 #include "Video/Scenes.h"
 #include "Video/VideoMix.h"
+#include "Video/Visualizer.h"
 
 #include <map>
 #include <mutex>
@@ -22,6 +23,8 @@ public:
     void setCaptures (CaptureManager* manager) { captures = manager; }
     // Hilo de interfaz: la captura de un elemento (para mostrar si va bien), o nullptr.
     std::shared_ptr<Capture> captureFor (int itemId) const { return captures != nullptr ? captures->find (itemId) : nullptr; }
+    // Lo que suena por el master, para los visualizadores (sin ella, no se ven). Antes de empezar.
+    void setMasterTap (const MasterTap* t) { tap = t; }
 
     // Hilo de interfaz: las escenas (copia). Solo se vuelven a preparar las imagenes y textos que cambian.
     void setScenes (const SceneCollection& scenes);
@@ -71,6 +74,7 @@ private:
     VideoMix& mix;
     const int width, height;
     CaptureManager* captures = nullptr;
+    const MasterTap* tap = nullptr;
 
     // Hilo de interfaz
     SceneCollection collection;
@@ -85,5 +89,10 @@ private:
     double transitionStart = 0.0;
     Transition transition;
     bool transitioning = false;
+
+    // Hilo del compositor: el estado de cada visualizador (sus barras bajan poco a poco...).
+    std::map<int, std::unique_ptr<Visualizer>> visualizers;
+    std::set<int> visualizersSeen;
+    juce::uint64 visualizerFrame = 0;
 };
 }

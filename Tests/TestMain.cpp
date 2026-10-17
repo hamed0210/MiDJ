@@ -20,6 +20,7 @@
 #include "Video/DeckVideo.h"
 #include "Video/VideoMix.h"
 #include "Video/VideoProgram.h"
+#include "Video/Visualizer.h"
 #include "Video/MediaFoundation.h"
 #include "Library/TagReader.h"
 
@@ -2777,6 +2778,147 @@ void testCapture()
 }
 
 
+// Visualizador: la toma del master, el analisis y el dibujo.
+void testVisualizer()
+{
+    using namespace midj;
+    // Toma del master: lo ultimo escrito, menos la latencia de salida; antes de empezar, silencio.
+    MasterTap tap;
+    tap.prepare (44100.0);
+    std::vector<float> got (10, -1.0f);
+    tap.read (got.data(), 10, 0.0);
+    check (got[0] == 0.0f && got[9] == 0.0f, "visualizador: sin audio, silencio", got[9], 0.0);
+    std::vector<float> ramp (1000);
+    for (int i = 0; i < 1000; ++i)
+        ramp[(size_t) i] = (float) i;
+    tap.push (ramp.data(), ramp.data(), 1000);
+    tap.read (got.data(), 10, 0.0);
+    check (got[0] == 990.0f && got[9] == 999.0f, "visualizador: lee las ultimas muestras del master", got[9], 999.0);
+    tap.setOutputLatency (100);
+    tap.read (got.data(), 10, 0.0);
+    check (got[9] == 899.0f, "visualizador: muestra lo que se oye (menos la latencia)", got[9], 899.0);
+
+    tap.setOutputLatency (0);
+    tap.setBeat (true, 8.0, 120.0);
+    auto beat = tap.beatAt (juce::Time::getMillisecondCounterHiRes() + 500.0);   // medio segundo despues = un pulso a 120
+    check (beat.valid && std::abs (beat.beat - 9.0) < 0.05, "visualizador: el pulso sigue corriendo entre bloques", beat.beat, 9.0);
+    check (Visualizer::beatFlash (4.0) > 0.99f && std::abs (Visualizer::beatFlash (5.0) - 0.75f) < 0.01f && Visualizer::beatFlash (4.5) < 0.06f,
+           "visualizador: destello en el pulso (mas en el primero del compas)", Visualizer::beatFlash (4.5), 0.05);
+
+    // Analisis: un seno de 1 kHz a -6 dB sube su barra a 0,9 y deja las lejanas abajo.
+    Visualizer vis (tap);
+    std::vector<float> sine (Visualizer::fftSize);
+    auto makeSine = [&] (float hz, float amp)
+    {
+        for (int i = 0; i < Visualizer::fftSize; ++i)
+            sine[(size_t) i] = amp * std::sin (juce::MathConstants<float>::twoPi * hz * (float) i / 44100.0f);
+    };
+    auto barOf = [] (float hz)
+    {
+        for (int b = 0; b < Visualizer::numBars; ++b)
+            if (hz >= Visualizer::barEdge (b) && hz < Visualizer::barEdge (b + 1))
+                return b;
+        return 0;
+    };
+    std::array<float, Visualizer::numBars> bars {};
+    makeSine (1000.0f, 0.5f);
+    vis.analyse (sine.data(), 44100.0, bars);
+    const int b1k = barOf (1000.0f);
+    check (std::abs (bars[(size_t) b1k] - 0.9f) < 0.05f, "visualizador: 1 kHz a -6 dB = barra al 90 %", bars[(size_t) b1k], 0.9);
+    check (bars[(size_t) barOf (100.0f)] < 0.2f && bars[(size_t) barOf (8000.0f)] < 0.2f, "visualizador: las barras lejanas se quedan abajo",
+           bars[(size_t) barOf (100.0f)], 0.0);
+    const float lv = Visualizer::level (sine.data(), 1024);
+    check (std::abs (lv - 0.82f) < 0.02f && Visualizer::level (std::vector<float> (1024).data(), 1024) == 0.0f,
+           "visualizador: volumen (seno a -6 dB = -9 dB RMS)", lv, 0.82);
+    const int t = Visualizer::triggerPoint (sine.data(), Visualizer::fftSize, Visualizer::waveSamples);
+    check (t > 0 && sine[(size_t) t - 1] < 0.0f && sine[(size_t) t] >= 0.0f && t <= Visualizer::fftSize - Visualizer::waveSamples,
+           "visualizador: la onda empieza en un cruce por cero hacia arriba", t, 0.0);
+    makeSine (60.0f, 0.5f);
+    vis.analyse (sine.data(), 44100.0, bars);
+    const auto loudest = (int) (std::max_element (bars.begin(), bars.end()) - bars.begin());
+    check (std::abs (loudest - barOf (60.0f)) <= 1, "visualizador: un grave de 60 Hz en su barra", loudest, barOf (60.0f));
+    check (Visualizer::renderSize (1280, 240) == juce::Point<int> (640, 120) && Visualizer::renderSize (300, 300) == juce::Point<int> (300, 300),
+           "visualizador: se dibuja en pequeno (como mucho 640 px)", Visualizer::renderSize (1280, 240).x, 640.0);
+
+    // Dibujo: en silencio no hay nada (la onda, una linea); con un seno, la barra de su frecuencia.
+    MasterTap quiet;
+    quiet.prepare (44100.0);
+    Visualizer silent (quiet);
+    SceneCollection c;
+    auto item = c.makeItem (SourceType::visualizer, 1280, 720);
+    auto countOpaque = [] (const juce::Image& img, int x0, int x1)
+    {
+        int n = 0;
+        for (int y = 0; y < img.getHeight(); ++y)
+            for (int x = x0; x < x1; ++x)
+                n += img.getPixelAt (x, y).getAlpha() > 128 ? 1 : 0;
+        return n;
+    };
+    double ms = 1000.0;
+    item.visualizer = VisualizerStyle::spectrum;
+    int n = countOpaque (silent.render (item, ms += 33.0), 0, 640);
+    check (n == 0, "visualizador: espectro en silencio vacio", n, 0.0);
+    item.visualizer = VisualizerStyle::pulse;
+    n = countOpaque (silent.render (item, ms += 33.0), 0, 640);
+    check (n == 0, "visualizador: pulso en silencio vacio", n, 0.0);
+    item.visualizer = VisualizerStyle::wave;
+    const auto& flat = silent.render (item, ms += 33.0);
+    check (flat.getPixelAt (320, 60).getAlpha() > 100 && flat.getPixelAt (320, 2).getAlpha() == 0,
+           "visualizador: onda en silencio = linea en el centro", flat.getPixelAt (320, 60).getAlpha(), 255.0);
+
+    MasterTap loud;
+    loud.prepare (44100.0);
+    makeSine (1000.0f, 0.5f);
+    loud.push (sine.data(), sine.data(), Visualizer::fftSize);
+    Visualizer drawing (loud);
+    item.visualizer = VisualizerStyle::spectrum;
+    const auto& img = drawing.render (item, 1000.0);
+    const float slot = (float) img.getWidth() / Visualizer::numBars;
+    const int inBar = countOpaque (img, (int) (slot * (float) b1k + slot * 0.4f), (int) (slot * (float) b1k + slot * 0.6f));
+    const int farBar = countOpaque (img, (int) (slot * 2.4f), (int) (slot * 2.6f));
+    check (img.getWidth() == 640 && img.getHeight() == 120 && inBar > 0 && farBar == 0, "visualizador: espectro dibujado (la barra de 1 kHz arriba)",
+           inBar, 1.0);
+    item.visualizer = VisualizerStyle::pulse;
+    n = countOpaque (drawing.render (item, 1033.0), 0, 640);
+    check (n > 0, "visualizador: pulso con sonido = circulo", n, 1.0);
+
+    // Escenas: estilo, color y tamano en XML.
+    auto& scene = c.addScene ("Vis");
+    item.visualizer = VisualizerStyle::wave;
+    item.colour = juce::Colours::orange;
+    item.width = 500;
+    scene.items.push_back (item);
+    const auto back = SceneCollection::fromXml (*c.toXml(), 1280, 720);
+    const auto& r = back.findScene (scene.id)->items[0];
+    check (r.type == SourceType::visualizer && r.visualizer == VisualizerStyle::wave && r.colour == juce::Colours::orange && r.width == 500,
+           "visualizador: se guarda en las escenas", r.width, 500.0);
+
+    // Del mezclador: un deck sonando a 120 BPM llega a la toma con su pulso.
+    juce::AudioFormatManager formats;
+    Deck a (formats), b (formats);
+    Mixer mixer (a, b);
+    juce::AudioBuffer<float> audio (2, 4 * 44100);
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < audio.getNumSamples(); ++i)
+            audio.setSample (ch, i, 0.25f * std::sin (juce::MathConstants<float>::twoPi * 440.0f * (float) i / 44100.0f));
+    a.loadBuffer (audio, 44100.0, "seno", { 120.0, 0.0 });
+    mixer.prepareToPlay (512, 44100.0);
+    a.play();
+    juce::AudioBuffer<float> out (2, 512);
+    for (int block = 0; block < 86; ++block)   // ~1 s
+    {
+        out.clear();
+        juce::AudioSourceChannelInfo info (&out, 0, 512);
+        mixer.getNextAudioBlock (info);
+    }
+    beat = mixer.getTap().beatAt (0.0);
+    std::vector<float> heard (1024);
+    mixer.getTap().read (heard.data(), 1024, 0.0);
+    const double expected = 86.0 * 512.0 / 22050.0;
+    check (beat.valid && beat.bpm == 120.0 && std::abs (beat.beat - expected) < 0.05 && Visualizer::level (heard.data(), 1024) > 0.5f,
+           "visualizador: el mezclador da el audio y el pulso del deck que suena", beat.beat, expected);
+}
+
 void testVideoMix()
 {
     using midj::VideoMix;
@@ -3004,6 +3146,7 @@ int main (int argc, char* argv[])
     testVideoMix();
     testScenes();
     testCapture();
+    testVisualizer();
 
     std::printf ("== Stems con IA ==\n");
     testStemStft();
