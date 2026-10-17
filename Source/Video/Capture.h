@@ -76,6 +76,8 @@ private:
     juce::String status;
     std::atomic<int> width { 0 }, height { 0 };
     int dxgiFailures = 0;
+    bool retryDxgi = false;          // pantalla con WGC tras un fallo de DXGI: se reintenta DXGI
+    juce::uint32 lastDxgiTry = 0;
 };
 
 // Las capturas de los elementos de las escenas (hilo de interfaz).

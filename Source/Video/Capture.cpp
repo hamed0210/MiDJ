@@ -477,7 +477,11 @@ namespace
                 }
                 else if (hr == DXGI_ERROR_ACCESS_LOST || hr == DXGI_ERROR_INVALID_CALL)
                 {
-                    lost = true;   // cambio de resolucion, pantalla de UAC...: se vuelve a crear
+                    // Cambio de resolucion, pantalla de UAC...: se suelta ya (solo puede haber una
+                    // duplicacion por pantalla, y la nueva no podria crearse) y se vuelve a crear.
+                    // Mientras, se sigue mostrando la ultima imagen.
+                    lost = true;
+                    duplication.Reset();
                 }
             }
             if (! hasImage)
@@ -668,10 +672,18 @@ Capture::~Capture() = default;
 
 bool Capture::reconnect()
 {
+    const auto now = juce::Time::getMillisecondCounter();
+    // Pantalla capturada con WGC porque DXGI fallo (puede que solo un momento): cada 10 s se
+    // vuelve a probar DXGI, que no pinta el borde amarillo y cuesta menos.
+    bool upgrade = false;
     {
         const std::lock_guard<std::mutex> sl (lock);
         if (backend != nullptr && ! backend->isLost())
-            return true;
+        {
+            if (! retryDxgi || now - lastDxgiTry < 10000)
+                return true;
+            upgrade = true;
+        }
     }
     auto* d3d = static_cast<ID3D11Device*> (device);
     std::unique_ptr<Backend> fresh;
@@ -686,6 +698,8 @@ bool Capture::reconnect()
         const int index = ScreenCapture::findMonitor (list, item.monitorId, item.monitor);
         if (index < 0)
         {
+            if (upgrade)
+                return true;
             problem = "No esta esa pantalla";
         }
         else
@@ -702,6 +716,13 @@ bool Capture::reconnect()
             if (dup->start (d3d, monitor, item.cursor))
             {
                 fresh = std::move (dup);
+                dxgiFailures = 0;
+                retryDxgi = false;
+            }
+            else if (upgrade)
+            {
+                lastDxgiTry = now;   // sigue con WGC
+                return true;
             }
             else if (dup->note.startsWith ("DXGI") && ++dxgiFailures < 4)
             {
@@ -714,7 +735,12 @@ bool Capture::reconnect()
                 auto wgcBackend = std::make_unique<GraphicsCaptureBackend>();
                 wgcBackend->note = dup->note;
                 if (wgcBackend->start (d3d, nullptr, monitor, item.cursor, false))
+                {
                     fresh = std::move (wgcBackend);
+                    // Pantalla girada o de otra tarjeta: DXGI no va a funcionar despues tampoco.
+                    retryDxgi = dup->note.startsWith ("DXGI");
+                    lastDxgiTry = now;
+                }
                 else
                     problem = "No se pudo capturar la pantalla";
             }
