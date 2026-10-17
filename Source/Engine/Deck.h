@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine/BpmDetector.h"
+#include "Engine/MixPoints.h"
 #include "Engine/TimeStretcher.h"
 
 #include <juce_audio_utils/juce_audio_utils.h>
@@ -30,6 +31,8 @@ public:
     // Se llama en el hilo de interfaz cuando el deck ha analizado un archivo por su cuenta.
     std::function<void (const juce::File&, const TempoAnalysis&)> onAnalysed;
     juce::File getLoadedFile() const { return loadedFile; }
+    // Puntos de automix de la cancion cargada (se calculan al cargarla; hilo de interfaz).
+    const MixPoints& getMixPoints() const { return mixPoints; }
     // Carga sincrona desde memoria (pruebas). Analiza el tempo si analysis.bpm == 0.
     void loadBuffer (juce::AudioBuffer<float> audio, double sampleRate, const juce::String& name,
                      TempoAnalysis analysis = {});
@@ -98,7 +101,7 @@ private:
         double sampleRate = 44100.0;
     };
 
-    void install (std::unique_ptr<Track> track, const juce::String& name, TempoAnalysis analysis);
+    void install (std::unique_ptr<Track> track, const juce::String& name, TempoAnalysis analysis, MixPoints points);
     void requestSeek (double seconds);
     void renderVinyl (float* left, float* right, int n);
     void renderKeyLocked (float* left, float* right, int n);
@@ -124,6 +127,7 @@ private:
     std::unique_ptr<Track> track;
     juce::String trackName;
     juce::File loadedFile;
+    MixPoints mixPoints;
 
     std::atomic<bool> loading { false }, playing { false }, keyLock { true };
     std::atomic<double> speed { 1.0 }, bpm { 0.0 }, firstBeat { 0.0 }, cuePoint { 0.0 };

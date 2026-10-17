@@ -44,11 +44,13 @@ add_library(MiDJEngine STATIC
     Source/Control/ControlSurface.cpp
     Source/Control/MidiController.cpp
     Source/Control/MidiMapping.cpp
+    Source/Engine/Automix.cpp
     Source/Engine/BpmDetector.cpp
     Source/Engine/ChannelStrip.cpp
     Source/Engine/Deck.cpp
     Source/Engine/Effects.cpp
     Source/Engine/Mixer.cpp
+    Source/Engine/MixPoints.cpp
     Source/Engine/SampleData.cpp
     Source/Engine/Sampler.cpp
     Source/Engine/TimeStretcher.cpp

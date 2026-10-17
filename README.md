@@ -41,6 +41,8 @@ Source/
     TimeStretcher.*     keylock: cambio de tempo sin cambio de tono (Rubber Band)
     Effects.*           efectos sincronizados al tempo y rack de 3 ranuras por deck
     Sampler.*           sampler de 8 pads: disparo, tempo, grabacion y banco
+    Automix.*           automix de dos decks: lista, plan de cada transicion y mezcla
+    MixPoints.*         puntos de automix de una cancion (sonido, fundido, parte ritmica)
     SampleData.*        sonidos del sampler: audio y .vdjsample de VirtualDJ
   Control/              controladoras MIDI
     Actions.*           acciones asignables (play, cue, tempo, EQ, efectos, jog...)
@@ -64,8 +66,17 @@ Tests/
                         MiDJTests --stretch cancion 1.08 dir  keylock con una canción real
                         MiDJTests --compare a.wav b.wav       tono de b respecto de a
                         MiDJTests --sample archivo            datos de un sonido (.vdjsample o audio)
+                        MiDJTests --mixpoints canciones...    puntos de automix
                         MiDJTests --benchmark                 CPU del keylock y de los efectos
 ```
+
+## Automix
+
+En el navegador, clic derecho en una canción > **Agregar a automix**. La lista aparece como **Automix** a la
+izquierda, con su barra: AUTOMIX (encender), Mezclar ya, Saltar, Quitar, Vaciar y la duración del fundido.
+Cada transición se planifica como el modo Smart de VirtualDJ: **a tempo** (16 pulsos, compases alineados y el
+tempo deslizándose de una canción a la otra) si la actual tiene fin de parte rítmica, la siguiente tiene inicio
+y sus BPM difieren menos de un 6 %; si no, **fundido**. La lista se guarda al cerrar.
 
 ## Sampler
 
@@ -112,3 +123,4 @@ SQLite es de dominio público.
 - Efectos: 3 ranuras por deck con Echo (medio pulso, cola al apagar), Reverb, Flanger (barrido de 8 pulsos), BitCrush (fórmula de VirtualDJ) y Gate (cuartos de pulso), todos sincronizados al BPM del deck, sin clics al encender, apagar o cambiar, y sin tocar la señal cuando están apagados.
 - Controladoras MIDI: modo aprender en la pantalla, botones por nota o CC, faders por CC o pitch bend, jog y encoders relativos (detecta complemento a dos o desplazado), los controles de la pantalla siguen a la controladora, conexión en caliente y modo de simulación.
 - Sampler de 8 pads: disparo on/off, mantener y repetir; tempo libre, sincronizado (plegado a 0,66-1,5) o bloqueado al pulso; fundidos de 128 muestras; grabación de 4/8/16 pulsos de un deck empezando en el pulso; lee los .vdjsample de VirtualDJ; banco guardado; pads asignables por MIDI.
+- Automix de dos decks con puntos de automix calculados al cargar cada canción (sonido, fundido y parte rítmica, con las reglas de VirtualDJ): mezcla a tempo o con fundido, mezclar ya, saltar, lista guardada y acciones MIDI.

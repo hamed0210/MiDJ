@@ -6,6 +6,19 @@ ControlSurface::ControlSurface (Deck& a, Deck& b, Mixer& m) : deckA (a), deckB (
 
 void ControlSurface::pressButton (const juce::String& action)
 {
+    if (action.startsWith ("automix."))
+    {
+        // El automix vive en el hilo de interfaz.
+        juce::MessageManager::callAsync ([this, action, flag = alive]
+        {
+            if (! flag->load() || automix == nullptr)
+                return;
+            if (action == "automix.toggle")      automix->setEnabled (! automix->isEnabled());
+            else if (action == "automix.mixnow") automix->mixNow();
+            else if (action == "automix.skip")   automix->skip();
+        });
+        return;
+    }
     if (action.startsWith ("sampler."))
     {
         auto& sampler = mixer.getSampler();

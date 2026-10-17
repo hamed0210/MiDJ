@@ -58,13 +58,70 @@ LibraryBrowser::LibraryBrowser (Library& l) : library (l)
     table.setColour (juce::ListBox::backgroundColourId, DarkLookAndFeel::background);
     addAndMakeVisible (table);
 
+    // Barra del automix (solo se ve con la lista de automix elegida).
+    automixButton.setClickingTogglesState (false);
+    automixButton.setTooltip ("Encender / apagar el automix");
+    automixButton.onClick = [this] { if (automix != nullptr) automix->setEnabled (! automix->isEnabled()); };
+    mixNowButton.setTooltip ("Empezar ya la transicion a la siguiente");
+    mixNowButton.onClick = [this] { if (automix != nullptr) automix->mixNow(); };
+    skipButton.setTooltip ("Saltar la siguiente cancion");
+    skipButton.onClick = [this] { if (automix != nullptr) automix->skip(); };
+    removeButton.setTooltip ("Quitar de la lista la cancion elegida");
+    removeButton.onClick = [this] { if (automix != nullptr && table.getSelectedRow() >= 0) automix->remove (table.getSelectedRow()); };
+    clearButton.setTooltip ("Vaciar la lista");
+    clearButton.onClick = [this] { if (automix != nullptr) automix->clearQueue(); };
+    for (int s : { 2, 4, 6, 8, 12, 16 })
+        fadeBox.addItem ("Fundido " + juce::String (s) + " s", s);
+    fadeBox.setTooltip ("Duracion de las transiciones con fundido (las de a tempo duran 16 pulsos)");
+    fadeBox.onChange = [this] { if (automix != nullptr) automix->setFadeSeconds (fadeBox.getSelectedId()); };
+    automixStatus.setColour (juce::Label::textColourId, DarkLookAndFeel::textQuiet);
+    automixStatus.setFont (juce::FontOptions (13.0f));
+    for (auto* c : std::initializer_list<juce::Component*> { &automixButton, &mixNowButton, &skipButton, &removeButton,
+                                                               &clearButton, &fadeBox, &automixStatus })
+        addChildComponent (c);
+
     refreshFolders();
     sourceList.selectRow (0);
     refresh();
 }
 
+void LibraryBrowser::setAutomix (Automix* a)
+{
+    if (automix != nullptr)
+        automix->removeChangeListener (this);
+    automix = a;
+    if (automix != nullptr)
+    {
+        automix->addChangeListener (this);
+        fadeBox.setSelectedId ((int) automix->getFadeSeconds(), juce::dontSendNotification);
+    }
+    sourceList.updateContent();
+    refresh();
+}
+
+void LibraryBrowser::addLearnTargets (std::vector<LearnTarget>& out)
+{
+    out.push_back ({ &table, "browser.scroll" });
+    out.push_back ({ &automixButton, "automix.toggle" });
+    out.push_back ({ &mixNowButton, "automix.mixnow" });
+    out.push_back ({ &skipButton, "automix.skip" });
+}
+
+void LibraryBrowser::updateAutomixStatus()
+{
+    if (automix == nullptr)
+        return;
+    automixStatus.setText (automix->getStatusText(), juce::dontSendNotification);
+    const bool on = automix->isEnabled();
+    automixButton.setColour (juce::TextButton::buttonColourId, on ? juce::Colour (0xff4caf50).withAlpha (0.8f) : DarkLookAndFeel::panel.brighter (0.15f));
+    mixNowButton.setEnabled (on && automix->getState() == Automix::State::playing && automix->getNext() != nullptr);
+    skipButton.setEnabled (on && automix->getState() == Automix::State::playing && automix->getNext() != nullptr);
+}
+
 LibraryBrowser::~LibraryBrowser()
 {
+    if (automix != nullptr)
+        automix->removeChangeListener (this);
     library.removeChangeListener (this);
 }
 
@@ -73,14 +130,23 @@ void LibraryBrowser::SourceList::paintListBoxItem (int row, juce::Graphics& g, i
     if (selected)
         g.fillAll (DarkLookAndFeel::accentA.withAlpha (0.35f));
     g.setColour (DarkLookAndFeel::text);
-    g.setFont (juce::FontOptions (14.0f, row == 0 ? juce::Font::bold : juce::Font::plain));
-    const auto name = row == 0 ? juce::String ("Toda la musica") : owner.folders[row - 1].getFileName();
+    const bool automixRow = owner.automix != nullptr && row == owner.folders.size() + 1;
+    g.setFont (juce::FontOptions (14.0f, row == 0 || automixRow ? juce::Font::bold : juce::Font::plain));
+    if (automixRow)
+        g.setColour (owner.automix->isEnabled() ? juce::Colour (0xff4caf50) : DarkLookAndFeel::text);
+    const auto name = row == 0 ? juce::String ("Toda la musica")
+                    : automixRow ? "Automix (" + juce::String ((int) owner.automix->getQueue().size()) + ")"
+                                 : owner.folders[row - 1].getFileName();
     g.drawText (name, 8, 0, width - 12, height, juce::Justification::centredLeft, true);
 }
 
 juce::String LibraryBrowser::SourceList::getTooltipForRow (int row)
 {
-    return row == 0 ? juce::String ("Todas las canciones de todas las carpetas") : owner.folders[row - 1].getFullPathName();
+    if (row == 0)
+        return "Todas las canciones de todas las carpetas";
+    if (row > owner.folders.size())
+        return "Lista de automix: clic derecho en una cancion > Agregar a automix";
+    return owner.folders[row - 1].getFullPathName();
 }
 
 juce::File LibraryBrowser::selectedFolder() const
@@ -106,10 +172,39 @@ void LibraryBrowser::refresh()
     const int row = table.getSelectedRow();
     const auto selectedId = row >= 0 && row < (int) tracks.size() ? tracks[(size_t) row].id : 0;
 
-    tracks = library.search (searchBox.getText(), selectedFolder(), sort, ascending);
+    const bool automixView = isAutomixView();
+    if (automixView)
+    {
+        // La lista de automix en su orden, con los datos de la biblioteca si los tiene.
+        tracks.clear();
+        juce::int64 fakeId = -1;
+        for (const auto& item : automix->getQueue())
+        {
+            auto info = library.findByFile (item.file);
+            TrackInfo t = info ? *info : TrackInfo {};
+            if (! info)
+            {
+                t.path = item.file.getFullPathName();
+                t.title = item.title;
+                t.artist = item.artist;
+                t.bpm = item.bpm;
+                t.analysed = item.bpm > 0.0;
+            }
+            t.id = fakeId--;   // ids unicos aunque la misma cancion este dos veces
+            tracks.push_back (t);
+        }
+    }
+    else
+        tracks = library.search (searchBox.getText(), selectedFolder(), sort, ascending);
+    searchBox.setVisible (! automixView);
+    for (auto* c : std::initializer_list<juce::Component*> { &automixButton, &mixNowButton, &skipButton, &removeButton,
+                                                               &clearButton, &fadeBox, &automixStatus })
+        c->setVisible (automixView);
+    updateAutomixStatus();
+    sourceList.repaint();
     table.updateContent();
     table.repaint();
-    removeFolderButton.setEnabled (sourceList.getSelectedRow() >= 1);
+    removeFolderButton.setEnabled (selectedFolder() != juce::File());
 
     for (size_t i = 0; i < tracks.size(); ++i)
         if (tracks[i].id == selectedId)
@@ -161,8 +256,16 @@ void LibraryBrowser::removeSelectedFolder()
     refresh();
 }
 
-void LibraryBrowser::changeListenerCallback (juce::ChangeBroadcaster*)
+void LibraryBrowser::changeListenerCallback (juce::ChangeBroadcaster* source)
 {
+    if (automix != nullptr && source == automix)
+    {
+        sourceList.repaint();   // el numero de canciones de la lista
+        updateAutomixStatus();
+        if (isAutomixView())
+            refresh();
+        return;
+    }
     // La biblioteca avisa a menudo mientras escanea: se agrupan los avisos.
     statusLabel.setText (library.getStatusText(), juce::dontSendNotification);
     if (! isTimerRunning())
@@ -217,6 +320,8 @@ void LibraryBrowser::paintCell (juce::Graphics& g, int row, int column, int widt
 
 void LibraryBrowser::sortOrderChanged (int columnId, bool forwards)
 {
+    if (isAutomixView())
+        return;   // la lista de automix va en su orden
     switch (columnId)
     {
         case titleCol:    sort = Library::SortColumn::title; break;
@@ -235,6 +340,39 @@ void LibraryBrowser::cellDoubleClicked (int row, int, const juce::MouseEvent&)
 {
     if (row >= 0 && row < (int) tracks.size() && onLoadRequest)
         onLoadRequest (tracks[(size_t) row]);
+}
+
+void LibraryBrowser::cellClicked (int row, int, const juce::MouseEvent& e)
+{
+    if (e.mods.isPopupMenu() && row >= 0 && row < (int) tracks.size())
+    {
+        table.selectRow (row);
+        showTrackMenu (row);
+    }
+}
+
+void LibraryBrowser::showTrackMenu (int row)
+{
+    enum { addToAutomix = 1, playNext, loadA, loadB, removeFromAutomix };
+    juce::PopupMenu menu;
+    if (isAutomixView())
+        menu.addItem (removeFromAutomix, "Quitar de la lista");
+    else if (automix != nullptr)
+    {
+        menu.addItem (addToAutomix, "Agregar a automix");
+        menu.addItem (playNext, "Agregar a automix como la siguiente");
+    }
+    menu.addSeparator();
+    menu.addItem (loadA, "Cargar en el deck A");
+    menu.addItem (loadB, "Cargar en el deck B");
+    const auto track = tracks[(size_t) row];
+    menu.showMenuAsync (juce::PopupMenu::Options(), [this, track, row] (int r)
+    {
+        if (r == addToAutomix && automix != nullptr)          automix->add (itemFor (track));
+        else if (r == playNext && automix != nullptr)         automix->insertNext (itemFor (track));
+        else if (r == removeFromAutomix && automix != nullptr) automix->remove (row);
+        else if ((r == loadA || r == loadB) && onLoadToDeck)  onLoadToDeck (track, r == loadA ? 0 : 1);
+    });
 }
 
 juce::var LibraryBrowser::getDragSourceDescription (const juce::SparseSet<int>& rows)
@@ -263,7 +401,18 @@ void LibraryBrowser::resized()
     statusLabel.setBounds (left.removeFromBottom (20));
     sourceList.setBounds (left);
 
-    searchBox.setBounds (area.removeFromTop (30));
+    auto top = area.removeFromTop (30);
+    searchBox.setBounds (top);
+    automixButton.setBounds (top.removeFromLeft (84).reduced (0, 1));
+    top.removeFromLeft (4);
+    for (auto* b : { &mixNowButton, &skipButton, &removeButton, &clearButton })
+    {
+        b->setBounds (top.removeFromLeft (b == &mixNowButton ? 84 : 62).reduced (0, 1));
+        top.removeFromLeft (4);
+    }
+    fadeBox.setBounds (top.removeFromLeft (112).reduced (0, 2));
+    top.removeFromLeft (8);
+    automixStatus.setBounds (top);
     area.removeFromTop (6);
     table.setBounds (area);
 }

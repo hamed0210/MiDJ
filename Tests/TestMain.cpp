@@ -4,7 +4,9 @@
 #include "Control/ControlSurface.h"
 #include "Control/MidiController.h"
 #include "Control/MidiMapping.h"
+#include "Engine/Automix.h"
 #include "Engine/BpmDetector.h"
+#include "Engine/MixPoints.h"
 #include "Engine/ChannelStrip.h"
 #include "Engine/Deck.h"
 #include "Engine/Effects.h"
@@ -14,6 +16,7 @@
 #include "Library/TagReader.h"
 
 #include <cmath>
+#include <map>
 #include <cstdio>
 #include <vector>
 
@@ -63,6 +66,12 @@ void render (midj::Deck& deck, double seconds)
         juce::AudioSourceChannelInfo info (&out, 0, blockSize);
         deck.getNextAudioBlock (info);
     }
+}
+
+double wrapPhase (double x)   // desfase de fase de pulso llevado a -0,5..0,5
+{
+    x -= std::floor (x);
+    return x > 0.5 ? x - 1.0 : x;
 }
 
 double circularDistance (double a, double b)
@@ -1575,6 +1584,200 @@ void testSamplerRecording()
     check (heldOn && ! sampler.isPlaying (3), "MIDI: pad en hold suena con la nota pulsada y calla al soltarla", 0.0, 0.0);
 }
 
+
+// --- Automix -----------------------------------------------------------------------------
+
+// Cancion sintetica de 50 s: un acorde suave (sin golpes) de 1 a 48 s y bombos de 'bpm'
+// solo entre 8 s y 40 s (la parte ritmica). Antes de 1 s y despues de 48 s, silencio.
+juce::AudioBuffer<float> songWithSections (double bpm, double beatsFrom = 8.0, double beatsTo = 40.0)
+{
+    const int n = (int) (50.0 * sr);
+    juce::AudioBuffer<float> b (2, n);
+    b.clear();
+    for (int i = (int) (1.0 * sr); i < (int) (48.0 * sr); ++i)
+        for (int ch = 0; ch < 2; ++ch)
+            b.setSample (ch, i, 0.12f * (float) std::sin (2.0 * juce::MathConstants<double>::pi * 330.0 * i / sr));
+    const double period = 60.0 / bpm;
+    for (double t = beatsFrom; t < beatsTo - 1e-9; t += period)
+    {
+        const int start = (int) std::lround (t * sr);
+        for (int i = 0; i < (int) (0.15 * sr); ++i)
+        {
+            const double ph = i / sr;
+            const float v = (float) (0.8 * std::exp (-ph * 30.0) * std::sin (2.0 * juce::MathConstants<double>::pi * 60.0 * ph));
+            for (int ch = 0; ch < 2; ++ch)
+                b.addSample (ch, start + i, v);
+        }
+    }
+    return b;
+}
+
+midj::TempoAnalysis gridFor (double bpm, double firstBeatTime)
+{
+    const double period = 60.0 / bpm;
+    return { bpm, std::fmod (firstBeatTime, period) };
+}
+
+void testMixPoints()
+{
+    const auto song = songWithSections (120.0);
+    const auto p = midj::MixPointAnalyser::analyse (song, sr, gridFor (120.0, 8.0));
+    check (std::abs (p.realStart - 1.0) < 0.01, "puntos: realStart donde empieza el sonido (1 s)", p.realStart, 1.0);
+    check (std::abs (p.realEnd - 48.0) < 0.01, "puntos: realEnd donde acaba (48 s)", p.realEnd, 48.0);
+    check (std::abs (p.tempoStart - 8.0) < 0.001, "puntos: tempoStart al empezar los bombos (8 s)", p.tempoStart, 8.0);
+    check (std::abs (p.tempoEnd - 40.0) < 0.001, "puntos: tempoEnd al acabar el ultimo compas (40 s)", p.tempoEnd, 40.0);
+    check (p.fadeStart >= p.realStart && p.fadeStart <= 8.1 && p.fadeEnd >= 39.4 && p.fadeEnd <= p.realEnd,
+           "puntos: fadeStart y fadeEnd dentro de la parte con sonido", p.fadeEnd, 40.0);
+
+    // Sin bombos no hay parte ritmica.
+    const auto pad = songWithSections (120.0, 60.0, 60.0);
+    const auto q = midj::MixPointAnalyser::analyse (pad, sr, gridFor (120.0, 0.0));
+    check (! q.hasTempoSection(), "puntos: sin golpes no hay parte ritmica", q.tempoStart, -1.0);
+}
+
+struct AutomixRig
+{
+    juce::AudioFormatManager formats;
+    midj::Deck a { formats }, b { formats };
+    midj::Mixer mixer { a, b };
+    midj::Automix automix { a, b, mixer };
+    std::map<juce::String, std::pair<juce::AudioBuffer<float>, midj::TempoAnalysis>> songs;
+    juce::AudioBuffer<float> out { 2, blockSize };
+
+    AutomixRig()
+    {
+        mixer.prepareToPlay (blockSize, sr);
+        a.setKeyLock (false);
+        b.setKeyLock (false);
+        automix.loadTrack = [this] (int deckIndex, const juce::File& file)
+        {
+            const auto it = songs.find (file.getFileName());
+            if (it == songs.end())
+                return false;
+            (deckIndex == 0 ? a : b).loadBuffer (it->second.first, sr, file.getFileName(), it->second.second);
+            return true;
+        };
+    }
+    void addSong (const juce::String& name, juce::AudioBuffer<float> audio, midj::TempoAnalysis tempo)
+    {
+        songs[name] = { std::move (audio), tempo };
+    }
+    midj::Automix::Item item (const juce::String& name) { return { juce::File::getCurrentWorkingDirectory().getChildFile (name), name, {}, 0.0 }; }
+    // Un bloque de audio y una llamada a update(), como el temporizador de la ventana.
+    void step()
+    {
+        juce::AudioSourceChannelInfo info (&out, 0, blockSize);
+        mixer.getNextAudioBlock (info);
+        automix.update();
+    }
+};
+
+void testAutomixTempo()
+{
+    AutomixRig rig;
+    rig.addSong ("a.wav", songWithSections (120.0), gridFor (120.0, 8.0));
+    rig.addSong ("b.wav", songWithSections (124.0), gridFor (124.0, 8.0));
+    rig.automix.loadTrack (0, rig.item ("a.wav").file);
+    rig.a.setPositionSeconds (20.0);
+    rig.a.play();
+    rig.automix.add (rig.item ("b.wav"));
+    rig.automix.setEnabled (true);
+
+    // Plan: a tempo (124/120 = 1,033), 16 pulsos que acaban en el fin de la parte ritmica de A (40 s).
+    rig.step();
+    check (rig.automix.nextIsTempoMix() && std::abs (rig.automix.getPlannedStart() - 32.0) < 1e-6,
+           "automix a tempo: empieza 16 pulsos antes del fin ritmico (32 s)", rig.automix.getPlannedStart(), 32.0);
+
+    double startedAt = -1.0, worstPhase = 0.0, worstTempo = 0.0, bAtStart = 0.0;
+    bool crossfaderMoved = false;
+    for (int k = 0; k < (int) (26.0 * sr) / blockSize; ++k)
+    {
+        rig.step();
+        const auto state = rig.automix.getState();
+        if (state == midj::Automix::State::mixing && startedAt < 0.0)
+        {
+            startedAt = rig.a.getPositionSeconds();
+            bAtStart = rig.b.getPositionSeconds();
+        }
+        if (state == midj::Automix::State::mixing && rig.automix.getProgress() > 0.1)
+        {
+            const double phase = std::abs (wrapPhase (rig.a.getBeatPhase() - rig.b.getBeatPhase()));
+            worstPhase = std::max (worstPhase, phase);
+            worstTempo = std::max (worstTempo, std::abs (rig.a.getCurrentBpm() / rig.b.getCurrentBpm() - 1.0));
+            crossfaderMoved = crossfaderMoved || (rig.mixer.getCrossfader() > 0.3f && rig.mixer.getCrossfader() < 0.7f);
+        }
+    }
+    check (std::abs (startedAt - 32.0) < 0.02, "automix a tempo: la transicion empieza a los 32 s", startedAt, 32.0);
+    check (std::abs (bAtStart - 8.0) < 0.02, "automix a tempo: B entra en el inicio de su parte ritmica (compas)", bAtStart, 8.0);
+    check (worstPhase < 0.03, "automix a tempo: pulsos alineados durante la mezcla (desfase en pulsos)", worstPhase, 0.0);
+    check (worstTempo < 0.005, "automix a tempo: los dos al mismo tempo mientras se desliza", worstTempo * 100.0, 0.0);
+    check (crossfaderMoved && rig.mixer.getCrossfader() == 1.0f, "automix: el crossfader pasa de A a B", rig.mixer.getCrossfader(), 1.0);
+    check (! rig.a.isPlaying() && rig.b.isPlaying() && rig.b.getSpeed() == 1.0 && rig.automix.getCurrentDeck() == 1,
+           "automix: al acabar A se para y B sigue a su propio tempo", rig.b.getSpeed(), 1.0);
+
+    // Lista terminada: cuando B acaba, el automix se apaga solo.
+    rig.b.setPositionSeconds (48.0);
+    for (int k = 0; k < (int) (3.0 * sr) / blockSize; ++k)
+        rig.step();
+    check (! rig.automix.isEnabled(), "automix: al acabar la ultima cancion se apaga", 0.0, 0.0);
+}
+
+void testAutomixFadeAndMixNow()
+{
+    // B sin tempo (solo el acorde): fundido de 6 s que acaba en el fadeEnd de A.
+    AutomixRig rig;
+    rig.addSong ("a.wav", songWithSections (120.0), gridFor (120.0, 8.0));
+    rig.addSong ("pad.wav", songWithSections (120.0, 60.0, 60.0), { 0.0, 0.0 });
+    rig.automix.loadTrack (0, rig.item ("a.wav").file);
+    rig.a.setPositionSeconds (30.0);
+    rig.a.play();
+    rig.automix.add (rig.item ("pad.wav"));
+    rig.automix.setEnabled (true);
+    rig.step();
+    const double fadeEnd = rig.a.getMixPoints().fadeEnd;
+    check (! rig.automix.nextIsTempoMix() && std::abs (rig.automix.getPlannedStart() - (fadeEnd - 6.0)) < 1e-6,
+           "automix con fundido: empieza 6 s antes del fadeEnd de A", rig.automix.getPlannedStart(), fadeEnd - 6.0);
+    double bAtStart = -1.0;
+    for (int k = 0; k < (int) (20.0 * sr) / blockSize && bAtStart < 0.0; ++k)
+    {
+        rig.step();
+        if (rig.automix.getState() == midj::Automix::State::mixing)
+            bAtStart = rig.b.getPositionSeconds();
+    }
+    check (std::abs (bAtStart - rig.b.getMixPoints().fadeStart) < 0.02, "automix con fundido: B entra en su fadeStart",
+           bAtStart, rig.b.getMixPoints().fadeStart);
+
+    // Mezclar ya: la transicion empieza en el momento.
+    AutomixRig rig2;
+    rig2.addSong ("a.wav", songWithSections (120.0), gridFor (120.0, 8.0));
+    rig2.addSong ("b.wav", songWithSections (122.0), gridFor (122.0, 8.0));
+    rig2.automix.loadTrack (0, rig2.item ("a.wav").file);
+    rig2.a.setPositionSeconds (12.0);
+    rig2.a.play();
+    rig2.automix.add (rig2.item ("b.wav"));
+    rig2.automix.setEnabled (true);
+    rig2.step();
+    rig2.automix.mixNow();
+    const double pressedAt = rig2.a.getPositionSeconds();
+    rig2.step();
+    check (rig2.automix.getState() == midj::Automix::State::mixing && std::abs (rig2.a.getPositionSeconds() - pressedAt) < 0.05,
+           "automix: 'mezclar ya' empieza al momento", rig2.a.getPositionSeconds(), pressedAt);
+
+    // La lista se guarda y se lee.
+    midj::Automix::Item real { juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("MiDJTestsAutomix.wav"),
+                               "Titulo", "Artista", 120.0 };
+    real.file.replaceWithText ("x");
+    rig2.automix.add (real);
+    const auto listFile = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("MiDJTestsAutomix.xml");
+    rig2.automix.saveQueue (listFile);
+    rig2.automix.clearQueue();
+    rig2.automix.loadQueue (listFile);
+    check (rig2.automix.getQueue().size() == 1 && rig2.automix.getQueue()[0].title == "Titulo",
+           "automix: la lista se guarda y se lee (solo archivos que existen)", (double) rig2.automix.getQueue().size(), 1.0);
+    listFile.deleteFile();
+    real.file.deleteFile();
+}
+
 }
 
 #if JUCE_WINDOWS
@@ -1627,6 +1830,24 @@ int main (int argc, char* argv[])
                      s->loop ? "si" : "no", modes[juce::jlimit (0, 2, s->tempoMode)], s->gain);
         return 0;
     }
+    if (args[0] == "--mixpoints")   // puntos de automix de canciones reales
+    {
+        juce::AudioFormatManager formats;
+        formats.registerBasicFormats();
+        for (int i = 1; i < args.size(); ++i)
+        {
+            double rate = 0.0;
+            auto audio = readFile (formats, juce::File (args[i]), rate);
+            if (audio == nullptr)
+                continue;
+            const auto tempo = midj::BpmDetector::analyse (*audio, rate);
+            const auto p = midj::MixPointAnalyser::analyse (*audio, rate, tempo);
+            std::printf ("%s\n  real %.3f - %.3f   fade %.3f - %.3f   tempo %.3f - %.3f   (%.2f BPM)\n",
+                         juce::File (args[i]).getFileName().toRawUTF8(), p.realStart, p.realEnd, p.fadeStart, p.fadeEnd,
+                         p.tempoStart, p.tempoEnd, tempo.bpm);
+        }
+        return 0;
+    }
     if (args[0] == "--benchmark")
     {
         benchmarkKeyLock (midj::TimeStretcher::Engine::finer);
@@ -1661,6 +1882,11 @@ int main (int argc, char* argv[])
     std::printf ("== Canal: ganancia, EQ de 3 bandas, filtro y volumen ==\n");
     testChannelStrip();
     testMixerChannels();
+
+    std::printf ("== Automix ==\n");
+    testMixPoints();
+    testAutomixTempo();
+    testAutomixFadeAndMixNow();
 
     std::printf ("== Sampler ==\n");
     testSampleData();

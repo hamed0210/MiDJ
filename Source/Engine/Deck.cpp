@@ -56,15 +56,16 @@ bool Deck::load (const juce::File& file, TempoAnalysis known)
         rd->read (&newTrack->audio, 0, length, 0, true, true);
         const bool needsAnalysis = known.bpm <= 0.0;
         const auto analysis = needsAnalysis ? BpmDetector::analyse (newTrack->audio, newTrack->sampleRate) : known;
+        const auto points = MixPointAnalyser::analyse (newTrack->audio, newTrack->sampleRate, analysis);
 
         auto* raw = newTrack.release();
-        juce::MessageManager::callAsync ([this, raw, file, analysis, needsAnalysis, generation, flag]
+        juce::MessageManager::callAsync ([this, raw, file, analysis, points, needsAnalysis, generation, flag]
         {
             std::unique_ptr<Track> t (raw);
             if (flag->load() && generation == loadGeneration.load())   // ignora cargas viejas
             {
                 loadedFile = file;
-                install (std::move (t), file.getFileNameWithoutExtension(), analysis);
+                install (std::move (t), file.getFileNameWithoutExtension(), analysis, points);
                 if (needsAnalysis && onAnalysed)
                     onAnalysed (file, analysis);
             }
@@ -83,11 +84,13 @@ void Deck::loadBuffer (juce::AudioBuffer<float> audio, double sampleRate, const 
     t->sampleRate = sampleRate;
     if (analysis.bpm <= 0.0)
         analysis = BpmDetector::analyse (t->audio, sampleRate);
-    install (std::move (t), name, analysis);
+    const auto points = MixPointAnalyser::analyse (t->audio, sampleRate, analysis);
+    install (std::move (t), name, analysis, points);
 }
 
-void Deck::install (std::unique_ptr<Track> newTrack, const juce::String& name, TempoAnalysis analysis)
+void Deck::install (std::unique_ptr<Track> newTrack, const juce::String& name, TempoAnalysis analysis, MixPoints points)
 {
+    mixPoints = points;
     playing = false;
     const double length = newTrack->audio.getNumSamples() / newTrack->sampleRate;
     {

@@ -37,6 +37,9 @@ const std::vector<ActionInfo>& all()
         v.push_back ({ "sampler.stop", "Sampler STOP", ActionType::button });
         v.push_back ({ "sampler.volume", "Sampler volumen", ActionType::absolute });
         v.push_back ({ "browser.scroll", "Navegador: mover", ActionType::relative });
+        v.push_back ({ "automix.toggle", "Automix on/off", ActionType::button });
+        v.push_back ({ "automix.mixnow", "Automix: mezclar ya", ActionType::button });
+        v.push_back ({ "automix.skip", "Automix: saltar", ActionType::button });
         return v;
     }();
     return list;

@@ -17,6 +17,13 @@ MainComponent::MainComponent()
 
     browser = std::make_unique<LibraryBrowser> (library);
     browser->onLoadRequest = [this] (const TrackInfo& track) { loadIntoFreeDeck (track.getFile()); };
+    browser->onLoadToDeck = [this] (const TrackInfo& track, int deckIndex) { loadIntoDeck (deckIndex == 0 ? deckA : deckB, track.getFile()); };
+
+    // Automix: la lista se guarda al cerrar y se recupera al abrir.
+    automix.loadTrack = [this] (int deckIndex, const juce::File& file) { return loadIntoDeck (deckIndex == 0 ? deckA : deckB, file); };
+    automix.loadQueue (getDataFolder().getChildFile ("automix.xml"));
+    browser->setAutomix (&automix);
+    controlSurface.automix = &automix;
     library.startBackgroundWork();   // re-escanea las carpetas por si hubo cambios
 
     addAndMakeVisible (deckViewA);
@@ -55,7 +62,7 @@ MainComponent::MainComponent()
     midiButton.onClick = [this] { toggleMidiLearn(); };
     addAndMakeVisible (midiButton);
     addChildComponent (midiOverlay);
-    startTimerHz (15);
+    startTimerHz (30);   // automix (decisiones y correccion de fase) y crossfader en pantalla
 
     const auto args = juce::JUCEApplicationBase::getCommandLineParameterArray();
     if (const int i = args.indexOf ("--simular-midi"); i >= 0 && i + 1 < args.size())
@@ -70,19 +77,23 @@ MainComponent::~MainComponent()
     shutdownAudio();
     stopTimer();
     saveSamplerBank();
+    automix.saveQueue (getDataFolder().getChildFile ("automix.xml"));
+    browser->setAutomix (nullptr);
     browser.reset();
     library.close();
     setLookAndFeel (nullptr);
 }
 
-void MainComponent::loadIntoDeck (Deck& deck, const juce::File& file)
+bool MainComponent::loadIntoDeck (Deck& deck, const juce::File& file)
 {
     TempoAnalysis known;
     if (const auto track = library.findByFile (file); track && track->analysed)
         known = { track->bpm, track->firstBeat };
-    if (! deck.load (file, known))
-        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "MiDJ",
-                                                "No se pudo abrir el archivo:\n" + file.getFullPathName());
+    if (deck.load (file, known))
+        return true;
+    juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "MiDJ",
+                                            "No se pudo abrir el archivo:\n" + file.getFullPathName());
+    return false;
 }
 
 void MainComponent::loadIntoFreeDeck (const juce::File& file)
@@ -107,7 +118,7 @@ void MainComponent::toggleMidiLearn()
         mixerView.addLearnTargets (targets);
         samplerPanel.addLearnTargets (targets);
         targets.push_back ({ &crossfader, "crossfader" });
-        targets.push_back ({ &browser->getTrackList(), "browser.scroll" });
+        browser->addLearnTargets (targets);
         midiOverlay.setTargets (std::move (targets));
     }
     midiOverlay.setVisible (on);
@@ -122,6 +133,9 @@ void MainComponent::saveSamplerBank()
 
 void MainComponent::timerCallback()
 {
+    automix.update();
+    if (++timerTicks % 8 == 0)
+        browser->updateAutomixStatus();
     if (! crossfader.isMouseButtonDown())
         crossfader.setValue (mixer.getCrossfader(), juce::dontSendNotification);
 }

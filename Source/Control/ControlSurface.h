@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Control/Actions.h"
+#include "Engine/Automix.h"
 #include "Engine/Deck.h"
 #include "Engine/Mixer.h"
 
@@ -20,6 +21,7 @@ public:
     // Ganchos hacia la interfaz (se llaman siempre en el hilo de interfaz).
     std::function<void (int deckIndex)> onLoadSelected;    // cargar en el deck lo elegido en el navegador
     std::function<void (int steps)> onBrowserScroll;       // mover la seleccion del navegador
+    Automix* automix = nullptr;                            // sus acciones van al hilo de interfaz
 
     void pressButton (const juce::String& action);              // acciones de tipo boton
     void releaseButton (const juce::String& action);            // soltar (pads del sampler en modo hold)

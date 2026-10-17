@@ -33,7 +33,7 @@ public:
 
 private:
     // Carga usando el analisis guardado en la biblioteca si lo hay (carga mucho mas rapida).
-    void loadIntoDeck (Deck& deck, const juce::File& file);
+    bool loadIntoDeck (Deck& deck, const juce::File& file);
     // Doble clic en el navegador: al primer deck que no este sonando, empezando por A.
     void loadIntoFreeDeck (const juce::File& file);
     void toggleMidiLearn();
@@ -49,6 +49,7 @@ private:
     Deck deckB { formatManager };
     Mixer mixer { deckA, deckB };
     Library library { formatManager };
+    Automix automix { deckA, deckB, mixer };
     ControlSurface controlSurface { deckA, deckB, mixer };
     MidiController midi { controlSurface };
 
@@ -62,6 +63,7 @@ private:
     juce::Label crossfaderLabel;
     juce::TextButton midiButton { "MIDI" };
     MidiLearnOverlay midiOverlay { midi };
+    int timerTicks = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
 };
