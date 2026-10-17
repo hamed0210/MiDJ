@@ -68,11 +68,11 @@ float Visualizer::beatFlash (double beat)
     return std::exp (-6.0f * phase) * (downbeat ? 1.0f : 0.75f);
 }
 
-juce::Point<int> Visualizer::renderSize (int w, int h)
+juce::Point<int> Visualizer::renderSize (int w, int h, int maxSide)
 {
     w = juce::jmax (1, w);
     h = juce::jmax (1, h);
-    const float s = juce::jmin (1.0f, (float) maxRenderSide / (float) juce::jmax (w, h));
+    const float s = juce::jmin (1.0f, (float) maxSide / (float) juce::jmax (w, h));
     return { juce::jmax (1, juce::roundToInt ((float) w * s)), juce::jmax (1, juce::roundToInt ((float) h * s)) };
 }
 
@@ -96,18 +96,20 @@ const juce::Image& Visualizer::render (const SceneItem& item, double nowMs)
     else
         flash *= std::exp (-8.0f * dt);
 
-    const auto size = renderSize (item.width, item.height);
+    // El pulso es un degradado: con menos pixeles se ve igual.
+    const auto size = renderSize (item.width, item.height, item.visualizer == VisualizerStyle::pulse ? pulseRenderSide : maxRenderSide);
     if (image.getWidth() != size.x || image.getHeight() != size.y)
         image = juce::Image (juce::Image::ARGB, size.x, size.y, true, juce::SoftwareImageType());
     else
         image.clear (image.getBounds());
 
-    juce::Graphics g (image);
-    const float w = (float) size.x, h = (float) size.y;
+    // Se escribe directamente en los pixeles (premultiplicados): trazar con juce::Graphics costaba
+    // hasta media CPU de este equipo con la onda.
+    juce::Image::BitmapData data (image, juce::Image::BitmapData::readWrite);
     switch (item.visualizer)
     {
-        case VisualizerStyle::wave:  drawWave (g, item.colour, w, h); break;
-        case VisualizerStyle::pulse: drawPulse (g, item.colour, w, h, beat); break;
+        case VisualizerStyle::wave:  drawWave (data, item.colour); break;
+        case VisualizerStyle::pulse: drawPulse (data, item.colour, beat); break;
         case VisualizerStyle::spectrum:
         default:
         {
@@ -126,74 +128,163 @@ const juce::Image& Visualizer::render (const SceneItem& item, double nowMs)
                     peaks[i] = juce::jmax (bars[i], peaks[i] - dt * 0.6f);
                 }
             }
-            drawSpectrum (g, item.colour, w, h);
+            drawSpectrum (data, item.colour);
             break;
         }
     }
     return image;
 }
 
-void Visualizer::drawSpectrum (juce::Graphics& g, juce::Colour colour, float w, float h)
+namespace
 {
+    using Pixel = juce::PixelARGB;
+
+    Pixel premultiplied (juce::Colour c, float alpha = 1.0f)
+    {
+        return c.withMultipliedAlpha (juce::jlimit (0.0f, 1.0f, alpha)).getPixelARGB();
+    }
+
+    Pixel scaled (Pixel p, float coverage)
+    {
+        p.multiplyAlpha (juce::jlimit (0.0f, 1.0f, coverage));
+        return p;
+    }
+
+    // Una columna de x desde top hasta bottom (en pixeles, con borde suave arriba y abajo),
+    // encima de lo que ya hay.
+    void column (juce::Image::BitmapData& d, int x, float top, float bottom, Pixel colour)
+    {
+        top = juce::jmax (0.0f, top);
+        bottom = juce::jmin ((float) d.height, bottom);
+        if (bottom <= top || x < 0 || x >= d.width)
+            return;
+        const int first = (int) top, last = juce::jmin (d.height - 1, (int) std::ceil (bottom) - 1);
+        for (int y = first; y <= last; ++y)
+        {
+            const float coverage = juce::jmin ((float) y + 1.0f, bottom) - juce::jmax ((float) y, top);
+            auto* p = reinterpret_cast<Pixel*> (d.getPixelPointer (x, y));
+            p->blend (coverage >= 0.999f ? colour : scaled (colour, coverage));
+        }
+    }
+}
+
+void Visualizer::drawSpectrum (juce::Image::BitmapData& d, juce::Colour colour)
+{
+    const float w = (float) d.width, h = (float) d.height;
+    // Degradado vertical (claro arriba): un color por fila, calculado una vez por fotograma.
+    const auto top = colour.brighter (0.7f);
+    rows.resize ((size_t) d.height);
+    for (int y = 0; y < d.height; ++y)
+        rows[(size_t) y] = premultiplied (top.interpolatedWith (colour.withMultipliedAlpha (0.85f), (float) y / juce::jmax (1.0f, h - 1.0f)));
+    const auto cap = premultiplied (top, 0.6f + 0.4f * flash);
+
     const float slot = w / numBars;
     const float gap = juce::jmax (1.0f, slot * 0.25f);
     const float capHeight = juce::jmax (2.0f, h * 0.015f);
-    const auto top = colour.brighter (0.7f);
-    g.setGradientFill (juce::ColourGradient (top, 0.0f, 0.0f, colour.withMultipliedAlpha (0.85f), 0.0f, h, false));
+    const float usable = h - capHeight * 2.0f;
     for (int i = 0; i < numBars; ++i)
     {
-        const float bh = bars[(size_t) i] * (h - capHeight * 2.0f);
-        if (bh >= 0.5f)
-            g.fillRect (slot * (float) i + gap * 0.5f, h - bh, slot - gap, bh);
-    }
-    g.setColour (top.withMultipliedAlpha (0.6f + 0.4f * flash));
-    for (int i = 0; i < numBars; ++i)
+        const int x0 = juce::roundToInt (slot * (float) i + gap * 0.5f);
+        const int x1 = juce::roundToInt (slot * (float) (i + 1) - gap * 0.5f);
+        const float barTop = h - bars[(size_t) i] * usable;
+        if (h - barTop >= 0.5f)
+        {
+            const int first = (int) barTop;
+            for (int y = first; y < d.height; ++y)
+            {
+                const auto c = y == first ? scaled (rows[(size_t) y], (float) (first + 1) - barTop) : rows[(size_t) y];
+                auto* p = reinterpret_cast<Pixel*> (d.getPixelPointer (x0, y));
+                for (int x = x0; x < x1; ++x, p = juce::addBytesToPointer (p, d.pixelStride))
+                    *p = c;   // la imagen esta vacia: no hace falta mezclar
+            }
+        }
         if (peaks[(size_t) i] > 0.01f)
-            g.fillRect (slot * (float) i + gap * 0.5f, h - peaks[(size_t) i] * (h - capHeight * 2.0f) - capHeight * 1.5f, slot - gap, capHeight);
+        {
+            const float capTop = h - peaks[(size_t) i] * usable - capHeight * 1.5f;
+            for (int x = x0; x < x1; ++x)
+                column (d, x, capTop, capTop + capHeight, cap);
+        }
+    }
 }
 
-void Visualizer::drawWave (juce::Graphics& g, juce::Colour colour, float w, float h)
+void Visualizer::drawWave (juce::Image::BitmapData& d, juce::Colour colour)
 {
     const int start = triggerPoint (samples.data(), fftSize, waveSamples);
-    const int points = juce::jmax (2, (int) w);
+    const float h = (float) d.height;
     const float mid = h * 0.5f, amp = h * 0.45f;
-    juce::Path path;
-    for (int x = 0; x < points; ++x)
-    {
-        const int i = juce::jmin (fftSize - 1, start + x * waveSamples / points);
-        const float y = mid - std::tanh (samples[(size_t) i] * 1.5f) * amp;   // limitada suave: no se sale
-        if (x == 0)
-            path.startNewSubPath (0.0f, y);
-        else
-            path.lineTo ((float) x * w / (float) (points - 1), y);
-    }
     const float thickness = juce::jmax (1.5f, h * 0.012f);
-    g.setColour (colour.withMultipliedAlpha (0.25f + 0.2f * flash));   // resplandor
-    g.strokePath (path, juce::PathStrokeType (thickness * 4.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-    g.setColour (colour.brighter (0.3f + 0.4f * flash));
-    g.strokePath (path, juce::PathStrokeType (thickness, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    const auto glow = premultiplied (colour, 0.25f + 0.2f * flash);
+    const auto line = premultiplied (colour.brighter (0.3f + 0.4f * flash));
+    auto yAt = [&] (int x)
+    {
+        const int i = juce::jmin (fftSize - 1, start + x * waveSamples / juce::jmax (1, d.width));
+        return mid - std::tanh (samples[(size_t) i] * 1.5f) * amp;   // limitada suave: no se sale
+    };
+    // Cada columna cubre el tramo desde el punto anterior hasta el suyo (asi la linea no se corta
+    // cuando sube o baja deprisa), mas el grosor; primero el resplandor ancho y luego la linea.
+    float previous = yAt (0);
+    for (int x = 0; x < d.width; ++x)
+    {
+        const float y = yAt (x);
+        const float lo = juce::jmin (previous, y), hi = juce::jmax (previous, y);
+        column (d, x, lo - thickness * 2.0f, hi + thickness * 2.0f, glow);
+        column (d, x, lo - thickness * 0.5f, hi + thickness * 0.5f, line);
+        previous = y;
+    }
 }
 
-void Visualizer::drawPulse (juce::Graphics& g, juce::Colour colour, float w, float h, const MasterTap::Beat& beat)
+void Visualizer::drawPulse (juce::Image::BitmapData& d, juce::Colour colour, const MasterTap::Beat& beat)
 {
-    const juce::Point<float> c (w * 0.5f, h * 0.5f);
-    const float maxR = juce::jmin (w, h) * 0.5f;
     if (smoothLevel <= 0.01f && flash <= 0.01f)
         return;   // en silencio no se ve
+    const float w = (float) d.width, h = (float) d.height;
+    const float cx = w * 0.5f, cy = h * 0.5f;
+    const float maxR = juce::jmin (w, h) * 0.5f;
     const float r = maxR * (0.35f + 0.3f * smoothLevel + 0.22f * flash);
-    juce::ColourGradient fill (colour.brighter (0.6f + 0.4f * flash).withMultipliedAlpha (0.95f), c,
-                               colour.withAlpha (0.0f), c.translated (r, 0.0f), true);
-    fill.addColour (0.6, colour.withMultipliedAlpha (0.7f + 0.3f * flash));
-    g.setGradientFill (fill);
-    g.fillEllipse (juce::Rectangle<float> (r * 2.0f, r * 2.0f).withCentre (c));
+
+    // Relleno: claro en el centro, el color a 0,6 del radio y transparente en el borde (tabla de
+    // 256 colores por fotograma en lugar de un degradado por pixel).
+    const auto centre = colour.brighter (0.6f + 0.4f * flash).withMultipliedAlpha (0.95f);
+    const auto middle = colour.withMultipliedAlpha (0.7f + 0.3f * flash);
+    std::array<Pixel, 256> fill;
+    for (int i = 0; i < 256; ++i)
+    {
+        const float t = (float) i / 255.0f;
+        fill[(size_t) i] = t < 0.6f ? premultiplied (centre.interpolatedWith (middle, t / 0.6f))
+                                    : premultiplied (middle.interpolatedWith (colour.withAlpha (0.0f), (t - 0.6f) / 0.4f));
+    }
 
     // Con ritmo, un aro que sale del circulo en cada pulso y se apaga antes del siguiente.
+    float ringR = 0.0f, ringHalf = 0.0f;
+    Pixel ring {};
     if (beat.valid)
     {
         const float phase = (float) (beat.beat - std::floor (beat.beat));
-        const float ringR = juce::jmin (maxR * 0.98f, r * (1.0f + 0.7f * phase));
-        g.setColour (colour.withMultipliedAlpha ((1.0f - phase) * 0.8f * juce::jlimit (0.0f, 1.0f, smoothLevel * 1.5f)));
-        g.drawEllipse (juce::Rectangle<float> (ringR * 2.0f, ringR * 2.0f).withCentre (c), juce::jmax (1.5f, maxR * 0.03f));
+        ringR = juce::jmin (maxR * 0.98f - 1.0f, r * (1.0f + 0.7f * phase));
+        ringHalf = juce::jmax (0.75f, maxR * 0.015f);
+        ring = premultiplied (colour, (1.0f - phase) * 0.8f * juce::jlimit (0.0f, 1.0f, smoothLevel * 1.5f));
+    }
+
+    const float reach = juce::jmax (r, ringR + ringHalf + 1.0f);
+    const int x0 = juce::jmax (0, (int) (cx - reach)), x1 = juce::jmin (d.width, (int) std::ceil (cx + reach));
+    const int y0 = juce::jmax (0, (int) (cy - reach)), y1 = juce::jmin (d.height, (int) std::ceil (cy + reach));
+    for (int y = y0; y < y1; ++y)
+    {
+        const float dy = (float) y + 0.5f - cy;
+        auto* p = reinterpret_cast<Pixel*> (d.getPixelPointer (x0, y));
+        for (int x = x0; x < x1; ++x, p = juce::addBytesToPointer (p, d.pixelStride))
+        {
+            const float dx = (float) x + 0.5f - cx;
+            const float dist = std::sqrt (dx * dx + dy * dy);
+            if (dist < r)
+                *p = fill[(size_t) (dist / r * 255.0f)];
+            if (ringHalf > 0.0f)
+            {
+                const float coverage = ringHalf + 0.5f - std::abs (dist - ringR);
+                if (coverage > 0.0f)
+                    p->blend (scaled (ring, coverage));
+            }
+        }
     }
 }
 }

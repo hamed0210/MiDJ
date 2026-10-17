@@ -2848,6 +2848,7 @@ void testVisualizer()
     auto item = c.makeItem (SourceType::visualizer, 1280, 720);
     auto countOpaque = [] (const juce::Image& img, int x0, int x1)
     {
+        x1 = juce::jmin (x1, img.getWidth());
         int n = 0;
         for (int y = 0; y < img.getHeight(); ++y)
             for (int x = x0; x < x1; ++x)
@@ -2881,6 +2882,19 @@ void testVisualizer()
     item.visualizer = VisualizerStyle::pulse;
     n = countOpaque (drawing.render (item, 1033.0), 0, 640);
     check (n > 0, "visualizador: pulso con sonido = circulo", n, 1.0);
+
+    // Cuanto cuesta dibujar cada estilo (solo informa: en Debug es mucho mas lento).
+    for (auto style : { VisualizerStyle::spectrum, VisualizerStyle::wave, VisualizerStyle::pulse })
+    {
+        item.visualizer = style;
+        item.width = style == VisualizerStyle::pulse ? 360 : 1280;
+        item.height = style == VisualizerStyle::pulse ? 360 : 240;
+        const auto t0 = juce::Time::getMillisecondCounterHiRes();
+        for (int f = 0; f < 200; ++f)
+            drawing.render (item, 2000.0 + f * 33.0);
+        std::printf ("        visualizador %s: %.2f ms por fotograma\n", SceneCollection::visualizerName (style).toRawUTF8(),
+                     (juce::Time::getMillisecondCounterHiRes() - t0) / 200.0);
+    }
 
     // Escenas: estilo, color y tamano en XML.
     auto& scene = c.addScene ("Vis");

@@ -167,7 +167,9 @@ Fuente que dibuja lo que suena por el master (lo que se oye, descontando la late
   sale en cada pulso. Sin ningún deck con BPM, late con los golpes de volumen.
 - Propiedades: estilo y color (el resto, como cualquier fuente). Al cambiar de estilo se coloca en su sitio:
   espectro y onda abajo a lo ancho; pulso, un cuadrado en el centro.
-- Se dibuja en la CPU en una imagen de como mucho 640 px de lado y la tarjeta gráfica la escala.
+- Se dibuja en la CPU escribiendo los píxeles directamente, en una imagen de como mucho 640 px de lado (el
+  pulso, 320), y la tarjeta gráfica la escala. Coste medido en Release en este equipo (A8-7410), sobre la
+  ventana de video con una canción: espectro +8 % de un núcleo, onda +3 %, pulso +10 %.
 
 ## Sampler
 

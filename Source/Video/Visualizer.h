@@ -9,9 +9,9 @@
 namespace midj
 {
 // Visualizador de lo que suena por el master, como fuente de escena: espectro en barras, forma
-// de onda o un circulo que late con el pulso del deck que manda. Se dibuja en la CPU en una
-// imagen pequena (como mucho 640 px de lado) en el hilo del compositor, una vez por fotograma,
-// y la tarjeta grafica la escala al tamano del elemento.
+// de onda o un circulo que late con el pulso del deck que manda. Se dibuja en la CPU, escribiendo
+// los pixeles directamente, en una imagen pequena (como mucho 640 px de lado; el pulso, 320) en el
+// hilo del compositor, una vez por fotograma, y la tarjeta grafica la escala al tamano del elemento.
 class Visualizer
 {
 public:
@@ -20,6 +20,7 @@ public:
     static constexpr int numBars = 48;
     static constexpr float lowHz = 40.0f, highHz = 16000.0f;
     static constexpr int maxRenderSide = 640;
+    static constexpr int pulseRenderSide = 320;      // el pulso es un degradado: basta con menos
     static constexpr int waveSamples = 1024;          // lo que se ve de la onda (~23 ms)
 
     explicit Visualizer (const MasterTap& tap);
@@ -43,12 +44,12 @@ public:
     static float beatFlash (double beat);
 
     // Tamano de la imagen que se dibuja para un elemento de w x h.
-    static juce::Point<int> renderSize (int w, int h);
+    static juce::Point<int> renderSize (int w, int h, int maxSide = maxRenderSide);
 
 private:
-    void drawSpectrum (juce::Graphics& g, juce::Colour colour, float w, float h);
-    void drawWave (juce::Graphics& g, juce::Colour colour, float w, float h);
-    void drawPulse (juce::Graphics& g, juce::Colour colour, float w, float h, const MasterTap::Beat& beat);
+    void drawSpectrum (juce::Image::BitmapData& data, juce::Colour colour);
+    void drawWave (juce::Image::BitmapData& data, juce::Colour colour);
+    void drawPulse (juce::Image::BitmapData& data, juce::Colour colour, const MasterTap::Beat& beat);
 
     const MasterTap& tap;
     juce::dsp::FFT fft { fftOrder };
@@ -59,5 +60,6 @@ private:
     float smoothLevel = 0.0f, slowLevel = 0.0f, flash = 0.0f;
     double lastMs = 0.0;
     juce::Image image;
+    std::vector<juce::PixelARGB> rows;   // degradado del espectro, una fila por pixel
 };
 }
