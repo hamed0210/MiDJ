@@ -17,6 +17,7 @@
 #include <vector>
 
 #pragma comment (lib, "d3d11.lib")
+#pragma comment (lib, "mf.lib")
 #pragma comment (lib, "mfplat.lib")
 #pragma comment (lib, "mfreadwrite.lib")
 #pragma comment (lib, "mfuuid.lib")
@@ -303,9 +304,15 @@ struct VideoDecoder::Impl
     ComPtr<ID3D11Device> device;              // solo con GPU: se mantienen vivos con el lector
     ComPtr<IMFDXGIDeviceManager> deviceManager;
 
-    // Copia un fotograma RGB32 a la imagen. En la GPU la memoria es una textura con su propio
-    // paso por fila: IMF2DBuffer la trae a la CPU y da ese paso; si no, el bufer contiguo.
     bool copyFrame (IMFSample* sample, juce::Image& image)
+    {
+        return copyRgb32 (sample, image, width, height, stride, false);
+    }
+
+    // Copia un fotograma RGB32 a la imagen (flip: de abajo arriba). En la GPU la memoria es una
+    // textura con su propio paso por fila: IMF2DBuffer la trae a la CPU y da ese paso; si no, el
+    // bufer contiguo.
+    static bool copyRgb32 (IMFSample* sample, juce::Image& image, int width, int height, int stride, bool flip)
     {
         ComPtr<IMFMediaBuffer> buffer;
         ComPtr<IMF2DBuffer> buffer2d;
@@ -340,7 +347,7 @@ struct VideoDecoder::Impl
             {
                 // RGB32 de Media Foundation = B, G, R, X en memoria: como PixelARGB de JUCE.
                 auto* src = reinterpret_cast<const uint32_t*> (scan0 + (std::ptrdiff_t) y * pitch);
-                auto* dst = reinterpret_cast<uint32_t*> (out.getLinePointer (y));
+                auto* dst = reinterpret_cast<uint32_t*> (out.getLinePointer (flip ? height - 1 - y : y));
                 for (int x = 0; x < width; ++x)
                     dst[x] = src[x] | 0xff000000u;   // opaco
             }
@@ -550,4 +557,281 @@ bool VideoDecoder::frameAt (double seconds, juce::Image& image, int maxFrames)
 }
 
 bool VideoDecoder::isCatchingUp() const { return impl->catchingUp; }
+
+// --- Dispositivos de captura -------------------------------------------------------------------
+
+namespace
+{
+    juce::String allocatedString (IMFActivate* a, const GUID& key)
+    {
+        WCHAR* text = nullptr;
+        UINT32 length = 0;
+        if (FAILED (a->GetAllocatedString (key, &text, &length)) || text == nullptr)
+            return {};
+        juce::String s (text);
+        CoTaskMemFree (text);
+        return s;
+    }
+
+    ComPtr<IMFMediaSource> createDeviceSource (const juce::String& id)
+    {
+        ComPtr<IMFAttributes> attributes;
+        if (FAILED (MFCreateAttributes (&attributes, 2)))
+            return nullptr;
+        attributes->SetGUID (MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID);
+        attributes->SetString (MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK, id.toWideCharPointer());
+        ComPtr<IMFMediaSource> source;
+        if (FAILED (MFCreateDeviceSource (attributes.Get(), &source)))
+            return nullptr;
+        return source;
+    }
+
+    ComPtr<IMFMediaTypeHandler> typeHandler (IMFMediaSource* source)
+    {
+        ComPtr<IMFPresentationDescriptor> pd;
+        ComPtr<IMFStreamDescriptor> sd;
+        ComPtr<IMFMediaTypeHandler> handler;
+        BOOL selected = FALSE;
+        if (FAILED (source->CreatePresentationDescriptor (&pd)) || FAILED (pd->GetStreamDescriptorByIndex (0, &selected, &sd))
+            || FAILED (sd->GetMediaTypeHandler (&handler)))
+            return nullptr;
+        return handler;
+    }
+
+    // Nombre corto del formato: el codigo de cuatro letras (NV12, YUY2, MJPG...) o RGB.
+    juce::String formatName (const GUID& subtype)
+    {
+        const auto code = subtype.Data1;
+        if (code < 0x100)
+            return "RGB";
+        juce::String s;
+        for (int i = 0; i < 4; ++i)
+            s << (char) ((code >> (8 * i)) & 0xff);
+        return s.trim();
+    }
+
+    VideoCaptureReader::Format formatOf (IMFMediaType* type)
+    {
+        VideoCaptureReader::Format f;
+        UINT32 w = 0, h = 0, num = 0, den = 0;
+        MFGetAttributeSize (type, MF_MT_FRAME_SIZE, &w, &h);
+        if (SUCCEEDED (MFGetAttributeRatio (type, MF_MT_FRAME_RATE, &num, &den)) && den > 0)
+            f.fps = std::round ((double) num / den * 100.0) / 100.0;
+        GUID subtype {};
+        type->GetGUID (MF_MT_SUBTYPE, &subtype);
+        f.width = (int) w;
+        f.height = (int) h;
+        f.format = formatName (subtype);
+        return f;
+    }
+}
+
+struct VideoCaptureReader::Impl
+{
+    ComPtr<IMFMediaSource> source;
+    ComPtr<IMFSourceReader> reader;
+    ComPtr<ID3D11Device> device;
+    ComPtr<IMFDXGIDeviceManager> deviceManager;
+    Format format;
+    int width = 0, height = 0, stride = 0;
+
+    ~Impl()
+    {
+        reader.Reset();
+        if (source != nullptr)
+            source->Shutdown();   // suelta la capturadora para otros programas
+    }
+};
+
+VideoCaptureReader::VideoCaptureReader (std::unique_ptr<Impl> i) : impl (std::move (i)) {}
+VideoCaptureReader::~VideoCaptureReader() = default;
+
+std::vector<VideoCaptureReader::Device> VideoCaptureReader::devices()
+{
+    std::vector<Device> list;
+    if (! MediaFoundation::initialiseThisThread())
+        return list;
+    ComPtr<IMFAttributes> attributes;
+    if (FAILED (MFCreateAttributes (&attributes, 1)))
+        return list;
+    attributes->SetGUID (MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID);
+    IMFActivate** found = nullptr;
+    UINT32 count = 0;
+    if (FAILED (MFEnumDeviceSources (attributes.Get(), &found, &count)))
+        return list;
+    for (UINT32 i = 0; i < count; ++i)
+    {
+        list.push_back ({ allocatedString (found[i], MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME),
+                          allocatedString (found[i], MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK) });
+        found[i]->Release();
+    }
+    CoTaskMemFree (found);
+    return list;
+}
+
+std::vector<VideoCaptureReader::Format> VideoCaptureReader::formats (const juce::String& id)
+{
+    std::vector<Format> list;
+    if (! MediaFoundation::initialiseThisThread())
+        return list;
+    auto source = createDeviceSource (id);
+    if (source == nullptr)
+        return list;
+    if (auto handler = typeHandler (source.Get()))
+    {
+        DWORD count = 0;
+        handler->GetMediaTypeCount (&count);
+        for (DWORD i = 0; i < count; ++i)
+        {
+            ComPtr<IMFMediaType> type;
+            if (SUCCEEDED (handler->GetMediaTypeByIndex (i, &type)))
+                if (const auto f = formatOf (type.Get()); f.width > 0 && std::find (list.begin(), list.end(), f) == list.end())
+                    list.push_back (f);
+        }
+    }
+    source->Shutdown();
+    // De mayor a menor tamano y, dentro, de mas a menos fotogramas por segundo.
+    std::stable_sort (list.begin(), list.end(), [] (const Format& a, const Format& b)
+    {
+        if (a.width * a.height != b.width * b.height)
+            return a.width * a.height > b.width * b.height;
+        return a.fps > b.fps;
+    });
+    return list;
+}
+
+std::unique_ptr<VideoCaptureReader> VideoCaptureReader::open (const juce::String& id, const Format& wanted, int maxWidth,
+                                                              bool allowGpu, juce::String& error)
+{
+    if (! MediaFoundation::initialiseThisThread())
+    {
+        error = "Media Foundation no esta disponible";
+        return nullptr;
+    }
+    auto impl = std::make_unique<Impl>();
+    impl->source = createDeviceSource (id);
+    if (impl->source == nullptr)
+    {
+        error = "No esta conectado o lo usa otro programa";
+        return nullptr;
+    }
+
+    // Formato del dispositivo: el pedido (el que mas se parezca) o el que ya tenga.
+    auto handler = typeHandler (impl->source.Get());
+    if (handler == nullptr)
+    {
+        error = "El dispositivo no da video";
+        return nullptr;
+    }
+    if (wanted.width > 0)
+    {
+        DWORD count = 0;
+        handler->GetMediaTypeCount (&count);
+        ComPtr<IMFMediaType> best;
+        double bestScore = -1.0e9;
+        for (DWORD i = 0; i < count; ++i)
+        {
+            ComPtr<IMFMediaType> type;
+            if (FAILED (handler->GetMediaTypeByIndex (i, &type)))
+                continue;
+            const auto f = formatOf (type.Get());
+            if (f.width != wanted.width || f.height != wanted.height)
+                continue;
+            if (wanted.format.isNotEmpty() && f.format != wanted.format)
+                continue;
+            // Los fps pedidos (o los mas altos) y, a igualdad, mejor sin comprimir (menos CPU).
+            const double score = (wanted.fps > 0.0 ? 1000.0 - std::abs (f.fps - wanted.fps) * 10.0 : f.fps)
+                               + (f.format == "MJPG" || f.format == "H264" ? 0.0 : 0.5);
+            if (score > bestScore)
+            {
+                bestScore = score;
+                best = type;
+            }
+        }
+        if (best != nullptr)
+            handler->SetCurrentMediaType (best.Get());
+    }
+    ComPtr<IMFMediaType> current;
+    if (SUCCEEDED (handler->GetCurrentMediaType (&current)))
+        impl->format = formatOf (current.Get());
+
+    ComPtr<IMFAttributes> attributes;
+    MFCreateAttributes (&attributes, 3);
+    attributes->SetUINT32 (MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING, TRUE);
+    if (allowGpu && createGpuDevice (impl->device, impl->deviceManager))
+    {
+        attributes->SetUnknown (MF_SOURCE_READER_D3D_MANAGER, impl->deviceManager.Get());
+        attributes->SetUINT32 (MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, TRUE);
+    }
+    if (FAILED (MFCreateSourceReaderFromMediaSource (impl->source.Get(), attributes.Get(), &impl->reader)))
+    {
+        error = "Media Foundation no puede leer el dispositivo";
+        return nullptr;
+    }
+    auto* r = impl->reader.Get();
+    UINT32 w = (UINT32) juce::jmax (0, impl->format.width), h = (UINT32) juce::jmax (0, impl->format.height);
+    UINT32 outW = w, outH = h;
+    if (maxWidth > 0 && (int) w > maxWidth)
+    {
+        outW = (UINT32) maxWidth & ~1u;
+        outH = (UINT32) std::lround ((double) h * outW / w) & ~1u;
+    }
+    auto setType = [&] (UINT32 tw, UINT32 th)
+    {
+        ComPtr<IMFMediaType> type;
+        MFCreateMediaType (&type);
+        type->SetGUID (MF_MT_MAJOR_TYPE, MFMediaType_Video);
+        type->SetGUID (MF_MT_SUBTYPE, MFVideoFormat_RGB32);
+        if (tw > 0)
+            MFSetAttributeSize (type.Get(), MF_MT_FRAME_SIZE, tw, th);
+        return SUCCEEDED (r->SetCurrentMediaType ((DWORD) MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, type.Get()));
+    };
+    if (! setType (outW, outH) && ! setType (w, h))
+    {
+        error = "No se puede convertir el video de " + impl->format.format + " a RGB";
+        return nullptr;
+    }
+    ComPtr<IMFMediaType> actual;
+    r->GetCurrentMediaType ((DWORD) MF_SOURCE_READER_FIRST_VIDEO_STREAM, &actual);
+    MFGetAttributeSize (actual.Get(), MF_MT_FRAME_SIZE, &w, &h);
+    impl->width = (int) w;
+    impl->height = (int) h;
+    impl->stride = (int) (INT32) MFGetAttributeUINT32 (actual.Get(), MF_MT_DEFAULT_STRIDE, (UINT32) (w * 4));
+    if (w == 0 || h == 0)
+    {
+        error = "Video sin tamano";
+        return nullptr;
+    }
+    return std::unique_ptr<VideoCaptureReader> (new VideoCaptureReader (std::move (impl)));
+}
+
+bool VideoCaptureReader::read (juce::Image& image, bool flip)
+{
+    auto& m = *impl;
+    for (int tries = 0; tries < 100; ++tries)   // las marcas de tiempo sin imagen no cuentan
+    {
+        DWORD flags = 0;
+        LONGLONG timestamp = 0;
+        ComPtr<IMFSample> sample;
+        if (FAILED (m.reader->ReadSample ((DWORD) MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0, nullptr, &flags, &timestamp, &sample))
+            || (flags & (MF_SOURCE_READERF_ERROR | MF_SOURCE_READERF_ENDOFSTREAM)) != 0)
+            return false;
+        if (sample == nullptr)
+            continue;
+        if (! image.isValid() || image.getWidth() != m.width || image.getHeight() != m.height)
+            image = juce::Image (juce::Image::ARGB, m.width, m.height, false, juce::SoftwareImageType());
+        return VideoDecoder::Impl::copyRgb32 (sample.Get(), image, m.width, m.height, m.stride, flip);
+    }
+    return false;
+}
+
+void VideoCaptureReader::interrupt()
+{
+    if (impl->source != nullptr)
+        impl->source->Shutdown();
+}
+
+VideoCaptureReader::Format VideoCaptureReader::getFormat() const { return impl->format; }
+int VideoCaptureReader::getWidth() const  { return impl->width; }
+int VideoCaptureReader::getHeight() const { return impl->height; }
 }

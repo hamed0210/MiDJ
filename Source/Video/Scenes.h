@@ -17,7 +17,9 @@ enum class SourceType
     colour,   // un rectangulo de color
     screen,   // captura de una pantalla (monitor)
     window,   // captura de una ventana
-    visualizer   // espectro, onda o pulso de lo que suena por el master
+    visualizer,   // espectro, onda o pulso de lo que suena por el master
+    media,        // un archivo de video o audio (la fuente Multimedia de OBS)
+    captureDevice // capturadora de video o webcam (Dispositivo de captura de video de OBS)
 };
 
 // Como dibuja el visualizador lo que suena.
@@ -59,6 +61,33 @@ struct SceneItem
     bool clientArea = true;                          // ventana: solo el contenido, sin bordes ni barra de titulo
 
     VisualizerStyle visualizer = VisualizerStyle::spectrum;   // visualizador: estilo (usa el color y el tamano)
+
+    bool locked = false;                             // bloqueado: no se mueve en la vista previa (candado de OBS)
+
+    // Multimedia (el archivo va en 'file'). Como en OBS: reiniciar cuando la fuente sale al aire
+    // (y pararla cuando deja de estarlo), no mostrar nada al terminar, cerrar el archivo cuando
+    // no esta al aire y velocidad del 1 al 200 %.
+    bool loop = false, restartOnActivate = true, clearOnEnd = true, closeWhenInactive = false;
+    int speedPercent = 100;
+    bool hardwareDecode = false;                     // multimedia y capturadora: decodificar en la tarjeta grafica
+
+    // Sonido de la fuente (multimedia y capturadora): va al master.
+    float volume = 1.0f;
+    bool muted = false;
+
+    // Dispositivo de captura de video: cual (enlace simbolico de Windows y nombre), formato
+    // (sin customFormat, el predeterminado del dispositivo) y su entrada de audio.
+    juce::String deviceId, deviceName;
+    bool customFormat = false;
+    int captureWidth = 0, captureHeight = 0;
+    double captureFps = 0.0;
+    juce::String captureFormat;
+    bool flipVertical = false, deactivateWhenHidden = false, deviceActive = true;
+    juce::String audioDevice;                        // "" = sin audio
+
+    // Vuelve los ajustes propios de la fuente a los de por defecto (no el archivo ni el dispositivo,
+    // ni la colocacion): el boton "Por defecto" de las propiedades.
+    void resetSourceSettings();
 };
 
 struct Scene

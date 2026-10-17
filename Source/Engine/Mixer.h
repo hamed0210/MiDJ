@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Engine/AuxAudio.h"
 #include "Engine/ChannelStrip.h"
 #include "Engine/Deck.h"
 #include "Engine/Effects.h"
@@ -27,6 +28,8 @@ public:
     // Lo que sale por el master (para el visualizador del video).
     MasterTap& getTap() { return tap; }
     const MasterTap& getTap() const { return tap; }
+    // Sonidos que no son de los decks (fuentes de video con audio, capturadoras): al master.
+    AuxBus& getAuxBus() { return aux; }
     // Tempo que reciben los efectos de un deck: su BPM y su posicion en pulsos si esta sonando;
     // si no, un pulso libre de 0,5 s.
     static TempoInfo tempoFor (const Deck& deck, double sampleRate);
@@ -45,6 +48,7 @@ private:
     EffectRack effectsA, effectsB;
     Sampler sampler;   // va a la salida general, despues del crossfader
     MasterTap tap;
+    AuxBus aux;
     double outputRate = 44100.0;
     std::atomic<float> crossfader { 0.5f };
     float lastGainA = 1.0f, lastGainB = 1.0f;   // para suavizar el cambio dentro del bloque

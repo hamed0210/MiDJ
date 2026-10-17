@@ -21,6 +21,7 @@
 #include "Video/VideoMix.h"
 #include "Video/VideoProgram.h"
 #include "Video/Visualizer.h"
+#include "Video/MediaSources.h"
 #include "Video/MediaFoundation.h"
 #include "Library/TagReader.h"
 
@@ -2779,6 +2780,195 @@ void testCapture()
 
 
 // Visualizador: la toma del master, el analisis y el dibujo.
+void testAuxAudio()
+{
+    using namespace midj;
+    // Entrada de audio a 44,1 kHz sumada a una salida de 48 kHz: tras llenar la cola, sale
+    // seguida (sin huecos) aunque su reloj vaya un poco mas lento o mas rapido.
+    for (int extra : { 0, -1, 1 })   // muestras de mas o de menos por cada 10 ms de entrada (~0,23 %)
+    {
+        AudioInputSource input;
+        AuxBus bus;
+        bus.prepare (48000.0, 480);
+        bus.add (&input);
+        std::vector<float> in (441 + 1), out (480);
+        double phase = 0.0;
+        int gaps = 0;
+        double sum = 0.0;
+        int counted = 0;
+        for (int block = 0; block < 600; ++block)   // 6 s
+        {
+            const int n = 441 + extra;
+            for (int i = 0; i < n; ++i)
+            {
+                in[(size_t) i] = 0.5f * (float) std::sin (phase);
+                phase += 2.0 * juce::MathConstants<double>::pi * 440.0 / 44100.0;
+            }
+            input.pushForTest (in.data(), in.data(), n, 44100.0);
+            std::fill (out.begin(), out.end(), 0.0f);
+            bus.addTo (out.data(), nullptr, 480);
+            if (block >= 100)
+            {
+                float peak = 0.0f;
+                for (auto v : out)
+                {
+                    peak = juce::jmax (peak, std::abs (v));
+                    sum += (double) v * v;
+                }
+                counted += 480;
+                if (peak < 0.1f)
+                    ++gaps;
+            }
+        }
+        const double rms = std::sqrt (sum / juce::jmax (1, counted));
+        const juce::String name = "audio auxiliar: entrada de 44,1 kHz en salida de 48 kHz sin huecos"
+                                  + juce::String (extra == 0 ? "" : extra < 0 ? " (reloj lento)" : " (reloj rapido)");
+        check (gaps == 0 && std::abs (rms - 0.5 / std::sqrt (2.0)) < 0.02, name.toRawUTF8(), (double) gaps, 0.0);
+        bus.remove (&input);
+    }
+
+    // La capturadora: su audio por nombre (el mismo o el tipico de las capturadoras USB/HDMI).
+    const juce::StringArray inputs { "Microfono (Realtek High Definition Audio)", "Digital Audio Interface (USB3. 0 capture)" };
+    check (CaptureDeviceSource::guessAudioInput ("USB3. 0 capture", inputs) == inputs[1]
+               && CaptureDeviceSource::guessAudioInput ("Elgato HD60 S", inputs) == inputs[1]
+               && CaptureDeviceSource::guessAudioInput ("HP Truevision HD", { "Microfono (Realtek High Definition Audio)" }).isEmpty(),
+           "capturadora: elige su entrada de audio", 0.0, 0.0);
+}
+
+void testMediaSource()
+{
+    using namespace midj;
+    const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("MiDJTestsMedia.mp4");
+    if (! writeTestVideo (file, 5))
+    {
+        check (false, "multimedia: se crea un MP4 de prueba", 0.0, 1.0);
+        return;
+    }
+    juce::AudioFormatManager formats;
+    formats.registerFormat (new MediaFoundationAudioFormat(), true);
+    AuxBus bus;
+    bus.prepare (48000.0, 512);
+    MediaSourceManager manager (bus, formats, 640);
+
+    SceneCollection c;
+    auto item = c.makeItem (SourceType::media, 1280, 720);
+    item.file = file;
+    auto source = std::dynamic_pointer_cast<MediaFileSource> (manager.get (item));
+    manager.setViewing (true);
+    check (source != nullptr && ! source->isPlaying(), "multimedia: con 'reiniciar al activarse' espera a salir al aire", 0.0, 0.0);
+    manager.setOnAir ({ item.id });
+
+    // Se oye en tiempo real (como lo pediria la tarjeta) y la imagen va con el sonido.
+    juce::AudioBuffer<float> out (2, 512);
+    auto playFor = [&] (double seconds)
+    {
+        double sum = 0.0;
+        int n = 0;
+        for (int block = 0; block < (int) (seconds * 48000.0 / 512.0); ++block)
+        {
+            out.clear();
+            bus.addTo (out.getWritePointer (0), out.getWritePointer (1), 512);
+            if (block > 10)
+            {
+                sum += out.getRMSLevel (0, 0, 512) * out.getRMSLevel (0, 0, 512);
+                ++n;
+            }
+            juce::Thread::sleep (10);
+            manager.tick();
+        }
+        return std::sqrt (sum / juce::jmax (1, n));
+    };
+    const double rms = playFor (1.5);
+    check (source->hasAudio() && rms > 0.15, "multimedia: su sonido va al master", rms, 0.26);
+    const double pos = source->getPosition();
+    check (std::abs (pos - 1.5) < 0.25, "multimedia: avanza con el audio pedido", pos, 1.5);
+    juce::Thread::sleep (150);
+    auto green = [&]
+    {
+        const auto frame = source->getFrame();
+        if (! frame.isValid())
+            return juce::Colours::transparentBlack;
+        return frame.getPixelAt (frame.getWidth() / 2, frame.getHeight() / 2);
+    };
+    const auto px = green();
+    check (px.getGreen() > 200 && px.getRed() < 60 && px.getBlue() < 60, "multimedia: la imagen es la del segundo 1 (verde)", px.getGreen(), 255.0);
+
+    // Velocidad 200 %: el doble de deprisa.
+    item.speedPercent = 200;
+    manager.get (item);
+    const double before = source->getPosition();
+    playFor (0.5);
+    const double advanced = source->getPosition() - before;
+    check (std::abs (advanced - 1.0) < 0.2, "multimedia: velocidad 200 %", advanced, 1.0);
+
+    // Fuera del aire se para y vuelve al principio sin mostrar nada (reiniciar al activarse).
+    manager.setOnAir ({});
+    juce::Thread::sleep (100);
+    check (! source->isPlaying() && source->getPosition() < 0.05 && ! source->getFrame().isValid(),
+           "multimedia: al salir del aire se para y se oculta", source->getPosition(), 0.0);
+
+    // Al aire otra vez: empieza de cero; al terminar (sin bucle) no muestra nada.
+    manager.setOnAir ({ item.id });
+    playFor (2.8);   // 5,6 s del video a 200 %
+    juce::Thread::sleep (100);
+    check (! source->isPlaying() && ! source->getFrame().isValid(), "multimedia: al terminar no muestra nada", source->isPlaying() ? 1.0 : 0.0, 0.0);
+
+    // Con bucle sigue sonando desde el principio.
+    item.loop = true;
+    manager.get (item);
+    source->restart();
+    playFor (2.8);
+    check (source->isPlaying() && source->getPosition() < 1.5, "multimedia: en bucle vuelve a empezar", source->getPosition(), 0.6);
+
+    // Dos elementos con el mismo archivo comparten la fuente; borrar el elemento la suelta.
+    auto copy = item;
+    copy.id = c.newId();
+    check (manager.get (copy) == source, "multimedia: el mismo archivo en otra escena es la misma fuente", 0.0, 0.0);
+    manager.keepOnly ({});
+    std::weak_ptr<MediaFileSource> weak = source;
+    source.reset();
+    check (weak.expired(), "multimedia: se suelta al quitar sus elementos", 0.0, 0.0);
+    file.deleteFile();
+
+    // Escenas: los ajustes de multimedia y capturadora se guardan.
+    auto dev = c.makeItem (SourceType::captureDevice, 1280, 720);
+    dev.deviceId = "\\\\?\\usb#vid_534d";
+    dev.deviceName = "USB3. 0 capture";
+    dev.customFormat = true;
+    dev.captureWidth = 1920;
+    dev.captureHeight = 1080;
+    dev.captureFps = 60.0;
+    dev.captureFormat = "MJPG";
+    dev.audioDevice = "Digital Audio Interface (USB3. 0 capture)";
+    dev.volume = 0.5f;
+    auto& scene = c.addScene ("Captura");
+    scene.items.push_back (item);
+    scene.items.push_back (dev);
+    const auto back = SceneCollection::fromXml (*c.toXml(), 1280, 720);
+    const auto* s = back.findScene (scene.id);
+    check (s != nullptr && s->items.size() == 2 && s->items[0].type == SourceType::media && s->items[0].loop && s->items[0].speedPercent == 200
+               && s->items[0].file == item.file && s->items[1].type == SourceType::captureDevice && s->items[1].deviceId == dev.deviceId
+               && s->items[1].captureFps == 60.0 && s->items[1].captureFormat == "MJPG" && s->items[1].audioDevice == dev.audioDevice
+               && s->items[1].volume == 0.5f,
+           "escenas: multimedia y capturadora se guardan en XML", 0.0, 0.0);
+
+    // Dispositivos de captura de este equipo (solo informa: depende de lo que este conectado).
+    const auto devices = VideoCaptureReader::devices();
+    std::printf ("  (dispositivos de captura de video: %d)\n", (int) devices.size());
+    for (const auto& d : devices)
+    {
+        const auto fmts = VideoCaptureReader::formats (d.id);
+        juce::String error;
+        auto reader = VideoCaptureReader::open (d.id, {}, 640, false, error);
+        juce::Image frame;
+        const bool got = reader != nullptr && reader->read (frame, false);
+        std::printf ("  - %s: %d formatos, predeterminado %dx%d %s a %.0f fps, fotograma %s\n", d.name.toRawUTF8(), (int) fmts.size(),
+                     reader != nullptr ? reader->getFormat().width : 0, reader != nullptr ? reader->getFormat().height : 0,
+                     reader != nullptr ? reader->getFormat().format.toRawUTF8() : error.toRawUTF8(), reader != nullptr ? reader->getFormat().fps : 0.0,
+                     got ? (juce::String (frame.getWidth()) + "x" + juce::String (frame.getHeight())).toRawUTF8() : "no");
+    }
+}
+
 void testVisualizer()
 {
     using namespace midj;
@@ -3161,6 +3351,8 @@ int main (int argc, char* argv[])
     testScenes();
     testCapture();
     testVisualizer();
+    testAuxAudio();
+    testMediaSource();
 
     std::printf ("== Stems con IA ==\n");
     testStemStft();

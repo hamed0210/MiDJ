@@ -23,6 +23,12 @@ juce::Point<int> VideoProgram::naturalSize (const SceneItem& item) const
         case SourceType::colour:
         case SourceType::visualizer:
             return { juce::jmax (1, item.width), juce::jmax (1, item.height) };
+        case SourceType::media:
+        case SourceType::captureDevice:
+            if (auto s = media != nullptr ? media->find (item.id) : nullptr)
+                if (const auto size = s->getSize(); size.x > 0 && size.y > 0)
+                    return size;
+            return { width, height };
         case SourceType::screen:
         case SourceType::window:
             if (auto c = captures != nullptr ? captures->find (item.id) : nullptr)
@@ -60,6 +66,12 @@ VideoProgram::Prepared VideoProgram::prepare (const SceneItem& item)
                 p.capture = captures->get (item);
             p.natural = naturalSize (item);
             return p;   // la imagen la pone la captura en la GPU en cada fotograma
+        case SourceType::media:
+        case SourceType::captureDevice:
+            if (media != nullptr)
+                p.frames = media->get (item);
+            p.natural = naturalSize (item);
+            return p;   // la imagen la deja su hilo; el compositor la sube cuando cambia
         case SourceType::visualizer:
             p.natural = naturalSize (item);
             return p;   // se dibuja en el hilo del compositor en cada fotograma
@@ -115,6 +127,8 @@ void VideoProgram::republish()
     // Lo preparado para elementos que ya no existen se suelta.
     if (captures != nullptr)
         captures->keepOnly (alive);
+    if (media != nullptr)
+        media->keepOnly (alive);
     for (auto it = cache.begin(); it != cache.end();)
         it = alive.count (it->first) > 0 ? std::next (it) : cache.erase (it);
 
@@ -157,6 +171,21 @@ void VideoProgram::switchTo (int sceneId)
     current = sceneId;
     transitionStart = juce::Time::getMillisecondCounterHiRes();
     transitioning = true;
+}
+
+std::set<int> VideoProgram::liveItems() const
+{
+    int sceneId = 0;
+    {
+        const std::lock_guard<std::mutex> sl (lock);
+        sceneId = current;
+    }
+    std::set<int> ids;
+    if (const auto* scene = collection.findScene (sceneId))
+        for (const auto& item : scene->items)
+            if (item.visible)
+                ids.insert (item.id);
+    return ids;
 }
 
 bool VideoProgram::isInTransition() const
@@ -273,6 +302,19 @@ void VideoProgram::sceneLayers (const PreparedScene& scene, std::vector<Composit
                 // El tamano natural es el de la ultima imagen (la ventana puede cambiar de tamano).
                 if (SceneGeometry::place (layer, item, size, (float) size.x, (float) size.y))
                     layers.push_back (std::move (layer));
+                break;
+            }
+            case SourceType::media:
+            case SourceType::captureDevice:
+            {
+                if (p.frames == nullptr)
+                    break;
+                Compositor::Layer layer;
+                layer.slot = itemSlotBase + item.id;
+                layer.image = p.frames->getFrame();
+                layer.version = (1ull << 61) + p.frames->getFrameNumber();   // otra serie que las imagenes y el visualizador
+                if (layer.image.isValid())
+                    add (layer, (float) layer.image.getWidth(), (float) layer.image.getHeight());
                 break;
             }
             case SourceType::visualizer:

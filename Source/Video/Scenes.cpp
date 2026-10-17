@@ -4,7 +4,7 @@ namespace midj
 {
 namespace
 {
-    const char* typeIds[] = { "decks", "deckA", "deckB", "image", "text", "colour", "screen", "window", "visualizer" };
+    const char* typeIds[] = { "decks", "deckA", "deckB", "image", "text", "colour", "screen", "window", "visualizer", "media", "captureDevice" };
     const char* visualizerIds[] = { "spectrum", "wave", "pulse" };
     const char* transitionIds[] = { "cut", "fade", "fadeToBlack", "slide", "swipe" };
 
@@ -65,6 +65,34 @@ SceneItem* SceneCollection::findItem (int itemId)
     return nullptr;
 }
 
+void SceneItem::resetSourceSettings()
+{
+    const SceneItem d;
+    loop = d.loop;
+    restartOnActivate = d.restartOnActivate;
+    clearOnEnd = d.clearOnEnd;
+    closeWhenInactive = d.closeWhenInactive;
+    speedPercent = d.speedPercent;
+    hardwareDecode = d.hardwareDecode;
+    volume = d.volume;
+    muted = d.muted;
+    customFormat = d.customFormat;
+    captureWidth = d.captureWidth;
+    captureHeight = d.captureHeight;
+    captureFps = d.captureFps;
+    captureFormat = d.captureFormat;
+    flipVertical = d.flipVertical;
+    deactivateWhenHidden = d.deactivateWhenHidden;
+    deviceActive = d.deviceActive;
+    cursor = d.cursor;
+    clientArea = d.clientArea;
+    if (type == SourceType::text)
+    {
+        bold = d.bold;
+        shadow = d.shadow;
+    }
+}
+
 SceneItem SceneCollection::makeItem (SourceType type, int w, int h)
 {
     SceneItem item;
@@ -118,6 +146,8 @@ juce::String SceneCollection::typeName (SourceType type)
         case SourceType::screen: return "Captura de pantalla";
         case SourceType::window: return "Captura de ventana";
         case SourceType::visualizer: return "Visualizador";
+        case SourceType::media: return "Multimedia";
+        case SourceType::captureDevice: return "Dispositivo de captura de video";
     }
     return {};
 }
@@ -206,6 +236,37 @@ std::unique_ptr<juce::XmlElement> SceneCollection::toXml() const
             }
             if (i.type == SourceType::screen || i.type == SourceType::window)
                 e->setAttribute ("cursor", i.cursor);
+            if (i.locked)
+                e->setAttribute ("locked", true);
+            if (i.type == SourceType::media)
+            {
+                e->setAttribute ("file", i.file.getFullPathName());
+                e->setAttribute ("loop", i.loop);
+                e->setAttribute ("restart", i.restartOnActivate);
+                e->setAttribute ("clearOnEnd", i.clearOnEnd);
+                e->setAttribute ("closeInactive", i.closeWhenInactive);
+                e->setAttribute ("speed", i.speedPercent);
+            }
+            if (i.type == SourceType::captureDevice)
+            {
+                e->setAttribute ("deviceId", i.deviceId);
+                e->setAttribute ("deviceName", i.deviceName);
+                e->setAttribute ("customFormat", i.customFormat);
+                e->setAttribute ("captureWidth", i.captureWidth);
+                e->setAttribute ("captureHeight", i.captureHeight);
+                e->setAttribute ("captureFps", i.captureFps);
+                e->setAttribute ("captureFormat", i.captureFormat);
+                e->setAttribute ("flip", i.flipVertical);
+                e->setAttribute ("deactivateHidden", i.deactivateWhenHidden);
+                e->setAttribute ("active", i.deviceActive);
+                e->setAttribute ("audioDevice", i.audioDevice);
+            }
+            if (i.type == SourceType::media || i.type == SourceType::captureDevice)
+            {
+                e->setAttribute ("hwDecode", i.hardwareDecode);
+                e->setAttribute ("volume", i.volume);
+                e->setAttribute ("muted", i.muted);
+            }
         }
     }
     return xml;
@@ -254,6 +315,26 @@ SceneCollection SceneCollection::fromXml (const juce::XmlElement& xml, int w, in
             i.clientArea = e->getBoolAttribute ("clientArea", true);
             i.cursor = e->getBoolAttribute ("cursor", true);
             i.visualizer = parseId (e->getStringAttribute ("style"), visualizerIds, VisualizerStyle::spectrum);
+            i.locked = e->getBoolAttribute ("locked");
+            i.loop = e->getBoolAttribute ("loop", i.loop);
+            i.restartOnActivate = e->getBoolAttribute ("restart", i.restartOnActivate);
+            i.clearOnEnd = e->getBoolAttribute ("clearOnEnd", i.clearOnEnd);
+            i.closeWhenInactive = e->getBoolAttribute ("closeInactive", i.closeWhenInactive);
+            i.speedPercent = juce::jlimit (1, 200, e->getIntAttribute ("speed", i.speedPercent));
+            i.deviceId = e->getStringAttribute ("deviceId");
+            i.deviceName = e->getStringAttribute ("deviceName");
+            i.customFormat = e->getBoolAttribute ("customFormat");
+            i.captureWidth = e->getIntAttribute ("captureWidth");
+            i.captureHeight = e->getIntAttribute ("captureHeight");
+            i.captureFps = e->getDoubleAttribute ("captureFps");
+            i.captureFormat = e->getStringAttribute ("captureFormat");
+            i.flipVertical = e->getBoolAttribute ("flip");
+            i.deactivateWhenHidden = e->getBoolAttribute ("deactivateHidden");
+            i.deviceActive = e->getBoolAttribute ("active", true);
+            i.audioDevice = e->getStringAttribute ("audioDevice");
+            i.hardwareDecode = e->getBoolAttribute ("hwDecode", i.hardwareDecode);
+            i.volume = (float) e->getDoubleAttribute ("volume", 1.0);
+            i.muted = e->getBoolAttribute ("muted");
             s.items.push_back (std::move (i));
         }
         c.scenes.push_back (std::move (s));

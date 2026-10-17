@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Video/Capture.h"
+#include "Video/MediaSources.h"
 #include "Video/Scenes.h"
 #include "Video/VideoMix.h"
 #include "Video/Visualizer.h"
@@ -25,6 +26,11 @@ public:
     std::shared_ptr<Capture> captureFor (int itemId) const { return captures != nullptr ? captures->find (itemId) : nullptr; }
     // Lo que suena por el master, para los visualizadores (sin ella, no se ven). Antes de empezar.
     void setMasterTap (const MasterTap* t) { tap = t; }
+    // Las fuentes multimedia y capturadoras (sin gestor, no se ven). Antes de setScenes.
+    void setMediaSources (MediaSourceManager* manager) { media = manager; }
+    std::shared_ptr<FrameSource> frameSourceFor (int itemId) const { return media != nullptr ? media->find (itemId) : nullptr; }
+    // Hilo de interfaz: los elementos que se ven en la escena al aire (las fuentes "activas" de OBS).
+    std::set<int> liveItems() const;
 
     // Hilo de interfaz: las escenas (copia). Solo se vuelven a preparar las imagenes y textos que cambian.
     void setScenes (const SceneCollection& scenes);
@@ -54,6 +60,7 @@ private:
         juce::uint64 version = 0;
         juce::Point<int> natural;
         std::shared_ptr<Capture> capture;   // captura de pantalla o ventana
+        std::shared_ptr<FrameSource> frames;   // multimedia o capturadora
     };
     struct PreparedScene
     {
@@ -75,6 +82,7 @@ private:
     const int width, height;
     CaptureManager* captures = nullptr;
     const MasterTap* tap = nullptr;
+    MediaSourceManager* media = nullptr;
 
     // Hilo de interfaz
     SceneCollection collection;

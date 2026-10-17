@@ -4,6 +4,7 @@
 #include <juce_graphics/juce_graphics.h>
 
 #include <memory>
+#include <vector>
 
 // Video y audio de archivos MP4/MOV/WMV/M4A con Media Foundation (incluido en Windows: sin
 // FFmpeg). VirtualDJ usa FFmpeg; aqui Media Foundation hace lo mismo con los codecs de Windows.
@@ -62,8 +63,49 @@ public:
 
 private:
     struct Impl;
+    friend class VideoCaptureReader;   // usa su copia de fotogramas
     static std::unique_ptr<VideoDecoder> openWith (const juce::File& file, int maxWidth, juce::String& error, bool useGpu);
     explicit VideoDecoder (std::unique_ptr<Impl>);
+    std::unique_ptr<Impl> impl;
+};
+
+// Un dispositivo de captura de video: capturadoras USB/HDMI y webcams (las que Windows ve con
+// su controlador UVC o de Media Foundation; OBS usa DirectShow, que ademas ve algunas
+// capturadoras antiguas). Se lee en un hilo propio: read() espera al siguiente fotograma.
+class VideoCaptureReader
+{
+public:
+    struct Device
+    {
+        juce::String name, id;   // id = enlace simbolico de Windows (no cambia entre arranques)
+    };
+    struct Format
+    {
+        int width = 0, height = 0;   // 0 = el predeterminado del dispositivo
+        double fps = 0.0;            // 0 = el mas alto para ese tamano
+        juce::String format;         // "NV12", "YUY2", "MJPG"...; vacio = cualquiera
+        bool operator== (const Format&) const = default;
+    };
+
+    static std::vector<Device> devices();
+    static std::vector<Format> formats (const juce::String& deviceId);
+
+    // maxWidth: se reduce a ese ancho. allowGpu: decodificar y convertir en la tarjeta grafica.
+    static std::unique_ptr<VideoCaptureReader> open (const juce::String& deviceId, const Format& wanted, int maxWidth,
+                                                     bool allowGpu, juce::String& error);
+    ~VideoCaptureReader();
+
+    // Espera el siguiente fotograma (como mucho ~1 s) y lo copia. false = desconectado o error.
+    bool read (juce::Image& image, bool flipVertically);
+    // Cualquier hilo: suelta el dispositivo; un read() que estaba esperando vuelve con false.
+    void interrupt();
+    Format getFormat() const;   // el que entrega el dispositivo (tamano antes de reducir)
+    int getWidth() const;
+    int getHeight() const;
+
+private:
+    struct Impl;
+    explicit VideoCaptureReader (std::unique_ptr<Impl>);
     std::unique_ptr<Impl> impl;
 };
 }
