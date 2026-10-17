@@ -3,6 +3,7 @@
 #include "Engine/ChannelStrip.h"
 #include "Engine/Deck.h"
 #include "Engine/Effects.h"
+#include "Engine/Sampler.h"
 
 namespace midj
 {
@@ -21,6 +22,7 @@ public:
 
     ChannelStrip& getStrip (int deckIndex) { return deckIndex == 0 ? stripA : stripB; }
     EffectRack& getEffects (int deckIndex) { return deckIndex == 0 ? effectsA : effectsB; }
+    Sampler& getSampler() { return sampler; }
     // Tempo que reciben los efectos de un deck: su BPM y su posicion en pulsos si esta sonando;
     // si no, un pulso libre de 0,5 s.
     static TempoInfo tempoFor (const Deck& deck, double sampleRate);
@@ -37,6 +39,7 @@ private:
     Deck& deckB;
     ChannelStrip stripA, stripB;
     EffectRack effectsA, effectsB;
+    Sampler sampler;   // va a la salida general, despues del crossfader
     double outputRate = 44100.0;
     std::atomic<float> crossfader { 0.5f };
     float lastGainA = 1.0f, lastGainB = 1.0f;   // para suavizar el cambio dentro del bloque

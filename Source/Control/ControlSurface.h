@@ -22,6 +22,7 @@ public:
     std::function<void (int steps)> onBrowserScroll;       // mover la seleccion del navegador
 
     void pressButton (const juce::String& action);              // acciones de tipo boton
+    void releaseButton (const juce::String& action);            // soltar (pads del sampler en modo hold)
     void setAbsolute (const juce::String& action, double unit); // 0-1
     void moveRelative (const juce::String& action, int ticks);  // pasos con signo
 

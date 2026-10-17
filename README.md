@@ -40,6 +40,8 @@ Source/
     BpmDetector.*       detección de tempo y del primer pulso
     TimeStretcher.*     keylock: cambio de tempo sin cambio de tono (Rubber Band)
     Effects.*           efectos sincronizados al tempo y rack de 3 ranuras por deck
+    Sampler.*           sampler de 8 pads: disparo, tempo, grabacion y banco
+    SampleData.*        sonidos del sampler: audio y .vdjsample de VirtualDJ
   Control/              controladoras MIDI
     Actions.*           acciones asignables (play, cue, tempo, EQ, efectos, jog...)
     MidiMapping.*       asignaciones mensaje MIDI -> accion, guardadas en XML
@@ -54,14 +56,24 @@ Source/
     LibraryBrowser.*    navegador: carpetas, buscador y lista (arrastrar o doble clic)
     EffectsRow.*        fila FX de un deck: elegir efecto, encender y mando
     MidiLearnOverlay.*  capa del modo aprender MIDI
+    SamplerPanel.*      panel del sampler: pads, volumen y STOP
     DarkLookAndFeel.*   estilo visual oscuro
 Tests/
   TestMain.cpp          pruebas automáticas del motor (ctest) y herramientas:
                         MiDJTests --analyse canciones...      BPM y primer pulso
                         MiDJTests --stretch cancion 1.08 dir  keylock con una canción real
                         MiDJTests --compare a.wav b.wav       tono de b respecto de a
+                        MiDJTests --sample archivo            datos de un sonido (.vdjsample o audio)
                         MiDJTests --benchmark                 CPU del keylock y de los efectos
 ```
+
+## Sampler
+
+8 pads a la derecha del navegador. Clic en un pad vacío o arrastrar encima un archivo (o una canción del
+navegador) para cargarlo; acepta audio y los `.vdjsample` de VirtualDJ con su tempo y bucle. Clic: disparar.
+Clic derecho: grabar 4, 8 o 16 pulsos de un deck (empieza en el siguiente pulso y queda como bucle bloqueado),
+modo de disparo (on/off, mantener, repetir), bucle, tempo (libre, sincronizado, bloqueado) y quitar.
+El banco se guarda en `%APPDATA%\MiDJ\sampler.xml` y las grabaciones en `%APPDATA%\MiDJ\Grabaciones`.
 
 ## Controladoras MIDI
 
@@ -99,3 +111,4 @@ SQLite es de dominio público.
 - Biblioteca en SQLite (`%APPDATA%\MiDJ\library.db`) y navegador: carpetas, escaneo y análisis de BPM en segundo plano, búsqueda sin acentos ni mayúsculas, columnas ordenables; cargar arrastrando a un deck (también desde el Explorador) o con doble clic. Las canciones ya analizadas cargan sin volver a analizar.
 - Efectos: 3 ranuras por deck con Echo (medio pulso, cola al apagar), Reverb, Flanger (barrido de 8 pulsos), BitCrush (fórmula de VirtualDJ) y Gate (cuartos de pulso), todos sincronizados al BPM del deck, sin clics al encender, apagar o cambiar, y sin tocar la señal cuando están apagados.
 - Controladoras MIDI: modo aprender en la pantalla, botones por nota o CC, faders por CC o pitch bend, jog y encoders relativos (detecta complemento a dos o desplazado), los controles de la pantalla siguen a la controladora, conexión en caliente y modo de simulación.
+- Sampler de 8 pads: disparo on/off, mantener y repetir; tempo libre, sincronizado (plegado a 0,66-1,5) o bloqueado al pulso; fundidos de 128 muestras; grabación de 4/8/16 pulsos de un deck empezando en el pulso; lee los .vdjsample de VirtualDJ; banco guardado; pads asignables por MIDI.

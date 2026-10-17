@@ -32,6 +32,10 @@ const std::vector<ActionInfo>& all()
             }
         }
         v.push_back ({ "crossfader", "Crossfader", ActionType::absolute });
+        for (int pad = 1; pad <= 8; ++pad)
+            v.push_back ({ "sampler.pad" + juce::String (pad), "Sampler pad " + juce::String (pad), ActionType::button });
+        v.push_back ({ "sampler.stop", "Sampler STOP", ActionType::button });
+        v.push_back ({ "sampler.volume", "Sampler volumen", ActionType::absolute });
         v.push_back ({ "browser.scroll", "Navegador: mover", ActionType::relative });
         return v;
     }();

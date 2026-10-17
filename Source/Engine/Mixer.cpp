@@ -36,6 +36,7 @@ void Mixer::prepareToPlay (int samplesPerBlockExpected, double sampleRate)
     stripB.prepare (sampleRate, samplesPerBlockExpected);
     effectsA.prepare (sampleRate, samplesPerBlockExpected);
     effectsB.prepare (sampleRate, samplesPerBlockExpected);
+    sampler.prepare (sampleRate, samplesPerBlockExpected);
     scratch.setSize (2, samplesPerBlockExpected);
 }
 
@@ -61,6 +62,9 @@ void Mixer::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
     const int lastOut = outBuffer.getNumChannels() - 1;
     effectsA.process (outBuffer.getWritePointer (0, info.startSample), outBuffer.getWritePointer (juce::jmin (1, lastOut), info.startSample), n, tempoA);
     effectsB.process (scratch.getWritePointer (0), scratch.getWritePointer (1), n, tempoB);
+    // El sampler graba lo que sale de cada deck con sus efectos (antes del EQ y el volumen).
+    sampler.capture (0, outBuffer.getReadPointer (0, info.startSample), outBuffer.getReadPointer (juce::jmin (1, lastOut), info.startSample), n, tempoA);
+    sampler.capture (1, scratch.getReadPointer (0), scratch.getReadPointer (1), n, tempoB);
     stripA.process (*info.buffer, info.startSample, n);
     stripB.process (scratch, 0, n);
 
@@ -78,5 +82,21 @@ void Mixer::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
     }
     lastGainA = gainA;
     lastGainB = gainB;
+
+    // Sampler: referencia de tempo = el deck que suena (si suenan los dos, el que el crossfader
+    // deja mas alto).
+    Sampler::Reference ref;
+    const TempoInfo* master = nullptr;
+    if (tempoA.synced && tempoB.synced) master = gainA >= gainB ? &tempoA : &tempoB;
+    else if (tempoA.synced)              master = &tempoA;
+    else if (tempoB.synced)              master = &tempoB;
+    if (master != nullptr)
+    {
+        ref.valid = true;
+        ref.samplesPerBeat = master->samplesPerBeat;
+        ref.bpm = outputRate * 60.0 / master->samplesPerBeat;
+        ref.beatAtStart = master->beatAtStart;
+    }
+    sampler.process (out.getWritePointer (0, info.startSample), out.getWritePointer (juce::jmin (1, out.getNumChannels() - 1), info.startSample), n, ref);
 }
 }

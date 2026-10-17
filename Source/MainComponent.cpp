@@ -24,6 +24,11 @@ MainComponent::MainComponent()
     addAndMakeVisible (mixerView);
     addAndMakeVisible (*browser);
 
+    // Sampler: el banco se lee al arrancar y se guarda cada vez que cambia.
+    mixer.getSampler().loadBank (getDataFolder().getChildFile ("sampler.xml"), formatManager);
+    samplerPanel.onBankChanged = [this] { saveSamplerBank(); };
+    addAndMakeVisible (samplerPanel);
+
     crossfader.setSliderStyle (juce::Slider::LinearHorizontal);
     crossfader.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
     crossfader.setRange (0.0, 1.0);
@@ -64,6 +69,7 @@ MainComponent::~MainComponent()
 {
     shutdownAudio();
     stopTimer();
+    saveSamplerBank();
     browser.reset();
     library.close();
     setLookAndFeel (nullptr);
@@ -99,6 +105,7 @@ void MainComponent::toggleMidiLearn()
         deckViewA.addLearnTargets (targets, "deck1.");
         deckViewB.addLearnTargets (targets, "deck2.");
         mixerView.addLearnTargets (targets);
+        samplerPanel.addLearnTargets (targets);
         targets.push_back ({ &crossfader, "crossfader" });
         targets.push_back ({ &browser->getTrackList(), "browser.scroll" });
         midiOverlay.setTargets (std::move (targets));
@@ -106,6 +113,11 @@ void MainComponent::toggleMidiLearn()
     midiOverlay.setVisible (on);
     midiButton.toFront (false);   // el boton sigue accesible encima de la capa
     midiButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffffa726).withAlpha (0.8f));
+}
+
+void MainComponent::saveSamplerBank()
+{
+    mixer.getSampler().saveBank (getDataFolder().getChildFile ("sampler.xml"), getDataFolder().getChildFile ("Grabaciones"));
 }
 
 void MainComponent::timerCallback()
@@ -165,6 +177,7 @@ void MainComponent::resized()
     auto area = getLocalBounds().reduced (6);
     auto top = area.removeFromTop (juce::jmax (330, area.getHeight() * 52 / 100));
     auto fader = area.removeFromTop (46).withSizeKeepingCentre (360, 46);
+    samplerPanel.setBounds (area.removeFromRight (330).reduced (6));
     browser->setBounds (area.reduced (6));
 
     const auto centre = top.withSizeKeepingCentre (250, top.getHeight());

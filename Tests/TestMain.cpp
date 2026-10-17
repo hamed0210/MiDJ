@@ -9,6 +9,7 @@
 #include "Engine/Deck.h"
 #include "Engine/Effects.h"
 #include "Engine/Mixer.h"
+#include "Engine/Sampler.h"
 #include "Library/Library.h"
 #include "Library/TagReader.h"
 
@@ -1299,6 +1300,281 @@ void testMidiController()
     check (true, "MIDI desde otro hilo con el audio sonando", 0.0, 0.0);
 }
 
+
+// --- Sampler -----------------------------------------------------------------------------
+
+std::shared_ptr<midj::SampleData> toneSample (double seconds, double hz, double bpm = 0.0)
+{
+    auto s = std::make_shared<midj::SampleData>();
+    s->audio = stereoSine (seconds, hz, 0.5f);
+    s->sampleRate = sr;
+    s->bpm = bpm;
+    s->name = "tono";
+    return s;
+}
+
+juce::AudioBuffer<float> runSampler (midj::Sampler& sampler, double seconds, midj::Sampler::Reference ref = {})
+{
+    const int blocks = (int) (seconds * sr) / blockSize;
+    juce::AudioBuffer<float> out (2, blocks * blockSize);
+    out.clear();
+    for (int k = 0; k < blocks; ++k)
+    {
+        sampler.process (out.getWritePointer (0, k * blockSize), out.getWritePointer (1, k * blockSize), blockSize, ref);
+        if (ref.valid)
+            ref.beatAtStart += blockSize / ref.samplesPerBeat;
+    }
+    return out;
+}
+
+void testSampleData()
+{
+    using midj::Sampler;
+    check (std::abs (Sampler::syncSpeed (120.0, 130.2) - 120.0 / 130.2) < 1e-9, "sync: 120 / 130,2 = 0,9217 (Heart Beat en VirtualDJ)",
+           Sampler::syncSpeed (120.0, 130.2), 0.9217);
+    double factor = 0.0;
+    check (std::abs (Sampler::syncSpeed (128.0, 60.0, &factor) - 128.0 / 120.0) < 1e-9 && factor == 0.5,
+           "sync: 128 / 60 se pliega a 1,067 (medio pulso)", Sampler::syncSpeed (128.0, 60.0), 1.0667);
+    check (std::abs (Sampler::syncSpeed (60.0, 128.0, &factor) - 0.9375) < 1e-9 && factor == 2.0,
+           "sync: 60 / 128 se pliega a 0,9375 (doble)", Sampler::syncSpeed (60.0, 128.0), 0.9375);
+
+    // .vdjsample sintetico: cabecera de VirtualDJ + 2 s de Ogg; fragmento de 0,5 a 1,5 s.
+    juce::MemoryBlock audio;
+    {
+        juce::OggVorbisAudioFormat format;
+        auto tone = stereoSine (2.0, 440.0, 0.5f);
+        std::unique_ptr<juce::AudioFormatWriter> w (format.createWriterFor (new juce::MemoryOutputStream (audio, false), sr, 2, 16, {}, 5));
+        w->writeFromAudioSampleBuffer (tone, 0, tone.getNumSamples());
+    }   // al destruir el escritor el Ogg queda completo en 'audio'
+    juce::MemoryBlock file (0x80 + audio.getSize(), true);
+    auto put = [&file] (size_t at, const void* v, size_t n) { std::memcpy (static_cast<char*> (file.getData()) + at, v, n); };
+    const uint32_t header = 0x80, size = (uint32_t) audio.getSize(), version = 852, loopMode = 3;
+    const uint8_t isLoop = 1;
+    const float secondsPerBeat = 0.5f, phase = 0.1f, gain = 0.8f;
+    const double from = 0.5, length = 1.0;
+    put (0, "VDJ", 4); put (4, &version, 4); put (8, &header, 4); put (12, &size, 4);
+    put (0x18, &isLoop, 1); put (0x1C, &loopMode, 4); put (0x20, &secondsPerBeat, 4); put (0x24, &phase, 4);
+    put (0x28, &from, 8); put (0x30, &length, 8); put (0x48, &gain, 4);
+    put (0x80, audio.getData(), audio.getSize());
+
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    const auto s = midj::SampleData::loadVdjSample (file, "prueba", formats);
+    check (s != nullptr, ".vdjsample: se lee", 1.0, 1.0);
+    if (s == nullptr)
+        return;
+    check (std::abs (s->lengthSeconds() - 1.0) < 0.001, ".vdjsample: recorta el fragmento (1 s)", s->lengthSeconds(), 1.0);
+    check (std::abs (s->bpm - 120.0) < 1e-3 && s->lengthBeats() == 2, ".vdjsample: 120 BPM, 2 pulsos", s->bpm, 120.0);
+    check (std::abs (s->firstBeat - 0.1) < 1e-6, ".vdjsample: fase llevada al fragmento", s->firstBeat, 0.1);
+    check (s->loop && s->tempoMode == 2 && std::abs (s->gain - 0.8f) < 1e-6f, ".vdjsample: bucle, locked y ganancia", s->gain, 0.8);
+    check (std::abs (sineFrequency (s->audio, 1000, s->audio.getNumSamples() - 1000) - 440.0) < 1.0,
+           ".vdjsample: el audio Ogg suena a 440 Hz", sineFrequency (s->audio, 1000, s->audio.getNumSamples() - 1000), 440.0);
+    file.setSize (40);
+    check (midj::SampleData::loadVdjSample (file, "rota", formats) == nullptr, ".vdjsample corto o roto: no se lee", 0.0, 0.0);
+}
+
+void testSampler()
+{
+    using midj::Sampler;
+    Sampler sampler;
+    sampler.prepare (sr, blockSize);
+    sampler.setVolume (1.0f);
+    sampler.setSample (0, toneSample (1.0, 440.0));
+
+    // On/off: arranca con fundido (sin clic) y se para con otro fundido.
+    sampler.press (0);
+    auto out = runSampler (sampler, 0.3);
+    check (sampler.isPlaying (0) && out.getRMSLevel (0, 0, out.getNumSamples()) > 0.3f, "pad on/off: suena", out.getRMSLevel (0, 0, out.getNumSamples()), 0.35);
+    check (std::abs (out.getSample (0, 1)) < 0.02f && maxStep (out, 1, out.getNumSamples()) < 0.04f,
+           "pad: arranca con fundido de 128 muestras", maxStep (out, 1, out.getNumSamples()), 0.03);
+    sampler.press (0);
+    out = runSampler (sampler, 0.1);
+    check (! sampler.isPlaying (0) && out.getMagnitude (0, 200, out.getNumSamples() - 200) == 0.0f
+               && maxStep (out, 1, 200) < 0.04f,
+           "pad on/off: segunda pulsacion lo para (con fundido)", out.getMagnitude (0, 200, out.getNumSamples() - 200), 0.0);
+
+    // Sin bucle se para solo al acabar; con bucle sigue.
+    sampler.press (0);
+    out = runSampler (sampler, 1.3);
+    check (! sampler.isPlaying (0) && out.getMagnitude (0, (int) (1.05 * sr), out.getNumSamples() - (int) (1.05 * sr)) == 0.0f,
+           "pad sin bucle: se para solo al acabar", 0.0, 0.0);
+    sampler.setLoop (0, true);
+    sampler.press (0);
+    out = runSampler (sampler, 2.5);
+    check (sampler.isPlaying (0) && out.getRMSLevel (0, (int) (2.0 * sr), (int) (0.4 * sr)) > 0.3f, "pad con bucle: sigue sonando", 1.0, 1.0);
+    sampler.stopAll();
+    runSampler (sampler, 0.05);
+    check (! sampler.isPlaying (0), "STOP: para todos los pads", 0.0, 0.0);
+
+    // Hold: suena mientras se mantiene.
+    sampler.setTrigger (0, Sampler::Trigger::hold);
+    sampler.press (0);
+    runSampler (sampler, 0.2);
+    const bool heldPlaying = sampler.isPlaying (0);
+    sampler.release (0);
+    runSampler (sampler, 0.05);
+    check (heldPlaying && ! sampler.isPlaying (0), "pad hold: suena al pulsar y calla al soltar", 0.0, 0.0);
+
+    // Stutter: cada pulsacion vuelve a empezar (con fundido, sin clic).
+    sampler.setTrigger (0, Sampler::Trigger::stutter);
+    sampler.setLoop (0, false);
+    sampler.press (0);
+    runSampler (sampler, 0.5);
+    const double before = sampler.getProgress (0);
+    sampler.press (0);
+    out = runSampler (sampler, 0.1);
+    check (before > 0.45 && sampler.getProgress (0) < 0.15 && maxStep (out, 1, out.getNumSamples()) < 0.04f,
+           "pad stutter: vuelve al principio sin clic", sampler.getProgress (0), 0.1);
+    sampler.stopAll();
+    runSampler (sampler, 0.05);
+
+    // Sincronizado: un sonido de 130,2 BPM con el deck a 120 suena a 0,9217 de velocidad.
+    sampler.setTrigger (1, Sampler::Trigger::onOff);
+    sampler.setSample (1, toneSample (3.0, 440.0, 130.2));
+    sampler.setLoop (1, true);
+    sampler.setTempoMode (1, Sampler::TempoMode::sync);
+    Sampler::Reference ref;
+    ref.valid = true;
+    ref.bpm = 120.0;
+    ref.samplesPerBeat = sr / 2.0;
+    sampler.press (1);
+    out = runSampler (sampler, 1.5, ref);
+    const double freq = sineFrequency (out, (int) (0.2 * sr), out.getNumSamples());
+    check (std::abs (freq - 440.0 * 120.0 / 130.2) < 0.5, "pad sincronizado: sigue el tempo del deck (405,5 Hz)", freq, 405.5);
+    sampler.press (1);
+    runSampler (sampler, 0.05);
+
+    // Bloqueado: un bucle de 2 pulsos con un golpe en cada pulso; los golpes caen en los pulsos
+    // del deck aunque se dispare a mitad de pulso.
+    auto loopSample = std::make_shared<midj::SampleData>();
+    const auto clicks = clickTrack (130.2, 2.0 * 60.0 / 130.2, sr, 0.0);
+    loopSample->audio = toBuffer (clicks);
+    loopSample->audio.setSize (2, (int) clicks.size(), true);
+    loopSample->audio.copyFrom (1, 0, loopSample->audio, 0, 0, (int) clicks.size());
+    loopSample->sampleRate = sr;
+    loopSample->bpm = 130.2;
+    loopSample->loop = true;
+    loopSample->tempoMode = (int) Sampler::TempoMode::locked;
+    sampler.setSample (2, loopSample);
+    ref.beatAtStart = 0.37;   // el deck va por el 37 % de un pulso al disparar
+    sampler.press (2);
+    out = runSampler (sampler, 6.0, ref);
+    double worst = 0.0;
+    int hits = 0;
+    for (int i = 1; i < out.getNumSamples(); ++i)
+        if (std::abs (out.getSample (0, i)) > 0.2f && std::abs (out.getSample (0, i - 1)) <= 0.2f && i > 1000)
+        {
+            const double beat = 0.37 + i / ref.samplesPerBeat;   // pulso del deck en esa muestra
+            worst = std::max (worst, std::abs (beat - std::round (beat)));
+            ++hits;
+            i += (int) (0.2 * sr);
+        }
+    check (hits >= 10 && worst < 0.02, "pad bloqueado: los golpes caen en los pulsos del deck", worst, 0.0);
+    sampler.press (2);
+    runSampler (sampler, 0.05);
+}
+
+void testSamplerRecording()
+{
+    // Grabar 4 pulsos del deck A (bombos a 120 BPM): empieza en el pulso y dura 2 s exactos.
+    juce::AudioFormatManager formats;
+    midj::Deck a (formats), b (formats);
+    midj::Mixer mixer (a, b);
+    mixer.prepareToPlay (blockSize, sr);
+    a.loadBuffer (toBuffer (clickTrack (120.0, 30.0, sr, 0.25)), sr, "a", { 120.0, 0.25 });
+    a.setKeyLock (false);
+    a.setPositionSeconds (1.1);   // a mitad de pulso
+    a.play();
+    auto& sampler = mixer.getSampler();
+    sampler.startRecording (3, 0, 4);
+    check (sampler.getRecordingPad() == 3, "grabar: el pad 4 espera el pulso", sampler.getRecordingPad(), 3);
+    juce::AudioBuffer<float> out (2, blockSize);
+    for (int k = 0; k < (int) (3.0 * sr) / blockSize; ++k)
+    {
+        juce::AudioSourceChannelInfo info (&out, 0, blockSize);
+        mixer.getNextAudioBlock (info);
+    }
+    sampler.finishPendingRecording();
+    const auto rec = sampler.getSample (3);
+    check (rec != nullptr && rec->audio.getNumSamples() == 88200, "grabar: 4 pulsos a 120 BPM = 88200 muestras",
+           rec ? rec->audio.getNumSamples() : 0, 88200);
+    if (rec == nullptr)
+        return;
+    check (std::abs (rec->bpm - 120.0) < 1e-6 && rec->loop && rec->tempoMode == 2, "grabar: queda como bucle bloqueado a 120 BPM",
+           rec->bpm, 120.0);
+    // Los golpes del deck caen en las muestras 0, 22050, 44100 y 66150 de la grabacion. Cada golpe
+    // es un seno que empieza en 0: pasa de 0,05 unas 8 muestras despues de empezar.
+    const int risesAfter = (int) std::ceil (std::asin (0.05 / 0.8) / (2.0 * juce::MathConstants<double>::pi * 60.0) * sr);
+    bool onBeats = true;
+    for (int beat = 0; beat < 4; ++beat)
+    {
+        int onset = -1;
+        for (int i = beat * 22050 - 30; i < beat * 22050 + 400 && onset < 0; ++i)
+            if (i >= 0 && std::abs (rec->audio.getSample (0, i)) > 0.05f)
+                onset = i;
+        onBeats = onBeats && onset >= 0 && std::abs (onset - (beat * 22050 + risesAfter)) <= 3;
+    }
+    check (onBeats, "grabar: empieza justo en el pulso (golpes cada 22050 muestras)", 0.0, 0.0);
+    check (sampler.getRecordingPad() == -1, "grabar: termina sola", 0.0, 0.0);
+
+    // El sampler va a la salida general: el crossfader no lo corta.
+    a.pause();
+    mixer.setCrossfader (1.0f);   // solo el deck B (que no tiene cancion)
+    sampler.setVolume (1.0f);
+    sampler.press (3);
+    double energy = 0.0;
+    for (int k = 0; k < 40; ++k)
+    {
+        juce::AudioSourceChannelInfo info (&out, 0, blockSize);
+        mixer.getNextAudioBlock (info);
+        energy += out.getRMSLevel (0, 0, blockSize);
+    }
+    check (energy > 0.5, "sampler: suena aunque el crossfader este en el otro deck", energy, 1.0);
+    // Guardar y leer el banco: la grabacion se guarda como WAV y vuelve con su tempo y ajustes.
+    sampler.stopAll();
+    sampler.setTrigger (3, midj::Sampler::Trigger::stutter);
+    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("MiDJTestsSampler");
+    dir.deleteRecursively();
+    check (sampler.saveBank (dir.getChildFile ("sampler.xml"), dir.getChildFile ("Grabaciones")),
+           "banco: se guarda", 1.0, 1.0);
+    check (dir.getChildFile ("Grabaciones").getNumberOfChildFiles (juce::File::findFiles) == 1, "banco: la grabacion queda como WAV", 1.0, 1.0);
+    midj::Sampler reloaded;
+    reloaded.prepare (sr, blockSize);
+    juce::AudioFormatManager wavFormats;
+    wavFormats.registerBasicFormats();
+    reloaded.loadBank (dir.getChildFile ("sampler.xml"), wavFormats);
+    const auto back = reloaded.getSample (3);
+    check (back != nullptr && back->audio.getNumSamples() == 88200 && std::abs (back->bpm - 120.0) < 1e-6
+               && reloaded.getLoop (3) && reloaded.getTempoMode (3) == midj::Sampler::TempoMode::locked
+               && reloaded.getTrigger (3) == midj::Sampler::Trigger::stutter,
+           "banco: al leerlo el pad vuelve igual (audio, BPM, bucle, modos)", back ? back->audio.getNumSamples() : 0, 88200);
+    sampler.saveBank (dir.getChildFile ("sampler.xml"), dir.getChildFile ("Grabaciones"));
+    check (dir.getChildFile ("Grabaciones").getNumberOfChildFiles (juce::File::findFiles) == 1, "banco: guardar otra vez no duplica el WAV", 1.0, 1.0);
+    dir.deleteRecursively();
+
+    // MIDI: un pad en modo hold suena mientras se mantiene la nota.
+    midj::ControlSurface surface (a, b, mixer);
+    midj::MidiController midi (surface);
+    midi.setMappingFile (juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("MiDJTestsMidi4.xml"));
+    midi.startLearning ("sampler.pad4");
+    midi.handleMessage (juce::MidiMessage::noteOn (10, 60, (juce::uint8) 127));
+    sampler.setTrigger (3, midj::Sampler::Trigger::hold);
+    midi.handleMessage (juce::MidiMessage::noteOn (10, 60, (juce::uint8) 127));
+    for (int k = 0; k < 10; ++k)
+    {
+        juce::AudioSourceChannelInfo info (&out, 0, blockSize);
+        mixer.getNextAudioBlock (info);
+    }
+    const bool heldOn = sampler.isPlaying (3);
+    midi.handleMessage (juce::MidiMessage::noteOff (10, 60));
+    for (int k = 0; k < 4; ++k)
+    {
+        juce::AudioSourceChannelInfo info (&out, 0, blockSize);
+        mixer.getNextAudioBlock (info);
+    }
+    check (heldOn && ! sampler.isPlaying (3), "MIDI: pad en hold suena con la nota pulsada y calla al soltarla", 0.0, 0.0);
+}
+
 }
 
 #if JUCE_WINDOWS
@@ -1335,6 +1611,22 @@ int main (int argc, char* argv[])
                      shift, 12.0 * std::log2 (shift));
         return 0;
     }
+    if (args[0] == "--sample" && args.size() >= 2)   // datos de un sonido para el sampler (.vdjsample o audio)
+    {
+        juce::AudioFormatManager formats;
+        formats.registerBasicFormats();
+        const auto s = midj::SampleData::loadFile (juce::File (args[1]), formats);
+        if (s == nullptr)
+        {
+            std::printf ("No se pudo leer\n");
+            return 1;
+        }
+        static const char* modes[] = { "libre", "sincronizado", "bloqueado" };
+        std::printf ("%s: %.3f s a %.0f Hz, %.2f BPM (%d pulsos), primer pulso %.4f s, bucle %s, tempo %s, ganancia %.2f\n",
+                     s->name.toRawUTF8(), s->lengthSeconds(), s->sampleRate, s->bpm, s->lengthBeats(), s->firstBeat,
+                     s->loop ? "si" : "no", modes[juce::jlimit (0, 2, s->tempoMode)], s->gain);
+        return 0;
+    }
     if (args[0] == "--benchmark")
     {
         benchmarkKeyLock (midj::TimeStretcher::Engine::finer);
@@ -1369,6 +1661,11 @@ int main (int argc, char* argv[])
     std::printf ("== Canal: ganancia, EQ de 3 bandas, filtro y volumen ==\n");
     testChannelStrip();
     testMixerChannels();
+
+    std::printf ("== Sampler ==\n");
+    testSampleData();
+    testSampler();
+    testSamplerRecording();
 
     std::printf ("== Controladoras MIDI ==\n");
     testMidiValues();

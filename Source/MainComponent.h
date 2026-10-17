@@ -10,6 +10,7 @@
 #include "UI/LibraryBrowser.h"
 #include "UI/MidiLearnOverlay.h"
 #include "UI/MixerComponent.h"
+#include "UI/SamplerPanel.h"
 
 namespace midj
 {
@@ -36,6 +37,8 @@ private:
     // Doble clic en el navegador: al primer deck que no este sonando, empezando por A.
     void loadIntoFreeDeck (const juce::File& file);
     void toggleMidiLearn();
+    void saveSamplerBank();
+    static juce::File getDataFolder() { return Library::getDefaultFile().getParentDirectory(); }
     void timerCallback() override;   // el crossfader sigue a la controladora
     // Modo de prueba sin controladora: --simular-midi archivo (ver README).
     void startMidiSimulation (const juce::File& script);
@@ -53,6 +56,7 @@ private:
     DeckComponent deckViewB { deckB, deckA, mixer.getEffects (1), "B" };
     MixerComponent mixerView { mixer };
     std::unique_ptr<LibraryBrowser> browser;   // se crea con la biblioteca ya abierta
+    SamplerPanel samplerPanel { mixer.getSampler(), formatManager };
     juce::TooltipWindow tooltips { this };
     juce::Slider crossfader;
     juce::Label crossfaderLabel;

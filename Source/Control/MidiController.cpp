@@ -206,6 +206,8 @@ void MidiController::handleMessage (const juce::MidiMessage& m)
         case ActionType::button:
             if (press)
                 surface.pressButton (binding.action);
+            else
+                surface.releaseButton (binding.action);   // nota soltada o CC a 0
             break;
         case ActionType::absolute:
             surface.setAbsolute (binding.action, binding.kind == MidiBinding::Kind::pitchBend ? MidiBinding::unitFromPitchBend (value)

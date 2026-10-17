@@ -49,6 +49,8 @@ add_library(MiDJEngine STATIC
     Source/Engine/Deck.cpp
     Source/Engine/Effects.cpp
     Source/Engine/Mixer.cpp
+    Source/Engine/SampleData.cpp
+    Source/Engine/Sampler.cpp
     Source/Engine/TimeStretcher.cpp
     Source/Library/Library.cpp
     Source/Library/TagReader.cpp)
@@ -79,6 +81,7 @@ target_sources(MiDJ PRIVATE
     Source/UI/MixerComponent.cpp
     Source/UI/LibraryBrowser.cpp
     Source/UI/MidiLearnOverlay.cpp
+    Source/UI/SamplerPanel.cpp
     Source/UI/DarkLookAndFeel.cpp)
 target_link_libraries(MiDJ PRIVATE MiDJEngine)
 

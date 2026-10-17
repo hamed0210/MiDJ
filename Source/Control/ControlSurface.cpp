@@ -6,6 +6,15 @@ ControlSurface::ControlSurface (Deck& a, Deck& b, Mixer& m) : deckA (a), deckB (
 
 void ControlSurface::pressButton (const juce::String& action)
 {
+    if (action.startsWith ("sampler."))
+    {
+        auto& sampler = mixer.getSampler();
+        if (action == "sampler.stop")
+            sampler.stopAll();
+        else if (const int pad = action.getTrailingIntValue() - 1; pad >= 0 && pad < Sampler::numPads)
+            sampler.press (pad);
+        return;
+    }
     const int d = Actions::deckIndex (action);
     if (d < 0)
         return;
@@ -37,9 +46,21 @@ void ControlSurface::pressButton (const juce::String& action)
     }
 }
 
+void ControlSurface::releaseButton (const juce::String& action)
+{
+    if (action.startsWith ("sampler.pad"))
+        if (const int pad = action.getTrailingIntValue() - 1; pad >= 0 && pad < Sampler::numPads)
+            mixer.getSampler().release (pad);
+}
+
 void ControlSurface::setAbsolute (const juce::String& action, double unit)
 {
     unit = juce::jlimit (0.0, 1.0, unit);
+    if (action == "sampler.volume")
+    {
+        mixer.getSampler().setVolume ((float) unit);
+        return;
+    }
     if (action == "crossfader")
     {
         mixer.setCrossfader ((float) unit);
