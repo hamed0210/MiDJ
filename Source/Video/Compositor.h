@@ -100,6 +100,8 @@ public:
     bool isReady() const;              // false si no se pudo crear Direct3D 11
     // El ID3D11Device* (para crear las capturas en la misma tarjeta).
     void* getDevice() const;
+    // El dispositivo admite decodificar video: se puede compartir con Media Foundation.
+    bool hasVideoSupport() const;
     juce::String getError() const;
     int getWidth() const { return settings.width; }
     int getHeight() const { return settings.height; }

@@ -256,7 +256,7 @@ void VideoProgram::sceneLayers (const PreparedScene& scene, std::vector<Composit
             continue;
         auto add = [&] (Compositor::Layer layer, float pw, float ph)
         {
-            if (layer.image.isValid() && SceneGeometry::place (layer, item, p.natural, pw, ph))
+            if (VideoMix::hasPicture (layer) && SceneGeometry::place (layer, item, p.natural, pw, ph))
                 layers.push_back (std::move (layer));
         };
         switch (item.type)
@@ -264,7 +264,7 @@ void VideoProgram::sceneLayers (const PreparedScene& scene, std::vector<Composit
             case SourceType::decks:
             {
                 auto a = mix.picture (0), b = mix.picture (1);
-                const bool hasA = a.image.isValid(), hasB = b.image.isValid();
+                const bool hasA = VideoMix::hasPicture (a), hasB = VideoMix::hasPicture (b);
                 if (! hasA && ! hasB)
                 {
                     add (mix.logoLayer(), (float) width, (float) height);
@@ -273,11 +273,11 @@ void VideoProgram::sceneLayers (const PreparedScene& scene, std::vector<Composit
                 // Fundido cruzado como en la ventana de siempre: A debajo, B encima con su parte.
                 const auto w = VideoMix::weights (mix.getCrossfader(), hasA, hasB);
                 if (w[0] > 0.0f)
-                    add (a, (float) a.image.getWidth(), (float) a.image.getHeight());
+                    add (a, (float) VideoMix::pictureSize (a).x, (float) VideoMix::pictureSize (a).y);
                 if (w[1] > 0.0f)
                 {
                     b.opacity *= w[0] > 0.0f ? w[1] / (w[0] + w[1]) : 1.0f;
-                    add (b, (float) b.image.getWidth(), (float) b.image.getHeight());
+                    add (b, (float) VideoMix::pictureSize (b).x, (float) VideoMix::pictureSize (b).y);
                 }
                 break;
             }
@@ -285,8 +285,8 @@ void VideoProgram::sceneLayers (const PreparedScene& scene, std::vector<Composit
             case SourceType::deckB:
             {
                 auto pic = mix.picture (item.type == SourceType::deckA ? 0 : 1);
-                if (pic.image.isValid())
-                    add (pic, (float) pic.image.getWidth(), (float) pic.image.getHeight());
+                if (VideoMix::hasPicture (pic))
+                    add (pic, (float) VideoMix::pictureSize (pic).x, (float) VideoMix::pictureSize (pic).y);
                 break;
             }
             case SourceType::screen:
@@ -310,11 +310,18 @@ void VideoProgram::sceneLayers (const PreparedScene& scene, std::vector<Composit
                 if (p.frames == nullptr)
                     break;
                 Compositor::Layer layer;
-                layer.slot = itemSlotBase + item.id;
-                layer.image = p.frames->getFrame();
-                layer.version = (1ull << 61) + p.frames->getFrameNumber();   // otra serie que las imagenes y el visualizador
-                if (layer.image.isValid())
-                    add (layer, (float) layer.image.getWidth(), (float) layer.image.getHeight());
+                if (p.frames->getGpu()->hasPicture())
+                {
+                    layer.gpu = p.frames->getGpu();   // el fotograma sigue en la tarjeta grafica
+                }
+                else
+                {
+                    layer.slot = itemSlotBase + item.id;
+                    layer.image = p.frames->getFrame();
+                    layer.version = (1ull << 61) + p.frames->getFrameNumber();   // otra serie que las imagenes y el visualizador
+                }
+                if (VideoMix::hasPicture (layer))
+                    add (layer, (float) VideoMix::pictureSize (layer).x, (float) VideoMix::pictureSize (layer).y);
                 break;
             }
             case SourceType::visualizer:

@@ -54,6 +54,7 @@ void DeckVideo::run()
     // a la GPU y en la libre (nadie mas la tiene) se decodifica. Asi no se copia cada fotograma.
     std::array<juce::Image, 3> pool;
     double delivered = -1.0;
+    std::shared_ptr<GpuVideoFrame> gpuFrame;   // con el dispositivo del compositor: el ultimo, en la tarjeta grafica
 
     while (! threadShouldExit())
     {
@@ -71,6 +72,8 @@ void DeckVideo::run()
         if (file != current)
         {
             current = file;
+            gpuFrame.reset();
+            gpu->clear();
             decoder.reset();
             pool = {};
             delivered = -1.0;
@@ -97,6 +100,19 @@ void DeckVideo::run()
         // La posicion que se oye: el video va con el audio (tambien con pitch, saltos y bucles).
         const double position = juce::jlimit (0.0, juce::jmax (0.0, decoder->getDuration() - 0.001), deck.getPositionSeconds());
         // Como mucho 6 fotogramas por vuelta: tras un salto se ve el video avanzar hasta alcanzar al audio.
+        if (decoder->isOnSharedDevice())
+        {
+            // El fotograma no sale de la tarjeta grafica: lo copia el compositor de textura a textura.
+            if (decoder->frameAt (position, gpuFrame, 6) && decoder->getCurrentFrameTime() != delivered)
+            {
+                delivered = decoder->getCurrentFrameTime();
+                gpu->publish (gpuFrame);
+                frameTime = delivered;
+                ++frameNumber;
+            }
+            wait (deck.isPlaying() ? 8 : 25);
+            continue;
+        }
         auto free = std::find_if (pool.begin(), pool.end(), [] (const juce::Image& i) { return ! i.isValid() || i.getReferenceCount() == 1; });
         if (free == pool.end())
             *(free = pool.end() - 1) = {};   // las tres en uso (no deberia pasar): una nueva

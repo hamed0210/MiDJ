@@ -238,6 +238,9 @@ VideoStage::VideoStage (std::array<DeckVideo*, 2> v, std::array<const Deck*, 2> 
       mix (v, d, mixer), program (mix, compositor.getWidth(), compositor.getHeight()),
       videos (v), decks (d), scenesFile (std::move (file))
 {
+    // Los decodificadores usan el dispositivo del compositor: sus fotogramas no salen de la GPU.
+    if (compositor.isReady() && compositor.hasVideoSupport())
+        MediaFoundation::shareDevice (compositor.getDevice());
     mix.setProgramSize (compositor.getWidth(), compositor.getHeight());
     const auto xml = juce::XmlDocument::parse (scenesFile);
     scenes = xml != nullptr ? SceneCollection::fromXml (*xml, compositor.getWidth(), compositor.getHeight())
@@ -262,6 +265,7 @@ VideoStage::~VideoStage()
     closeDialogs();
     compositor.stop();
     projectors.clear();
+    MediaFoundation::shareDevice (nullptr);
     bigPreview.reset();
     preview.reset();
     for (auto* video : videos)

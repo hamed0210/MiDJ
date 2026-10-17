@@ -39,7 +39,23 @@ void FrameSource::publish (const juce::Image& image)
         width = image.getWidth();
         height = image.getHeight();
     }
+    gpu->clear();   // se ve esta imagen (o nada), no la de la tarjeta grafica
     ++frameNumber;   // la imagen vieja se suelta fuera del cerrojo
+}
+
+void FrameSource::publishGpu (std::shared_ptr<GpuVideoFrame> frame)
+{
+    if (frame == nullptr)
+        return;
+    width = frame->width;
+    height = frame->height;
+    gpu->publish (std::move (frame));
+    juce::Image old;   // la ultima imagen de la CPU ya no vale
+    {
+        const juce::SpinLock::ScopedLockType sl (lock);
+        std::swap (latest, old);
+    }
+    ++frameNumber;
 }
 
 // --- Multimedia --------------------------------------------------------------------------------
@@ -302,11 +318,13 @@ void MediaFileSource::run()
     bool tried = false, shown = false;
     std::array<juce::Image, 3> pool;
     double delivered = -1.0;
+    std::shared_ptr<GpuVideoFrame> gpuFrame;   // el ultimo fotograma en la tarjeta grafica
 
     while (! threadShouldExit())
     {
         if (! wantOpen.load())
         {
+            gpuFrame.reset();
             decoder.reset();
             pool = {};
             tried = false;
@@ -343,11 +361,24 @@ void MediaFileSource::run()
             continue;
         }
         const double position = juce::jlimit (0.0, juce::jmax (0.0, decoder->getDuration() - 0.001), getPosition());
-        auto& target = freeImage (pool);
-        if (decoder->frameAt (position, target, 6) && (decoder->getCurrentFrameTime() != delivered || ! shown))
+        bool got = false;
+        if (decoder->isOnSharedDevice())
+        {
+            // En el dispositivo del compositor: el fotograma no sale de la tarjeta grafica.
+            got = decoder->frameAt (position, gpuFrame, 6);
+            if (got && (decoder->getCurrentFrameTime() != delivered || ! shown))
+                publishGpu (gpuFrame);
+        }
+        else
+        {
+            auto& target = freeImage (pool);
+            got = decoder->frameAt (position, target, 6);
+            if (got && (decoder->getCurrentFrameTime() != delivered || ! shown))
+                publish (target);
+        }
+        if (got && (decoder->getCurrentFrameTime() != delivered || ! shown))
         {
             delivered = decoder->getCurrentFrameTime();
-            publish (target);
             shown = true;
         }
         wait (playing.load() ? 8 : 30);
@@ -517,6 +548,20 @@ void CaptureDeviceSource::run()
         bool lost = false;
         while (! threadShouldExit() && shouldRun())
         {
+            if (reader->isOnSharedDevice() && ! flip.load())
+            {
+                // En el dispositivo del compositor: el fotograma no sale de la tarjeta grafica
+                // (voltear se hace al copiar a la CPU).
+                std::shared_ptr<GpuVideoFrame> frame;
+                if (! reader->read (frame))
+                {
+                    lost = true;
+                    break;
+                }
+                if (frame != nullptr)
+                    publishGpu (std::move (frame));
+                continue;
+            }
             auto& target = freeImage (pool);
             if (! reader->read (target, flip.load()))
             {

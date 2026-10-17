@@ -28,6 +28,9 @@ public:
     // si el deck esta vacio. Para las escenas, que la colocan donde diga el elemento.
     Compositor::Layer picture (int deckIndex);
     Compositor::Layer logoLayer() const;
+    // Una imagen de un deck: en la CPU (image) o en la tarjeta grafica (gpu).
+    static bool hasPicture (const Compositor::Layer& layer);
+    static juce::Point<int> pictureSize (const Compositor::Layer& layer);
     float getCrossfader() const { return mixer.getCrossfader(); }
     // Nivel de video de cada deck (los faders de la pestana Video, como en VirtualDJ): 0 = no se ve.
     void setLevel (int deckIndex, float level) { levels[(size_t) deckIndex] = juce::jlimit (0.0f, 1.0f, level); }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine/AuxAudio.h"
+#include "Video/GpuFrames.h"
 #include "Video/MediaFoundation.h"
 #include "Video/Scenes.h"
 
@@ -23,6 +24,9 @@ public:
     juce::Image getFrame() const;
     juce::uint64 getFrameNumber() const { return frameNumber.load(); }
     juce::Point<int> getSize() const { return { width.load(), height.load() }; }
+    // Los fotogramas que se quedan en la tarjeta grafica (si el decodificador usa la del
+    // compositor); si tiene imagen, se dibuja esta en vez de getFrame().
+    const std::shared_ptr<GpuFrameSource>& getGpu() const { return gpu; }
 
     const juce::String& getKey() const { return key; }
     virtual juce::String getStatus() const = 0;   // para las propiedades (vacio = todo bien)
@@ -37,6 +41,7 @@ public:
 
 protected:
     void publish (const juce::Image& image);   // no valida = ocultar
+    void publishGpu (std::shared_ptr<GpuVideoFrame> frame);
     juce::String key;
 
 private:
@@ -44,6 +49,7 @@ private:
     juce::Image latest;
     std::atomic<juce::uint64> frameNumber { 1 };
     std::atomic<int> width { 0 }, height { 0 };
+    std::shared_ptr<GpuFrameSource> gpu = std::make_shared<GpuFrameSource>();
 };
 
 // Archivo de video o audio, como la fuente Multimedia de OBS: suena por el master y la imagen

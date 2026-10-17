@@ -2969,6 +2969,65 @@ void testMediaSource()
     }
 }
 
+void testGpuFrames()
+{
+    using namespace midj;
+    // Con el dispositivo del compositor compartido, el video se decodifica en la GPU y el
+    // fotograma llega al programa sin pasar por la CPU (textura a textura).
+    Compositor compositor ({ 1280, 720, 30, true });
+    if (! compositor.isReady() || ! compositor.hasVideoSupport())
+    {
+        std::printf ("  (sin GPU con video: se salta la prueba de fotogramas en la GPU)\n");
+        return;
+    }
+    const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("MiDJTestsGpu.mp4");
+    writeTestVideo (file, 3);
+    MediaFoundation::shareDevice (compositor.getDevice());
+    juce::String error;
+    auto decoder = VideoDecoder::open (file, 1280, error, true);
+    check (decoder != nullptr && decoder->isOnSharedDevice(), "gpu: el video se decodifica en el dispositivo del compositor", 0.0, 0.0);
+    if (decoder != nullptr && decoder->isOnSharedDevice())
+    {
+        std::shared_ptr<GpuVideoFrame> frame;
+        const bool got = decoder->frameAt (1.5, frame);   // segundo 1: verde
+        auto source = std::make_shared<GpuFrameSource>();
+        source->publish (frame);
+        frame.reset();
+        Compositor::Layer layer;
+        layer.gpu = source;
+        compositor.renderOnce ({ layer });
+        const auto program = compositor.readProgram();
+        const auto px = program.isValid() ? program.getPixelAt (640, 360) : juce::Colour();
+        check (got && px.getGreen() > 200 && px.getRed() < 60 && px.getBlue() < 60, "gpu: el fotograma llega al programa sin pasar por la CPU",
+               px.getGreen(), 255.0);
+
+        // Tras ocultarlo no se ve nada.
+        source->clear();
+        compositor.renderOnce ({ layer });
+        const auto after = compositor.readProgram();
+        check (after.isValid() && after.getPixelAt (640, 360).getBrightness() < 0.05f, "gpu: oculto, no se dibuja", 0.0, 0.0);
+
+        // Coste por fotograma: decodificar en la GPU sin copiar a la CPU frente a copiando.
+        std::shared_ptr<GpuVideoFrame> g;
+        juce::Image cpu;
+        auto cpuDecoder = VideoDecoder::open (file, 1280, error, true);
+        const auto t0 = juce::Time::getMillisecondCounterHiRes();
+        for (int i = 0; i < 60; ++i)
+            decoder->frameAt (i / 30.0, g);
+        const auto t1 = juce::Time::getMillisecondCounterHiRes();
+        MediaFoundation::shareDevice (nullptr);
+        auto ownDecoder = VideoDecoder::open (file, 1280, error, true);   // su propio dispositivo: copia a la CPU
+        const auto t2 = juce::Time::getMillisecondCounterHiRes();
+        for (int i = 0; ownDecoder != nullptr && i < 60; ++i)
+            ownDecoder->frameAt (i / 30.0, cpu);
+        const auto t3 = juce::Time::getMillisecondCounterHiRes();
+        std::printf ("  (320x240: %.2f ms por fotograma en la GPU, %.2f ms copiando a la CPU)\n", (t1 - t0) / 60.0, (t3 - t2) / 60.0);
+    }
+    MediaFoundation::shareDevice (nullptr);
+    decoder.reset();
+    file.deleteFile();
+}
+
 void testVisualizer()
 {
     using namespace midj;
@@ -3353,6 +3412,7 @@ int main (int argc, char* argv[])
     testVisualizer();
     testAuxAudio();
     testMediaSource();
+    testGpuFrames();
 
     std::printf ("== Stems con IA ==\n");
     testStemStft();

@@ -69,7 +69,7 @@ struct SceneItem
     // no esta al aire y velocidad del 1 al 200 %.
     bool loop = false, restartOnActivate = true, clearOnEnd = true, closeWhenInactive = false;
     int speedPercent = 100;
-    bool hardwareDecode = false;                     // multimedia y capturadora: decodificar en la tarjeta grafica
+    bool hardwareDecode = true;                      // multimedia y capturadora: decodificar en la tarjeta grafica (OBS: no; aqui si, la CPU es lenta)
 
     // Sonido de la fuente (multimedia y capturadora): va al master.
     float volume = 1.0f;

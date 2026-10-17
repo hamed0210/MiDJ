@@ -13,6 +13,7 @@
 #include <wrl/client.h>
 
 #include <atomic>
+#include <functional>
 #include <mutex>
 #include <vector>
 
@@ -103,6 +104,86 @@ bool MediaFoundation::initialiseThisThread()
 juce::String MediaFoundation::extensions()
 {
     return "mp4;m4a;mov;m4v;wmv;wma;aac;3gp";
+}
+
+// --- Dispositivo compartido con el compositor ----------------------------------------------------
+
+namespace
+{
+    std::mutex sharedLock;
+    ComPtr<ID3D11Device> sharedDevice;
+    ComPtr<IMFDXGIDeviceManager> sharedManager;
+
+    bool createGpuDevice (ComPtr<ID3D11Device>& device, ComPtr<IMFDXGIDeviceManager>& manager);
+
+    // El dispositivo para decodificar en la tarjeta grafica: el del compositor si lo hay (los
+    // fotogramas se quedan en el) y si no uno propio. shared dice cual.
+    bool gpuDevice (ComPtr<ID3D11Device>& device, ComPtr<IMFDXGIDeviceManager>& manager, bool& shared)
+    {
+        {
+            const std::lock_guard<std::mutex> sl (sharedLock);
+            if (sharedManager != nullptr)
+            {
+                device = sharedDevice;
+                manager = sharedManager;
+                shared = true;
+                return true;
+            }
+        }
+        shared = false;
+        return createGpuDevice (device, manager);
+    }
+
+    // Un fotograma de Media Foundation que sigue en la tarjeta grafica.
+    struct SampleFrame : public GpuVideoFrame
+    {
+        ComPtr<IMFSample> sample;
+        ComPtr<ID3D11Texture2D> texture;
+        UINT index = 0;
+        void* getTexture() const override { return texture.Get(); }
+        int getSubresource() const override { return (int) index; }
+    };
+
+    std::shared_ptr<GpuVideoFrame> wrapSample (IMFSample* sample, int w, int h)
+    {
+        ComPtr<IMFMediaBuffer> buffer;
+        ComPtr<IMFDXGIBuffer> dxgi;
+        auto frame = std::make_shared<SampleFrame>();
+        if (FAILED (sample->GetBufferByIndex (0, &buffer)) || FAILED (buffer.As (&dxgi))
+            || FAILED (dxgi->GetResource (IID_PPV_ARGS (&frame->texture))) || FAILED (dxgi->GetSubresourceIndex (&frame->index)))
+            return nullptr;
+        frame->sample = sample;
+        frame->width = w;
+        frame->height = h;
+        return frame;
+    }
+}
+
+void MediaFoundation::shareDevice (void* d3d11Device)
+{
+    const std::lock_guard<std::mutex> sl (sharedLock);
+    sharedDevice.Reset();
+    sharedManager.Reset();
+    auto* device = static_cast<ID3D11Device*> (d3d11Device);
+    if (device == nullptr || ! initialiseThisThread())
+        return;
+    // Media Foundation usa el dispositivo desde sus hilos: tiene que estar protegido.
+    ComPtr<ID3D10Multithread> multithread;
+    if (FAILED (device->QueryInterface (IID_PPV_ARGS (&multithread))))
+        return;
+    multithread->SetMultithreadProtected (TRUE);
+    UINT token = 0;
+    ComPtr<IMFDXGIDeviceManager> manager;
+    if (FAILED (MFCreateDXGIDeviceManager (&token, &manager)) || FAILED (manager->ResetDevice (device, token)))
+        return;
+    sharedDevice = device;
+    sharedManager = manager;
+}
+
+bool MediaFoundation::hasSharedDevice()
+{
+    const std::lock_guard<std::mutex> sl (sharedLock);
+    return sharedManager != nullptr;
 }
 
 // --- Audio --------------------------------------------------------------------------------
@@ -301,6 +382,7 @@ struct VideoDecoder::Impl
     bool catchingUp = false;    // tras buscar, aun no se ha llegado al instante pedido
     double seekTarget = 0.0;
     bool gpu = false;           // los fotogramas llegan de la tarjeta grafica
+    bool shared = false;        // en el dispositivo del compositor (se pueden dejar alli)
     ComPtr<ID3D11Device> device;              // solo con GPU: se mantienen vivos con el lector
     ComPtr<IMFDXGIDeviceManager> deviceManager;
 
@@ -357,7 +439,10 @@ struct VideoDecoder::Impl
         return true;
     }
 
-    bool readFrameAtOrAfter (double target, juce::Image& image, int maxFrames)
+    void seekIfNeeded (double seconds);
+
+    // deliver: se queda con el fotograma (lo copia o lo guarda en la GPU); false = no valia.
+    bool readFrameAtOrAfter (double target, int maxFrames, const std::function<bool (IMFSample*)>& deliver)
     {
         for (int read = 1;; ++read)
         {
@@ -380,9 +465,7 @@ struct VideoDecoder::Impl
             if (early && (maxFrames <= 0 || read < maxFrames))
                 continue;   // aun antes de lo pedido: se salta sin copiar
 
-            if (! image.isValid() || image.getWidth() != width || image.getHeight() != height)
-                image = juce::Image (juce::Image::ARGB, width, height, false, juce::SoftwareImageType());   // se escribe en la CPU
-            if (! copyFrame (sample.Get(), image))
+            if (! deliver (sample.Get()))
                 continue;
             currentTime = start;
             currentEnd = end;
@@ -435,7 +518,7 @@ std::unique_ptr<VideoDecoder> VideoDecoder::openWith (const juce::File& file, in
         return nullptr;
     }
     auto impl = std::make_unique<Impl>();
-    if (useGpu && ! createGpuDevice (impl->device, impl->deviceManager))
+    if (useGpu && ! gpuDevice (impl->device, impl->deviceManager, impl->shared))
     {
         error = "Sin Direct3D 11 con video";
         return nullptr;
@@ -536,14 +619,12 @@ double VideoDecoder::getFrameRate() const   { return impl->frameRate; }
 double VideoDecoder::getDuration() const    { return impl->duration; }
 double VideoDecoder::getCurrentFrameTime() const { return impl->currentTime; }
 
-bool VideoDecoder::frameAt (double seconds, juce::Image& image, int maxFrames)
+// Busca si hace falta (hacia atras, o muy adelante: Media Foundation va al fotograma clave
+// anterior). Mientras se alcanza lo pedido tras una busqueda no se vuelve a buscar, salvo otro
+// salto: si el fotograma clave queda lejos, buscar otra vez volveria al mismo sitio.
+void VideoDecoder::Impl::seekIfNeeded (double seconds)
 {
-    auto& m = *impl;
-    if (seconds >= m.currentTime && seconds < m.currentEnd && image.isValid())
-        return true;   // sigue siendo el mismo fotograma
-    // Hacia atras, o muy adelante: buscar (Media Foundation va al fotograma clave anterior).
-    // Mientras se alcanza lo pedido tras una busqueda no se vuelve a buscar, salvo otro salto:
-    // si el fotograma clave queda lejos, buscar otra vez volveria al mismo sitio.
+    auto& m = *this;
     const bool farAhead = m.catchingUp ? seconds > m.seekTarget + 5.0 : seconds > m.currentEnd + 2.0;
     if (seconds < m.currentTime || farAhead || m.ended)
     {
@@ -553,8 +634,41 @@ bool VideoDecoder::frameAt (double seconds, juce::Image& image, int maxFrames)
         m.catchingUp = true;
         m.seekTarget = seconds;
     }
-    return m.readFrameAtOrAfter (seconds, image, maxFrames);
 }
+
+bool VideoDecoder::frameAt (double seconds, juce::Image& image, int maxFrames)
+{
+    auto& m = *impl;
+    if (seconds >= m.currentTime && seconds < m.currentEnd && image.isValid())
+        return true;   // sigue siendo el mismo fotograma
+    m.seekIfNeeded (seconds);
+    return m.readFrameAtOrAfter (seconds, maxFrames, [&m, &image] (IMFSample* sample)
+    {
+        if (! image.isValid() || image.getWidth() != m.width || image.getHeight() != m.height)
+            image = juce::Image (juce::Image::ARGB, m.width, m.height, false, juce::SoftwareImageType());   // se escribe en la CPU
+        return m.copyFrame (sample, image);
+    });
+}
+
+bool VideoDecoder::frameAt (double seconds, std::shared_ptr<GpuVideoFrame>& frame, int maxFrames)
+{
+    auto& m = *impl;
+    if (! m.shared)
+        return false;
+    if (seconds >= m.currentTime && seconds < m.currentEnd && frame != nullptr)
+        return true;   // sigue siendo el mismo fotograma
+    m.seekIfNeeded (seconds);
+    return m.readFrameAtOrAfter (seconds, maxFrames, [&m, &frame] (IMFSample* sample)
+    {
+        auto f = wrapSample (sample, m.width, m.height);
+        if (f == nullptr)
+            return false;
+        frame = std::move (f);
+        return true;
+    });
+}
+
+bool VideoDecoder::isOnSharedDevice() const { return impl->shared; }
 
 bool VideoDecoder::isCatchingUp() const { return impl->catchingUp; }
 
@@ -634,6 +748,7 @@ struct VideoCaptureReader::Impl
     ComPtr<IMFDXGIDeviceManager> deviceManager;
     Format format;
     int width = 0, height = 0, stride = 0;
+    bool shared = false;   // en el dispositivo del compositor
 
     ~Impl()
     {
@@ -758,7 +873,7 @@ std::unique_ptr<VideoCaptureReader> VideoCaptureReader::open (const juce::String
     ComPtr<IMFAttributes> attributes;
     MFCreateAttributes (&attributes, 3);
     attributes->SetUINT32 (MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING, TRUE);
-    if (allowGpu && createGpuDevice (impl->device, impl->deviceManager))
+    if (allowGpu && gpuDevice (impl->device, impl->deviceManager, impl->shared))
     {
         attributes->SetUnknown (MF_SOURCE_READER_D3D_MANAGER, impl->deviceManager.Get());
         attributes->SetUINT32 (MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, TRUE);
@@ -824,6 +939,33 @@ bool VideoCaptureReader::read (juce::Image& image, bool flip)
     }
     return false;
 }
+
+bool VideoCaptureReader::read (std::shared_ptr<GpuVideoFrame>& frame)
+{
+    auto& m = *impl;
+    if (! m.shared)
+        return false;
+    for (int tries = 0; tries < 100; ++tries)   // las marcas de tiempo sin imagen no cuentan
+    {
+        DWORD flags = 0;
+        LONGLONG timestamp = 0;
+        ComPtr<IMFSample> sample;
+        if (FAILED (m.reader->ReadSample ((DWORD) MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0, nullptr, &flags, &timestamp, &sample))
+            || (flags & (MF_SOURCE_READERF_ERROR | MF_SOURCE_READERF_ENDOFSTREAM)) != 0)
+            return false;
+        if (sample == nullptr)
+            continue;
+        // Si Media Foundation no lo dejo en una textura (conversion en la CPU), desde ahora se
+        // lee por la CPU (isOnSharedDevice() pasa a false) y este fotograma se pierde.
+        frame = wrapSample (sample.Get(), m.width, m.height);
+        if (frame == nullptr)
+            m.shared = false;
+        return true;
+    }
+    return false;
+}
+
+bool VideoCaptureReader::isOnSharedDevice() const { return impl->shared; }
 
 void VideoCaptureReader::interrupt()
 {

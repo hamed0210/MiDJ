@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine/Deck.h"
+#include "Video/GpuFrames.h"
 #include "Video/MediaFoundation.h"
 
 #include <juce_events/juce_events.h>
@@ -30,6 +31,9 @@ public:
     bool hasVideo() const { return videoOpen.load(); }
     double getFrameTime() const { return frameTime.load(); }   // instante del fotograma entregado
     juce::uint64 getFrameNumber() const { return frameNumber.load(); }   // cambia con cada fotograma entregado
+    // Si decodifica en el dispositivo del compositor, los fotogramas quedan aqui (en la tarjeta
+    // grafica) en vez de en getFrame().
+    const std::shared_ptr<GpuFrameSource>& getGpu() const { return gpu; }
 
     static bool isVideoFile (const juce::File& file);
 
@@ -46,5 +50,6 @@ private:
     std::atomic<bool> videoOpen { false };
     std::atomic<double> frameTime { -1.0 };
     std::atomic<juce::uint64> frameNumber { 0 };
+    std::shared_ptr<GpuFrameSource> gpu = std::make_shared<GpuFrameSource>();
 };
 }

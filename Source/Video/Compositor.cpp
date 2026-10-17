@@ -116,6 +116,7 @@ struct Compositor::Impl
     Settings settings;
     juce::String error;
     bool hardware = false;
+    bool videoSupport = false;   // el dispositivo admite decodificar video (se puede compartir con Media Foundation)
     juce::String adapter;
 
     ComPtr<ID3D11Device> device;
@@ -153,8 +154,16 @@ struct Compositor::Impl
         const UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
         HRESULT hr = E_FAIL;
         if (settings.allowHardware)
-            hr = D3D11CreateDevice (nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, levels, (UINT) std::size (levels),
-                                    D3D11_SDK_VERSION, &device, nullptr, &context);
+        {
+            // Con video (DXVA): los decodificadores usan este mismo dispositivo y sus fotogramas no
+            // salen de la tarjeta grafica. Si el controlador no lo admite, sin video.
+            hr = D3D11CreateDevice (nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags | D3D11_CREATE_DEVICE_VIDEO_SUPPORT, levels,
+                                    (UINT) std::size (levels), D3D11_SDK_VERSION, &device, nullptr, &context);
+            videoSupport = SUCCEEDED (hr);
+            if (FAILED (hr))
+                hr = D3D11CreateDevice (nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, levels, (UINT) std::size (levels),
+                                        D3D11_SDK_VERSION, &device, nullptr, &context);
+        }
         hardware = SUCCEEDED (hr);
         if (! hardware)
             hr = D3D11CreateDevice (nullptr, D3D_DRIVER_TYPE_WARP, nullptr, flags, levels, (UINT) std::size (levels),
@@ -681,6 +690,7 @@ Compositor::~Compositor()
 
 bool Compositor::isReady() const { return impl->device != nullptr; }
 void* Compositor::getDevice() const { return impl->device.Get(); }
+bool Compositor::hasVideoSupport() const { return impl->videoSupport; }
 juce::String Compositor::getError() const { return impl->error; }
 
 void Compositor::start()

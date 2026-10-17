@@ -16,7 +16,25 @@ namespace MediaFoundation
     bool initialiseThisThread();
     // Extensiones que se abren con Media Foundation.
     juce::String extensions();   // "mp4;m4a;mov;m4v;wmv;wma;aac;3gp"
+
+    // El dispositivo Direct3D 11 del compositor (nullptr = ninguno). Con el, los decodificadores
+    // que usan la tarjeta grafica entregan fotogramas que se quedan en ella (GpuVideoFrame): el
+    // compositor los copia de textura a textura, sin pasar por la memoria normal (como OBS).
+    void shareDevice (void* d3d11Device);
+    bool hasSharedDevice();
 }
+
+// Un fotograma decodificado que sigue en la tarjeta grafica, en el dispositivo compartido:
+// una textura RGB (o un trozo de un array de texturas). Mientras exista, Media Foundation no
+// reutiliza esa textura.
+class GpuVideoFrame
+{
+public:
+    virtual ~GpuVideoFrame() = default;
+    virtual void* getTexture() const = 0;   // ID3D11Texture2D*
+    virtual int getSubresource() const = 0;
+    int width = 0, height = 0;
+};
 
 // Formato de audio para JUCE: la pista de sonido de un video o un M4A/AAC/WMA.
 class MediaFoundationAudioFormat : public juce::AudioFormat
@@ -58,6 +76,9 @@ public:
     // maxFrames > 0: decodifica como mucho esos fotogramas y entrega el ultimo aunque aun no
     // llegue (tras un salto el video avanza a saltos hasta alcanzar al audio, sin congelarse).
     bool frameAt (double seconds, juce::Image& image, int maxFrames = 0);
+    // Lo mismo dejando el fotograma en la tarjeta grafica (solo con isOnSharedDevice()).
+    bool frameAt (double seconds, std::shared_ptr<GpuVideoFrame>& frame, int maxFrames = 0);
+    bool isOnSharedDevice() const;   // decodifica en el dispositivo del compositor
     bool isCatchingUp() const;   // tras un salto, aun por detras de lo pedido
     double getCurrentFrameTime() const;   // inicio del fotograma entregado
 
@@ -97,6 +118,9 @@ public:
 
     // Espera el siguiente fotograma (como mucho ~1 s) y lo copia. false = desconectado o error.
     bool read (juce::Image& image, bool flipVertically);
+    // Lo mismo dejando el fotograma en la tarjeta grafica (solo con isOnSharedDevice()).
+    bool read (std::shared_ptr<GpuVideoFrame>& frame);
+    bool isOnSharedDevice() const;
     // Cualquier hilo: suelta el dispositivo; un read() que estaba esperando vuelve con false.
     void interrupt();
     Format getFormat() const;   // el que entrega el dispositivo (tamano antes de reducir)

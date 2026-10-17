@@ -24,6 +24,18 @@ void VideoMix::setProgramSize (int w, int h)
         card.title = "\x01";   // se vuelve a dibujar al siguiente setTitle
 }
 
+bool VideoMix::hasPicture (const Compositor::Layer& layer)
+{
+    return layer.image.isValid() || layer.gpu != nullptr;
+}
+
+juce::Point<int> VideoMix::pictureSize (const Compositor::Layer& layer)
+{
+    if (layer.gpu != nullptr)
+        return layer.gpu->getSize();
+    return { layer.image.getWidth(), layer.image.getHeight() };
+}
+
 std::array<float, 2> VideoMix::weights (float crossfader, bool a, bool b)
 {
     if (a && ! b) return { 1.0f, 0.0f };
@@ -56,13 +68,17 @@ Compositor::Layer VideoMix::picture (int d)
 {
     Compositor::Layer layer;
     auto* video = videos[(size_t) d];
-    if (video->hasVideo())
+    if (video->hasVideo() && video->getGpu()->hasPicture())
+    {
+        layer.gpu = video->getGpu();   // el fotograma sigue en la tarjeta grafica
+    }
+    else if (video->hasVideo())
     {
         layer.image = video->getFrame();
         layer.version = video->getFrameNumber();
         layer.slot = d == 0 ? videoA : videoB;
     }
-    if (! layer.image.isValid())
+    if (! hasPicture (layer))
     {
         // Sin video (o aun sin primer fotograma): el rotulo.
         const juce::SpinLock::ScopedLockType sl (cardLock);
@@ -86,7 +102,7 @@ Compositor::Layer VideoMix::logoLayer() const
 void VideoMix::buildLayers (std::vector<Compositor::Layer>& layers)
 {
     std::array<Compositor::Layer, 2> picture { this->picture (0), this->picture (1) };
-    const std::array<bool, 2> has { picture[0].image.isValid(), picture[1].image.isValid() };
+    const std::array<bool, 2> has { hasPicture (picture[0]), hasPicture (picture[1]) };
 
     const auto w = weights (mixer.getCrossfader(), has[0], has[1]);
     if (! has[0] && ! has[1])
