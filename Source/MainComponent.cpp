@@ -23,6 +23,36 @@ MainComponent::MainComponent()
     automix.loadTrack = [this] (int deckIndex, const juce::File& file) { return loadIntoDeck (deckIndex == 0 ? deckA : deckB, file); };
     automix.loadQueue (getDataFolder().getChildFile ("automix.xml"));
     browser->setAutomix (&automix);
+
+    // Stems: la separacion va en segundo plano; cuando esta, la voz va al deck que tenga esa cancion.
+    stems.onReady = [this] (const juce::File& song, std::shared_ptr<const juce::AudioBuffer<float>> vocals)
+    {
+        for (auto* deck : { &deckA, &deckB })
+            deck->setVocals (song, vocals);
+    };
+    stems.onFailed = [] (const juce::File& song, const juce::String& error)
+    {
+        if (error != "cancelado")
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "MiDJ",
+                                                    "No se pudieron separar los stems de " + song.getFileName() + ":\n" + error);
+    };
+    browser->onPrepareStems = [this] (const TrackInfo& track) { stems.request (track.getFile(), false); };
+    for (auto [view, deck] : { std::pair<DeckComponent*, Deck*> { &deckViewA, &deckA }, std::pair<DeckComponent*, Deck*> { &deckViewB, &deckB } })
+    {
+        view->onStemsRequested = [this, deck] { if (deck->getLoadedFile() != juce::File()) stems.request (deck->getLoadedFile(), true); };
+        view->getStemsState = [this, deck]
+        {
+            using S = DeckComponent::StemsState;
+            const auto file = deck->getLoadedFile();
+            switch (stems.getStatus (file))
+            {
+                case StemsService::Status::queued:  return std::pair<S, double> { S::queued, 0.0 };
+                case StemsService::Status::working: return std::pair<S, double> { S::working, stems.getProgress (file) };
+                case StemsService::Status::failed:  return std::pair<S, double> { S::failed, 0.0 };
+                default:                            return std::pair<S, double> { S::none, 0.0 };
+            }
+        };
+    }
     controlSurface.automix = &automix;
     library.startBackgroundWork();   // re-escanea las carpetas por si hubo cambios
 
@@ -134,6 +164,18 @@ void MainComponent::saveSamplerBank()
 void MainComponent::timerCallback()
 {
     automix.update();
+    // Cancion nueva en un deck con stems ya separados: se leen de la cache (tarda menos de un segundo).
+    for (int d = 0; d < 2; ++d)
+    {
+        auto& deck = d == 0 ? deckA : deckB;
+        const auto file = deck.getLoadedFile();
+        if (file != lastLoaded[(size_t) d] && ! deck.isLoading())
+        {
+            lastLoaded[(size_t) d] = file;
+            if (file != juce::File() && stems.isCached (file))
+                stems.request (file, true);
+        }
+    }
     if (++timerTicks % 8 == 0)
         browser->updateAutomixStatus();
     if (! crossfader.isMouseButtonDown())

@@ -45,6 +45,16 @@ DeckComponent::DeckComponent (Deck& d, Deck& other, EffectRack& effects, const j
         updateLabels();
     };
     keyButton.setTooltip ("Keylock: cambia el tempo sin cambiar el tono");
+
+    // Stems: STEMS pide la separacion; cuando esta lista, VOZ e INSTR encienden / apagan cada parte.
+    stemsButton.setTooltip ("Separar voz e instrumental con IA (en segundo plano; en este equipo tarda algo mas que la cancion)");
+    stemsButton.onClick = [this] { if (onStemsRequested) onStemsRequested(); };
+    vocalButton.setTooltip ("Voz encendida / apagada (apagada = instrumental)");
+    vocalButton.onClick = [this] { deck.setVocalsOn (! deck.isVocalsOn()); updateLabels(); };
+    instrumentalButton.setTooltip ("Instrumental encendido / apagado (apagado = a capela)");
+    instrumentalButton.onClick = [this] { deck.setInstrumentalOn (! deck.isInstrumentalOn()); updateLabels(); };
+    for (auto* b : { &stemsButton, &vocalButton, &instrumentalButton })
+        addChildComponent (b);
     for (auto* b : { &loadButton, &cueButton, &playButton, &syncButton, &keyButton })
         addAndMakeVisible (b);
     cueButton.setColour (juce::TextButton::textColourOffId, cueColour);
@@ -129,6 +139,8 @@ void DeckComponent::addLearnTargets (std::vector<LearnTarget>& out, const juce::
     for (size_t i = 0; i < loopButtons.size(); ++i)
         out.push_back ({ &loopButtons[i], prefix + "loop" + juce::String (loopSizes[i]) });
     out.push_back ({ &tempoSlider, prefix + "tempo" });
+    out.push_back ({ &vocalButton, prefix + "vocals" });
+    out.push_back ({ &instrumentalButton, prefix + "instrumental" });
     out.push_back ({ this, prefix + "jog", waveformArea });   // la forma de onda hace de plato
     effectsRow.addLearnTargets (out, prefix);
 }
@@ -184,6 +196,23 @@ void DeckComponent::updateLabels()
     tempoLabel.setText ((percent >= 0.0 ? "+" : "") + juce::String (percent, 2) + " %", juce::dontSendNotification);
 
     playButton.setButtonText (deck.isPlaying() ? "Pausa" : "Play");
+
+    // Stems: botones VOZ / INSTR si ya estan; si no, STEMS con el estado de la separacion.
+    const bool stems = deck.hasStems();
+    vocalButton.setVisible (stems);
+    instrumentalButton.setVisible (stems);
+    stemsButton.setVisible (! stems && hasTrack);
+    for (auto [button, on] : { std::pair<juce::TextButton*, bool> { &vocalButton, deck.isVocalsOn() },
+                               std::pair<juce::TextButton*, bool> { &instrumentalButton, deck.isInstrumentalOn() } })
+        button->setColour (juce::TextButton::buttonColourId, on ? accent().withAlpha (0.6f) : DarkLookAndFeel::panel.brighter (0.15f));
+    if (! stems && getStemsState)
+    {
+        const auto [state, progress] = getStemsState();
+        stemsButton.setEnabled (state == StemsState::none || state == StemsState::failed);
+        stemsButton.setButtonText (state == StemsState::working ? "STEMS " + juce::String (juce::roundToInt (progress * 100.0)) + " %"
+                                   : state == StemsState::queued ? juce::String ("STEMS...")
+                                   : state == StemsState::failed ? juce::String ("STEMS (error)") : juce::String ("STEMS"));
+    }
     keyButton.setColour (juce::TextButton::buttonColourId,
                          deck.isKeyLocked() ? accent().withAlpha (0.6f) : DarkLookAndFeel::panel.brighter (0.15f));
     for (size_t i = 0; i < loopButtons.size(); ++i)
@@ -317,6 +346,11 @@ void DeckComponent::resized()
         b.setBounds (loops.removeFromLeft (48).reduced (0, 2));
         loops.removeFromLeft (6);
     }
+    // A la derecha de los bucles: los stems.
+    auto stemsArea = loops.removeFromRight (juce::jmin (170, loops.getWidth())).withTrimmedRight (8);
+    stemsButton.setBounds (stemsArea.reduced (0, 2));
+    vocalButton.setBounds (stemsArea.removeFromLeft (stemsArea.getWidth() / 2).reduced (0, 2).withTrimmedRight (3));
+    instrumentalButton.setBounds (stemsArea.reduced (0, 2).withTrimmedLeft (3));
     area.removeFromBottom (2);
     effectsRow.setBounds (area.removeFromBottom (36));
 

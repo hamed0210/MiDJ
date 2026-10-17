@@ -31,6 +31,15 @@ public:
     // Se llama en el hilo de interfaz cuando el deck ha analizado un archivo por su cuenta.
     std::function<void (const juce::File&, const TempoAnalysis&)> onAnalysed;
     juce::File getLoadedFile() const { return loadedFile; }
+    // Stems: la voz separada de la cancion cargada (hilo de interfaz). Lo instrumental es
+    // original - voz. Se rechaza si no es de la cancion que hay ahora (file) o no mide lo mismo.
+    bool setVocals (const juce::File& file, std::shared_ptr<const juce::AudioBuffer<float>> vocals);
+    bool hasStems() const                 { return stemsReady.load(); }
+    void setVocalsOn (bool on)            { vocalsOn = on; }
+    void setInstrumentalOn (bool on)      { instrumentalOn = on; }
+    bool isVocalsOn() const               { return vocalsOn.load(); }
+    bool isInstrumentalOn() const         { return instrumentalOn.load(); }
+
     // Puntos de automix de la cancion cargada (se calculan al cargarla; hilo de interfaz).
     const MixPoints& getMixPoints() const { return mixPoints; }
     // Carga sincrona desde memoria (pruebas). Analiza el tempo si analysis.bpm == 0.
@@ -98,6 +107,7 @@ private:
     struct Track
     {
         juce::AudioBuffer<float> audio;   // estereo, en el sample rate del archivo
+        std::shared_ptr<const juce::AudioBuffer<float>> vocals;   // stem de voz (mismo tamano), si se ha separado
         double sampleRate = 44100.0;
     };
 
@@ -136,7 +146,8 @@ private:
     std::atomic<double> loopStart { 0.0 }, loopEnd { 0.0 };
     std::atomic<int> loopBeats { 0 };
     std::atomic<int> loadGeneration { 0 };
-    std::atomic<double> jogBend { 0.0 };   // empuje del jog: velocidad x (1 + jogBend)
+    std::atomic<double> jogBend { 0.0 };
+    std::atomic<bool> stemsReady { false }, vocalsOn { true }, instrumentalOn { true };   // empuje del jog: velocidad x (1 + jogBend)
     std::shared_ptr<std::atomic<bool>> alive = std::make_shared<std::atomic<bool>> (true);
 
     // Solo del hilo de audio.
@@ -144,7 +155,11 @@ private:
     double feedPosition = 0.0;      // lo que se ha dado al estirador: va por delante
     double outputRate = 44100.0;
     double fileStep = 1.0;          // muestras de archivo por muestra de salida a tempo 1
-    double blockSpeed = 1.0;        // velocidad de este bloque (tempo y empuje del jog)
+    double blockSpeed = 1.0;
+    // Stems (hilo de audio): ganancias suavizadas de la voz y de lo instrumental.
+    bool stemsActive = false;
+    float stemVocal = 1.0f, stemInstrumental = 1.0f, stemVocalTarget = 1.0f, stemInstrumentalTarget = 1.0f, stemCoeff = 0.01f;
+    void readFrame (double position, float& left, float& right);        // velocidad de este bloque (tempo y empuje del jog)
     bool loopActive = false;        // copia del bucle para el bloque en curso
     double loopStartSample = 0.0, loopEndSample = 0.0;
     const Track* current = nullptr; // pista del bloque en curso (bajo trackLock)

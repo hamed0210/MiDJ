@@ -4,6 +4,7 @@
 #include "Control/MidiController.h"
 #include "Engine/Deck.h"
 #include "Engine/Mixer.h"
+#include "Engine/StemsService.h"
 #include "Library/Library.h"
 #include "UI/DarkLookAndFeel.h"
 #include "UI/DeckComponent.h"
@@ -50,6 +51,9 @@ private:
     Mixer mixer { deckA, deckB };
     Library library { formatManager };
     Automix automix { deckA, deckB, mixer };
+    StemsService stems { formatManager, getDataFolder(),
+                         juce::File::getSpecialLocation (juce::File::currentExecutableFile).getSiblingFile ("models").getChildFile ("spleeter-2stems") };
+    std::array<juce::File, 2> lastLoaded;   // para leer de la cache los stems de cada cancion nueva
     ControlSurface controlSurface { deckA, deckB, mixer };
     MidiController midi { controlSurface };
 

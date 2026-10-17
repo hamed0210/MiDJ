@@ -12,6 +12,8 @@ Primer objetivo: dos decks que reproducen MP3/WAV/FLAC/Ogg, BPM detectado, contr
 | JUCE | 8.0.4 | `D:\Tools\JUCE` (otra ruta: `-DJUCE_DIR=...`) |
 | Rubber Band | 4.0.0 | `D:\Tools\rubberband` (otra ruta: `-DRUBBERBAND_DIR=...`) |
 | SQLite (amalgamation) | 3.46.1 | `D:\Tools\sqlite` (otra ruta: `-DSQLITE_DIR=...`) |
+| ONNX Runtime + DirectML | 1.20.1 / 1.15.4 | `D:\Tools\onnxruntime` (otra ruta: `-DONNXRUNTIME_DIR=...`) |
+| Modelo Spleeter 2 stems int8 | sherpa-onnx | `D:\Tools\models\spleeter-2stems-int8` (se copia junto al programa) |
 | Git | cualquiera | ya instalado |
 
 ## Compilar y ejecutar
@@ -43,6 +45,8 @@ Source/
     Sampler.*           sampler de 8 pads: disparo, tempo, grabacion y banco
     Automix.*           automix de dos decks: lista, plan de cada transicion y mezcla
     MixPoints.*         puntos de automix de una cancion (sonido, fundido, parte ritmica)
+    StemSeparator.*     separacion de voz con IA (Spleeter en ONNX Runtime)
+    StemsService.*      cola de separacion en segundo plano y cache de stems
     SampleData.*        sonidos del sampler: audio y .vdjsample de VirtualDJ
   Control/              controladoras MIDI
     Actions.*           acciones asignables (play, cue, tempo, EQ, efectos, jog...)
@@ -67,6 +71,7 @@ Tests/
                         MiDJTests --compare a.wav b.wav       tono de b respecto de a
                         MiDJTests --sample archivo            datos de un sonido (.vdjsample o audio)
                         MiDJTests --mixpoints canciones...    puntos de automix
+                        MiDJTests --stems cancion [cpu|gpu] [s] separa voz e instrumental (WAV)
                         MiDJTests --benchmark                 CPU del keylock y de los efectos
 ```
 
@@ -77,6 +82,14 @@ izquierda, con su barra: AUTOMIX (encender), Mezclar ya, Saltar, Quitar, Vaciar 
 Cada transición se planifica como el modo Smart de VirtualDJ: **a tempo** (16 pulsos, compases alineados y el
 tempo deslizándose de una canción a la otra) si la actual tiene fin de parte rítmica, la siguiente tiene inicio
 y sus BPM difieren menos de un 6 %; si no, **fundido**. La lista se guarda al cerrar.
+
+## Stems (voz / instrumental)
+
+Botón **STEMS** de cada deck: separa la voz con IA en segundo plano (en este equipo tarda algo más que la
+canción) y después aparecen **VOZ** e **INSTR** para apagar cada parte. También desde el navegador: clic derecho >
+**Preparar stems**. La voz se guarda en `%APPDATA%\MiDJ\Stems` (FLAC) y la próxima vez se lee de ahí en segundos.
+Por defecto se usa la CPU; la tarjeta gráfica (DirectML) se activa escribiendo `<STEMS device="gpu"/>` en
+`%APPDATA%\MiDJ\stems.xml` (en la Radeon R5 de este portátil DirectML se cuelga, por eso no se prueba sola).
 
 ## Sampler
 
@@ -105,7 +118,8 @@ Sin controladora se puede probar con `MiDJ.exe --simular-midi archivo.txt`. Cada
 
 Rubber Band es GPL. Para uso propio no hay problema; para vender MiDJ hace falta su licencia
 comercial o cambiarla por otra librería (por ejemplo SoundTouch, LGPL). Solo `TimeStretcher.*` la usa.
-SQLite es de dominio público.
+SQLite es de dominio público. ONNX Runtime es MIT; DirectML.dll es redistribuible según su licencia de Microsoft;
+los pesos de Spleeter son de Deezer con licencia MIT (exportados a ONNX por el proyecto sherpa-onnx, Apache 2.0).
 
 ## Reglas del motor de audio
 
@@ -124,3 +138,4 @@ SQLite es de dominio público.
 - Controladoras MIDI: modo aprender en la pantalla, botones por nota o CC, faders por CC o pitch bend, jog y encoders relativos (detecta complemento a dos o desplazado), los controles de la pantalla siguen a la controladora, conexión en caliente y modo de simulación.
 - Sampler de 8 pads: disparo on/off, mantener y repetir; tempo libre, sincronizado (plegado a 0,66-1,5) o bloqueado al pulso; fundidos de 128 muestras; grabación de 4/8/16 pulsos de un deck empezando en el pulso; lee los .vdjsample de VirtualDJ; banco guardado; pads asignables por MIDI.
 - Automix de dos decks con puntos de automix calculados al cargar cada canción (sonido, fundido y parte rítmica, con las reglas de VirtualDJ): mezcla a tempo o con fundido, mezclar ya, saltar, lista guardada y acciones MIDI.
+- Stems con IA: voz e instrumental con Spleeter 2 stems (ONNX Runtime, CPU o DirectML) separados en segundo plano con caché en disco; mezcla en el deck sin clics y exacta con los dos encendidos; botones VOZ/INSTR, preparar desde el navegador y acciones MIDI.

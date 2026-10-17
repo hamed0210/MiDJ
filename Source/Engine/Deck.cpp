@@ -91,6 +91,9 @@ void Deck::loadBuffer (juce::AudioBuffer<float> audio, double sampleRate, const 
 void Deck::install (std::unique_ptr<Track> newTrack, const juce::String& name, TempoAnalysis analysis, MixPoints points)
 {
     mixPoints = points;
+    stemsReady = false;
+    vocalsOn = true;
+    instrumentalOn = true;
     playing = false;
     const double length = newTrack->audio.getNumSamples() / newTrack->sampleRate;
     {
@@ -250,10 +253,43 @@ void Deck::renderVinyl (float* left, float* right, int n)
             std::fill (right + i, right + n, 0.0f);
             return;
         }
-        left[i] = hermite (audio.getReadPointer (0), length, readPosition);
-        right[i] = hermite (audio.getReadPointer (1), length, readPosition);
+        readFrame (readPosition, left[i], right[i]);
         readPosition += step;
     }
+}
+
+// Una muestra estereo de la cancion en una posicion fraccionaria. Con stems, mezcla voz e
+// instrumental: original x I + voz x (V - I), que con los dos encendidos es el original exacto.
+void Deck::readFrame (double position, float& left, float& right)
+{
+    const auto& audio = current->audio;
+    const int length = audio.getNumSamples();
+    left = hermite (audio.getReadPointer (0), length, position);
+    right = hermite (audio.getReadPointer (1), length, position);
+    if (! stemsActive)
+        return;
+    stemVocal += (stemVocalTarget - stemVocal) * stemCoeff;
+    stemInstrumental += (stemInstrumentalTarget - stemInstrumental) * stemCoeff;
+    const auto& v = *current->vocals;
+    const float vl = hermite (v.getReadPointer (0), length, position);
+    const float vr = hermite (v.getReadPointer (1), length, position);
+    left = left * stemInstrumental + vl * (stemVocal - stemInstrumental);
+    right = right * stemInstrumental + vr * (stemVocal - stemInstrumental);
+}
+
+bool Deck::setVocals (const juce::File& file, std::shared_ptr<const juce::AudioBuffer<float>> vocals)
+{
+    if (file != loadedFile || vocals == nullptr)
+        return false;
+    {
+        const juce::SpinLock::ScopedLockType lock (trackLock);
+        if (track == nullptr || vocals->getNumSamples() != track->audio.getNumSamples() || vocals->getNumChannels() < 2)
+            return false;
+        track->vocals = std::move (vocals);
+    }
+    stemsReady = true;
+    sendChangeMessage();
+    return true;
 }
 
 void Deck::Feeder::read (float* left, float* right, int n)
@@ -264,8 +300,10 @@ void Deck::Feeder::read (float* left, float* right, int n)
     {
         deck.feedPosition = deck.advance (deck.feedPosition, 0.0);
         const bool inside = deck.feedPosition < length - 1;   // pasado el final: silencio
-        left[i] = inside ? hermite (audio.getReadPointer (0), length, deck.feedPosition) : 0.0f;
-        right[i] = inside ? hermite (audio.getReadPointer (1), length, deck.feedPosition) : 0.0f;
+        if (inside)
+            deck.readFrame (deck.feedPosition, left[i], right[i]);
+        else
+            left[i] = right[i] = 0.0f;
         deck.feedPosition += deck.fileStep;
     }
 }
@@ -311,6 +349,18 @@ void Deck::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
 
     current = track.get();
     const double rate = current->sampleRate;
+    stemVocalTarget = vocalsOn.load() ? 1.0f : 0.0f;
+    stemInstrumentalTarget = instrumentalOn.load() ? 1.0f : 0.0f;
+    stemCoeff = (float) (1.0 - std::exp (-1.0 / (0.01 * rate)));   // rampa de ~10 ms
+    if (current->vocals == nullptr)
+        stemVocal = stemInstrumental = 1.0f;
+    stemsActive = current->vocals != nullptr
+               && (stemVocalTarget < 1.0f || stemInstrumentalTarget < 1.0f || stemVocal < 1.0f || stemInstrumental < 1.0f);
+    if (stemsActive && stemVocal > 0.9999f && stemInstrumental > 0.9999f && stemVocalTarget == 1.0f && stemInstrumentalTarget == 1.0f)
+    {
+        stemsActive = false;   // de vuelta a los dos encendidos: el original tal cual
+        stemVocal = stemInstrumental = 1.0f;
+    }
     fileStep = rate / outputRate;
 
     const double seek = pendingSeek.exchange (-1.0);

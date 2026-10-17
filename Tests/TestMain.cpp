@@ -12,6 +12,8 @@
 #include "Engine/Effects.h"
 #include "Engine/Mixer.h"
 #include "Engine/Sampler.h"
+#include "Engine/StemSeparator.h"
+#include "Engine/StemsService.h"
 #include "Library/Library.h"
 #include "Library/TagReader.h"
 
@@ -1778,6 +1780,248 @@ void testAutomixFadeAndMixNow()
     real.file.deleteFile();
 }
 
+
+// --- Stems con IA ------------------------------------------------------------------------
+
+juce::File stemsModelFolder()
+{
+    return juce::File::getSpecialLocation (juce::File::currentExecutableFile).getSiblingFile ("models").getChildFile ("spleeter-2stems");
+}
+
+void testStemStft()
+{
+    // La STFT de la separacion: con mascara 1 devuelve la entrada (si no tiene nada por encima de
+    // 11 kHz, la parte que el modelo no ve), con 0 silencio y con 0,5 la mitad. En los 4096 primeros
+    // y ultimos samples no se exige: el relleno reflejado de los bordes crea un pico con agudos por
+    // encima de 11 kHz que la mascara (como en sherpa-onnx) quita.
+    midj::StemSeparator sep;
+    juce::AudioBuffer<float> in (2, (int) (30.0 * sr));   // 30 s: varios trozos de 512 fotogramas
+    for (int i = 0; i < in.getNumSamples(); ++i)
+    {
+        in.setSample (0, i, 0.4f * (float) std::sin (2.0 * juce::MathConstants<double>::pi * 440.0 * i / sr));
+        in.setSample (1, i, 0.3f * (float) std::sin (2.0 * juce::MathConstants<double>::pi * 2500.0 * i / sr + 0.3));
+    }
+    juce::AudioBuffer<float> out;
+    sep.separateWithMask (in, out, [] (int, int) { return 1.0f; });
+    float worst = 0.0f;
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 4096; i < in.getNumSamples() - 4096; ++i)
+            worst = std::max (worst, std::abs (out.getSample (ch, i) - in.getSample (ch, i)));
+    check (out.getNumSamples() == in.getNumSamples() && worst < 1e-4f, "stems STFT: mascara 1 = la entrada (error maximo)", worst, 0.0);
+    sep.separateWithMask (in, out, [] (int, int) { return 0.0f; });
+    check (out.getMagnitude (0, out.getNumSamples()) < 1e-6f, "stems STFT: mascara 0 = silencio", out.getMagnitude (0, out.getNumSamples()), 0.0);
+    sep.separateWithMask (in, out, [] (int, int) { return 0.5f; });
+    check (std::abs (out.getRMSLevel (0, 0, out.getNumSamples()) / in.getRMSLevel (0, 0, in.getNumSamples()) - 0.5f) < 1e-3f,
+           "stems STFT: mascara 0,5 = la mitad", out.getRMSLevel (0, 0, out.getNumSamples()) / in.getRMSLevel (0, 0, in.getNumSamples()), 0.5);
+
+    // Remuestreo 48 kHz -> 44,1 kHz -> 48 kHz: un seno de 1 kHz conserva su frecuencia.
+    juce::AudioBuffer<float> at48 (2, 48000 * 3);
+    for (int i = 0; i < at48.getNumSamples(); ++i)
+        for (int ch = 0; ch < 2; ++ch)
+            at48.setSample (ch, i, 0.5f * (float) std::sin (2.0 * juce::MathConstants<double>::pi * 1000.0 * i / 48000.0));
+    const auto at44 = midj::StemSeparator::resample (at48, 48000.0, 44100.0);
+    check (std::abs (at44.getNumSamples() - 44100 * 3) <= 1 && std::abs (sineFrequency (at44, 2000, at44.getNumSamples() - 2000) - 1000.0) < 0.5,
+           "stems: remuestreo a 44,1 kHz conserva el tono", sineFrequency (at44, 2000, at44.getNumSamples() - 2000), 1000.0);
+}
+
+void testStemModel()
+{
+    midj::StemSeparator sep;
+    juce::String error;
+    const bool loaded = sep.load (stemsModelFolder(), midj::StemSeparator::Device::cpu, error);
+    check (loaded, ("stems: el modelo carga en CPU " + error).toRawUTF8(), loaded ? 1.0 : 0.0, 1.0);
+    if (! loaded)
+        return;
+    std::printf ("[INFO]  %s\n[INFO]  metadatos: %s\n", sep.describe().toRawUTF8(), sep.getMetadata().toRawUTF8());
+
+    // Solo bombos (sin voz): la voz que saca el modelo es poca.
+    auto drums = toBuffer (clickTrack (120.0, 15.0, sr, 0.25));
+    drums.setSize (2, drums.getNumSamples(), true);
+    drums.copyFrom (1, 0, drums, 0, 0, drums.getNumSamples());
+    juce::AudioBuffer<float> vocals;
+    int calls = 0;
+    const auto start = juce::Time::getMillisecondCounterHiRes();
+    const bool ok = sep.separateVocals (drums, vocals, [&calls] (double) { ++calls; return true; });
+    const double seconds = (juce::Time::getMillisecondCounterHiRes() - start) / 1000.0;
+    bool finite = true;
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < vocals.getNumSamples(); ++i)
+            finite = finite && std::isfinite (vocals.getSample (ch, i));
+    check (ok && finite && vocals.getNumSamples() == drums.getNumSamples() && calls == 2,
+           "stems: separa 15 s (2 trozos, valores validos)", calls, 2.0);
+    const double ratio = vocals.getRMSLevel (0, 0, vocals.getNumSamples()) / drums.getRMSLevel (0, 0, drums.getNumSamples());
+    check (ratio < 0.3, "stems: en una pista de bombos casi no hay voz (proporcion)", ratio, 0.0);
+    std::printf ("[INFO]  separar 15 s en CPU: %.1f s (%.2f x tiempo real)\n", seconds, seconds / 15.0);
+
+    // Cancelar a mitad.
+    const bool cancelled = ! sep.separateVocals (drums, vocals, [] (double p) { return p < 0.5; });
+    check (cancelled, "stems: se puede cancelar a mitad", 1.0, 1.0);
+}
+
+void testDeckStems()
+{
+    // Cancion = "instrumental" (220 Hz) + "voz" (880 Hz); la voz separada es exactamente el 880.
+    const int n = (int) (20.0 * sr);
+    juce::AudioBuffer<float> song (2, n);
+    auto voice = std::make_shared<juce::AudioBuffer<float>> (2, n);
+    for (int i = 0; i < n; ++i)
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            const float inst = 0.3f * (float) std::sin (2.0 * juce::MathConstants<double>::pi * 220.0 * i / sr);
+            const float v = 0.3f * (float) std::sin (2.0 * juce::MathConstants<double>::pi * 880.0 * i / sr);
+            song.setSample (ch, i, inst + v);
+            voice->setSample (ch, i, v);
+        }
+    juce::AudioFormatManager formats;
+    midj::Deck deck (formats);
+    deck.prepareToPlay (blockSize, sr);
+    deck.setKeyLock (false);
+    deck.loadBuffer (song, sr, "stems", { 120.0, 0.0 });
+    auto shortVoice = std::make_shared<juce::AudioBuffer<float>> (2, n - 10);
+    check (! deck.setVocals ({}, shortVoice) && ! deck.hasStems(), "stems en el deck: una voz de otro tamano se rechaza", 0.0, 0.0);
+    check (deck.setVocals ({}, voice) && deck.hasStems(), "stems en el deck: se aceptan", 1.0, 1.0);
+
+    deck.play();
+    auto out = renderOutput (deck, 1.0);
+    float diff = 0.0f;
+    for (int i = 0; i < out.getNumSamples(); ++i)
+        diff = std::max (diff, std::abs (out.getSample (0, i) - song.getSample (0, i)));
+    check (diff < 1e-5f, "stems: voz e instrumental encendidos = la cancion tal cual", diff, 0.0);
+
+    deck.setVocalsOn (false);
+    out = renderOutput (deck, 1.0);
+    const double instOnly = sineFrequency (out, (int) (0.2 * sr), out.getNumSamples());
+    check (std::abs (instOnly - 220.0) < 0.5 && maxStep (out, 1, out.getNumSamples()) < 0.08f,
+           "stems: sin voz suena solo lo instrumental (220 Hz), sin clic", instOnly, 220.0);
+    deck.setVocalsOn (true);
+    deck.setInstrumentalOn (false);
+    out = renderOutput (deck, 1.0);
+    const double voiceOnly = sineFrequency (out, (int) (0.2 * sr), out.getNumSamples());
+    check (std::abs (voiceOnly - 880.0) < 0.5, "stems: sin instrumental suena solo la voz (880 Hz)", voiceOnly, 880.0);
+
+    deck.setKeyLock (true);
+    deck.setInstrumentalOn (true);
+    deck.setVocalsOn (false);
+    deck.setSpeed (1.06);
+    out = renderOutput (deck, 2.0);
+    const double withKeylock = sineFrequency (out, (int) (0.5 * sr), out.getNumSamples());
+    check (std::abs (withKeylock - 220.0) < 0.5, "stems con keylock +6 %: sin voz y con su tono (220 Hz)", withKeylock, 220.0);
+
+    // Al cargar otra cancion los stems se olvidan y los dos vuelven a estar encendidos.
+    deck.loadBuffer (song, sr, "otra", { 120.0, 0.0 });
+    check (! deck.hasStems() && deck.isVocalsOn() && deck.isInstrumentalOn(), "stems: una cancion nueva empieza sin stems", 0.0, 0.0);
+}
+
+void testStemsService()
+{
+    // Servicio completo: separa un WAV, guarda la voz en la cache y la segunda vez la lee de ahi.
+    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("MiDJTestsStems");
+    dir.deleteRecursively();
+    const auto song = dir.getChildFile ("cancion.wav");
+    writeClickWav (song, 120.0, 14.0);
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    std::shared_ptr<const juce::AudioBuffer<float>> got;
+    {
+        midj::StemsService service (formats, dir, stemsModelFolder());
+        service.request (song, true);
+        const auto deadline = juce::Time::getMillisecondCounter() + 180000;
+        while (service.getStatus (song) != midj::StemsService::Status::ready
+               && service.getStatus (song) != midj::StemsService::Status::failed && juce::Time::getMillisecondCounter() < deadline)
+            juce::Thread::sleep (100);
+        check (service.getStatus (song) == midj::StemsService::Status::ready, "servicio de stems: separa la cancion", 1.0, 1.0);
+        check (service.isCached (song), "servicio de stems: guarda la voz en la cache", 1.0, 1.0);
+        const auto cache = service.cacheFileFor (song);
+        std::unique_ptr<juce::AudioFormatReader> r (formats.createReaderFor (cache));
+        check (r != nullptr && r->lengthInSamples == (juce::int64) (14.0 * sr) && r->numChannels == 2,
+               "servicio de stems: la voz en FLAC mide lo mismo que la cancion", r ? (double) r->lengthInSamples : 0.0, 14.0 * sr);
+        r.reset();
+
+        // Otra vez: sale de la cache (mucho mas rapido que separar).
+        const auto start = juce::Time::getMillisecondCounterHiRes();
+        service.request (song, true);
+        juce::Thread::sleep (50);
+        while (service.getStatus (song) != midj::StemsService::Status::ready && juce::Time::getMillisecondCounterHiRes() - start < 30000)
+            juce::Thread::sleep (20);
+        const double ms = juce::Time::getMillisecondCounterHiRes() - start;
+        check (ms < 3000.0, "servicio de stems: la segunda vez sale de la cache (ms)", ms, 0.0);
+
+        // Si el archivo cambia, la cache ya no vale.
+        writeClickWav (song, 100.0, 14.0);
+        song.setLastModificationTime (juce::Time::getCurrentTime() + juce::RelativeTime::minutes (2));
+        check (! service.isCached (song), "servicio de stems: un archivo cambiado no usa la cache vieja", 0.0, 0.0);
+
+        // Cerrar con una separacion a medias no se queda colgado.
+        service.request (song, true);
+        while (service.getStatus (song) != midj::StemsService::Status::working && juce::Time::getMillisecondCounterHiRes() - start < 60000)
+            juce::Thread::sleep (20);
+    }
+    check (true, "servicio de stems: se cierra aunque este separando", 0.0, 0.0);
+    dir.deleteRecursively();
+}
+
+// MiDJTests --stems cancion.mp3 [cpu|gpu] [segundos]: separa y guarda voz e instrumental.
+int stemsFile (const juce::String& path, bool gpu, double seconds, const juce::File& outDir)
+{
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    double rate = 0.0;
+    auto audio = readFile (formats, juce::File (path), rate);
+    if (audio == nullptr)
+        return 1;
+    // Un fragmento de 'seconds' desde el minuto 1 (donde ya suele haber voz).
+    const int from = std::min ((int) (60.0 * rate), juce::jmax (0, audio->getNumSamples() - (int) (seconds * rate)));
+    const int count = std::min ((int) (seconds * rate), audio->getNumSamples() - from);
+    juce::AudioBuffer<float> clip (2, count);
+    for (int ch = 0; ch < 2; ++ch)
+        clip.copyFrom (ch, 0, *audio, ch, from, count);
+
+    midj::StemSeparator sep;
+    juce::String error;
+    auto t0 = juce::Time::getMillisecondCounterHiRes();
+    if (! sep.load (stemsModelFolder(), gpu ? midj::StemSeparator::Device::gpu : midj::StemSeparator::Device::cpu, error))
+    {
+        std::printf ("No se pudo cargar: %s\n", error.toRawUTF8());
+        return 1;
+    }
+    std::printf ("%s\n  modelo: %s, carga %.1f s\n", juce::File (path).getFileName().toRawUTF8(), sep.describe().toRawUTF8(),
+                 (juce::Time::getMillisecondCounterHiRes() - t0) / 1000.0);
+    t0 = juce::Time::getMillisecondCounterHiRes();
+    const auto at44 = midj::StemSeparator::resample (clip, rate, midj::StemSeparator::modelSampleRate);
+    juce::AudioBuffer<float> vocals44;
+    if (! sep.separateVocals (at44, vocals44))
+    {
+        std::printf ("Fallo la separacion: %s\n", sep.getLastError().toRawUTF8());
+        return 1;
+    }
+    auto vocals = midj::StemSeparator::resample (vocals44, midj::StemSeparator::modelSampleRate, rate);
+    vocals.setSize (2, count, true);
+    const double took = (juce::Time::getMillisecondCounterHiRes() - t0) / 1000.0;
+    juce::AudioBuffer<float> instrumental (2, count);
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        instrumental.copyFrom (ch, 0, clip, ch, 0, count);
+        instrumental.addFrom (ch, 0, vocals, ch, 0, count, -1.0f);
+    }
+    std::printf ("  %.0f s de audio separados en %.1f s (%.2f x tiempo real)\n", count / rate, took, took / (count / rate));
+    std::printf ("  nivel: original %.3f, voz %.3f, instrumental %.3f (RMS)\n", clip.getRMSLevel (0, 0, count),
+                 vocals.getRMSLevel (0, 0, count), instrumental.getRMSLevel (0, 0, count));
+
+    outDir.createDirectory();
+    const auto base = juce::File (path).getFileNameWithoutExtension().substring (0, 24).trim();
+    for (auto [suffix, buffer] : { std::pair<const char*, juce::AudioBuffer<float>*> { " - voz.wav", &vocals },
+                                   std::pair<const char*, juce::AudioBuffer<float>*> { " - instrumental.wav", &instrumental } })
+    {
+        const auto file = outDir.getChildFile (base + suffix);
+        file.deleteFile();
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (new juce::FileOutputStream (file), rate, 2, 16, {}, 0));
+        if (w != nullptr)
+            w->writeFromAudioSampleBuffer (*buffer, 0, count);
+    }
+    return 0;
+}
+
 }
 
 #if JUCE_WINDOWS
@@ -1848,6 +2092,9 @@ int main (int argc, char* argv[])
         }
         return 0;
     }
+    if (args[0] == "--stems" && args.size() >= 2)
+        return stemsFile (args[1], args[2] == "gpu", args.size() >= 4 ? args[3].getDoubleValue() : 30.0,
+                          juce::File ("D:/Hamed/VirtualDJ/Pruebas stems"));
     if (args[0] == "--benchmark")
     {
         benchmarkKeyLock (midj::TimeStretcher::Engine::finer);
@@ -1882,6 +2129,12 @@ int main (int argc, char* argv[])
     std::printf ("== Canal: ganancia, EQ de 3 bandas, filtro y volumen ==\n");
     testChannelStrip();
     testMixerChannels();
+
+    std::printf ("== Stems con IA ==\n");
+    testStemStft();
+    testStemModel();
+    testDeckStems();
+    testStemsService();
 
     std::printf ("== Automix ==\n");
     testMixPoints();

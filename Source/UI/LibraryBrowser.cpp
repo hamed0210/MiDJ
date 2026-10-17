@@ -353,7 +353,7 @@ void LibraryBrowser::cellClicked (int row, int, const juce::MouseEvent& e)
 
 void LibraryBrowser::showTrackMenu (int row)
 {
-    enum { addToAutomix = 1, playNext, loadA, loadB, removeFromAutomix };
+    enum { addToAutomix = 1, playNext, loadA, loadB, removeFromAutomix, prepareStems };
     juce::PopupMenu menu;
     if (isAutomixView())
         menu.addItem (removeFromAutomix, "Quitar de la lista");
@@ -365,6 +365,11 @@ void LibraryBrowser::showTrackMenu (int row)
     menu.addSeparator();
     menu.addItem (loadA, "Cargar en el deck A");
     menu.addItem (loadB, "Cargar en el deck B");
+    if (onPrepareStems)
+    {
+        menu.addSeparator();
+        menu.addItem (prepareStems, "Preparar stems (voz / instrumental) en segundo plano");
+    }
     const auto track = tracks[(size_t) row];
     menu.showMenuAsync (juce::PopupMenu::Options(), [this, track, row] (int r)
     {
@@ -372,6 +377,7 @@ void LibraryBrowser::showTrackMenu (int row)
         else if (r == playNext && automix != nullptr)         automix->insertNext (itemFor (track));
         else if (r == removeFromAutomix && automix != nullptr) automix->remove (row);
         else if ((r == loadA || r == loadB) && onLoadToDeck)  onLoadToDeck (track, r == loadA ? 0 : 1);
+        else if (r == prepareStems && onPrepareStems)          onPrepareStems (track);
     });
 }
 

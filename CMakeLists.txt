@@ -38,6 +38,24 @@ if(MSVC)
     target_compile_options(sqlite3 PRIVATE /W0)
 endif()
 
+# ONNX Runtime con DirectML (Microsoft, licencia MIT) para los stems con IA: separacion en CPU o en la
+# tarjeta grafica. Se usa la DLL que trae el paquete (no la de System32) copiandola junto a cada programa.
+set(ONNXRUNTIME_DIR "D:/Tools/onnxruntime" CACHE PATH "Carpeta de ONNX Runtime (include y lib)")
+add_library(onnxruntime SHARED IMPORTED)
+set_target_properties(onnxruntime PROPERTIES
+    IMPORTED_LOCATION ${ONNXRUNTIME_DIR}/lib/onnxruntime.dll
+    IMPORTED_IMPLIB ${ONNXRUNTIME_DIR}/lib/onnxruntime.lib
+    INTERFACE_INCLUDE_DIRECTORIES ${ONNXRUNTIME_DIR}/include)
+# Modelo de separacion (Spleeter 2 stems de sherpa-onnx, pesos de Deezer con licencia MIT).
+set(STEMS_MODEL_DIR "D:/Tools/models/spleeter-2stems-int8" CACHE PATH "Carpeta del modelo de stems")
+
+function(midj_copy_runtime target)
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${ONNXRUNTIME_DIR}/lib/onnxruntime.dll ${ONNXRUNTIME_DIR}/lib/DirectML.dll $<TARGET_FILE_DIR:${target}>
+        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${target}>/models/spleeter-2stems
+        COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different ${STEMS_MODEL_DIR} $<TARGET_FILE_DIR:${target}>/models/spleeter-2stems)
+endfunction()
+
 # Motor de audio: independiente de la interfaz para poder probarlo solo
 add_library(MiDJEngine STATIC
     Source/Control/Actions.cpp
@@ -53,6 +71,8 @@ add_library(MiDJEngine STATIC
     Source/Engine/MixPoints.cpp
     Source/Engine/SampleData.cpp
     Source/Engine/Sampler.cpp
+    Source/Engine/StemSeparator.cpp
+    Source/Engine/StemsService.cpp
     Source/Engine/TimeStretcher.cpp
     Source/Library/Library.cpp
     Source/Library/TagReader.cpp)
@@ -60,7 +80,7 @@ target_include_directories(MiDJEngine PUBLIC Source)
 # Los modulos JUCE se compilan una sola vez aqui (PRIVATE) y se exportan sus
 # cabeceras y definiciones a la app y a las pruebas (patron recomendado por JUCE).
 target_link_libraries(MiDJEngine
-    PRIVATE juce::juce_audio_utils juce::juce_audio_formats juce::juce_dsp rubberband sqlite3
+    PRIVATE juce::juce_audio_utils juce::juce_audio_formats juce::juce_dsp rubberband sqlite3 onnxruntime
     PUBLIC  juce::juce_recommended_config_flags juce::juce_recommended_lto_flags
             juce::juce_recommended_warning_flags)
 target_compile_definitions(MiDJEngine PUBLIC
@@ -86,10 +106,12 @@ target_sources(MiDJ PRIVATE
     Source/UI/SamplerPanel.cpp
     Source/UI/DarkLookAndFeel.cpp)
 target_link_libraries(MiDJ PRIVATE MiDJEngine)
+midj_copy_runtime(MiDJ)
 
 # Pruebas automaticas (ctest)
 enable_testing()
 juce_add_console_app(MiDJTests PRODUCT_NAME "MiDJTests")
 target_sources(MiDJTests PRIVATE Tests/TestMain.cpp)
 target_link_libraries(MiDJTests PRIVATE MiDJEngine)
+midj_copy_runtime(MiDJTests)
 add_test(NAME MiDJTests COMMAND MiDJTests)

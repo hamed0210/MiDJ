@@ -42,6 +42,10 @@ void ControlSurface::pressButton (const juce::String& action)
         deck.syncTo (deckFor (1 - d));
     else if (verb == "keylock")
         deck.setKeyLock (! deck.isKeyLocked());
+    else if (verb == "vocals")
+        deck.setVocalsOn (! deck.isVocalsOn());
+    else if (verb == "instrumental")
+        deck.setInstrumentalOn (! deck.isInstrumentalOn());
     else if (verb == "load")
         juce::MessageManager::callAsync ([this, d, flag = alive] { if (flag->load() && onLoadSelected) onLoadSelected (d); });
     else if (verb.startsWith ("loop"))

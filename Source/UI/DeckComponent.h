@@ -26,6 +26,11 @@ public:
     void resized() override;
     void mouseDown (const juce::MouseEvent& e) override;   // clic en la forma de onda = saltar
 
+    // Stems: estado de la separacion de la cancion cargada (lo da la ventana) y pedirla.
+    enum class StemsState { none, queued, working, failed };
+    std::function<std::pair<StemsState, double>()> getStemsState;
+    std::function<void()> onStemsRequested;
+
     // Controles asignables por MIDI. prefix: "deck1." o "deck2.".
     void addLearnTargets (std::vector<LearnTarget>& out, const juce::String& prefix);
 
@@ -61,7 +66,8 @@ private:
     juce::TextButton cueButton { "CUE" };
     juce::TextButton playButton { "Play" };
     juce::TextButton syncButton { "SYNC" };
-    juce::TextButton keyButton { "KEY" };   // keylock: tempo sin cambiar el tono
+    juce::TextButton keyButton { "KEY" };
+    juce::TextButton stemsButton { "STEMS" }, vocalButton { "VOZ" }, instrumentalButton { "INSTR" };   // keylock: tempo sin cambiar el tono
     static constexpr std::array<int, 4> loopSizes { 1, 2, 4, 8 };
     std::array<juce::TextButton, 4> loopButtons;
     juce::Label loopLabel;

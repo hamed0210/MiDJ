@@ -23,6 +23,8 @@ public:
     std::function<void (const TrackInfo&)> onLoadRequest;
     // Menu de una cancion: cargar en un deck concreto (0 = A, 1 = B).
     std::function<void (const TrackInfo&, int deckIndex)> onLoadToDeck;
+    // Menu de una cancion: preparar sus stems en segundo plano.
+    std::function<void (const TrackInfo&)> onPrepareStems;
 
     // La lista de automix aparece como un origen mas, con su barra de control.
     void setAutomix (Automix* automix);
