@@ -53,6 +53,8 @@ Source/
     DeckVideo.*         hilo de video de un deck: el fotograma que toca segun su posicion
     Compositor.*        compositor en la GPU (Direct3D 11) a ritmo fijo y sus salidas (como OBS)
     VideoMix.*          capas de cada fotograma: los decks segun el crossfader, rotulos y logo
+    Scenes.*            escenas y elementos (como OBS): fuentes, colocacion, recorte y XML
+    VideoProgram.*      la escena al aire, sus capas y las transiciones entre escenas
   Control/              controladoras MIDI
     Actions.*           acciones asignables (play, cue, tempo, EQ, efectos, jog...)
     MidiMapping.*       asignaciones mensaje MIDI -> accion, guardadas en XML
@@ -69,6 +71,7 @@ Source/
     MidiLearnOverlay.*  capa del modo aprender MIDI
     SamplerPanel.*      panel del sampler: pads, volumen y STOP
     VideoWindow.*       vista previa y proyectores a pantalla completa (uno por monitor)
+    ScenePanel.*        panel de escenas, fuentes, transicion y propiedades
     DarkLookAndFeel.*   estilo visual oscuro
 Tests/
   TestMain.cpp          pruebas automáticas del motor (ctest) y herramientas:
@@ -118,6 +121,21 @@ tarjeta gráfica (DXVA) y, si falla, en la CPU. Ajustes en `%APPDATA%\MiDJ\video
 `<VIDEO device="cpu" width="1280" height="720" fps="30"/>` (`device="cpu"` fuerza la CPU; el resto, el
 tamaño y el ritmo del programa). En este portátil (A8 + Radeon R5, Release) un video en un deck cuesta ~34 %
 de un núcleo con la vista previa y ~5 % más con un proyector; componer, ~1,2 ms por fotograma.
+
+### Escenas
+
+A la derecha de la vista previa está el panel de escenas, como el de OBS (se guarda en
+`%APPDATA%\MiDJ\scenes.xml`; por defecto, una escena "Mezcla" con la mezcla de los decks):
+- **Escenas**: clic para ponerla al aire con la transición elegida (Corte, Fundido, Fundido a negro,
+  Deslizar o Barrido, de 0 a 3 s). Botones para crear, borrar y renombrar.
+- **Fuentes** de la escena (la de arriba se ve encima): Mezcla de decks, Deck A, Deck B, Imagen (PNG, JPG,
+  GIF), Texto y Color. En el texto, `{titulo}`, `{artista}` y `{bpm}` se cambian por la canción del deck que
+  más se ve (por ejemplo "Ahora suena: {titulo}"). Clic en el punto: mostrar u ocultar; Subir y Bajar.
+- **Propiedades** de la fuente elegida: texto, tamaño, negrita, sombra, color, imagen, opacidad, giro,
+  recorte, Ajustar a pantalla y Restablecer.
+- En la vista previa: clic para elegir una fuente (recuadro rojo), arrastrar para moverla (se pega a los
+  bordes y al centro; Mayús para no pegarse), arrastrar una esquina para escalarla sin deformar (Mayús para
+  deformar), flechas para mover de 1 en 1 (Mayús: de 10 en 10) y Supr para quitarla.
 
 ## Sampler
 
@@ -170,3 +188,4 @@ los pesos de Spleeter son de Deezer con licencia MIT (exportados a ONNX por el p
 - Video: MP4/MOV/WMV (y M4A/AAC/WMA) en los decks con Media Foundation de Windows; un hilo de video por deck que sigue la posición que se oye (tras un salto, primer fotograma en ~0,1 s y alcanza al audio sin congelarse); ventana VIDEO con la mezcla según el crossfader, rótulo con título y artista para las canciones sin video y pantalla completa sin bordes en el segundo monitor.
 - Video en la GPU: decodificación DXVA con Direct3D 11 (8 veces menos CPU en este equipo; saltos en ~45 ms) con vuelta a la CPU si falla, y sin decodificar mientras la ventana de video está cerrada.
 - Compositor de video en la GPU como el de OBS (Direct3D 11, 1280x720 a 30 fps, fundido en luz lineal) con vista previa y proyectores a pantalla completa en cualquier monitor, sin bordes ni cursor; sin copias de fotogramas entre el decodificador y la GPU más allá de la subida.
+- Escenas como en OBS: fuentes (mezcla de decks, deck A/B, imagen, texto con título/artista/BPM de la canción que suena, color) con posición, escala, giro, recorte y opacidad; edición con el ratón en la vista previa; transiciones Corte, Fundido, Fundido a negro, Deslizar y Barrido compuestas en la GPU; guardadas en `scenes.xml`.

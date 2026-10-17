@@ -263,7 +263,8 @@ void MainComponent::toggleVideoWindow()
     if (videoStage == nullptr)
     {
         videoStage = std::make_unique<VideoStage> (std::array<DeckVideo*, 2> { &videoA, &videoB },
-                                                   std::array<const Deck*, 2> { &deckA, &deckB }, mixer, videoSettings());
+                                                   std::array<const Deck*, 2> { &deckA, &deckB }, mixer, videoSettings(),
+                                                   getDataFolder().getChildFile ("scenes.xml"));
         if (! videoStage->isReady())
         {
             const auto error = videoStage->getError();

@@ -52,38 +52,45 @@ void VideoMix::setTitle (int d, const juce::String& title)
     ++card.version;
 }
 
+Compositor::Layer VideoMix::picture (int d)
+{
+    Compositor::Layer layer;
+    auto* video = videos[(size_t) d];
+    if (video->hasVideo())
+    {
+        layer.image = video->getFrame();
+        layer.version = video->getFrameNumber();
+        layer.slot = d == 0 ? videoA : videoB;
+    }
+    if (! layer.image.isValid())
+    {
+        // Sin video (o aun sin primer fotograma): el rotulo.
+        const juce::SpinLock::ScopedLockType sl (cardLock);
+        layer.image = cards[(size_t) d].image;
+        layer.version = cards[(size_t) d].version;
+        layer.slot = d == 0 ? cardA : cardB;
+    }
+    return layer;
+}
+
+Compositor::Layer VideoMix::logoLayer() const
+{
+    Compositor::Layer l;
+    l.slot = logoSlot;
+    l.image = logo;
+    l.version = 1;
+    return l;
+}
+
 void VideoMix::buildLayers (std::vector<Compositor::Layer>& layers)
 {
-    std::array<Compositor::Layer, 2> picture;
-    std::array<bool, 2> has {};
-    for (int d = 0; d < 2; ++d)
-    {
-        auto& layer = picture[(size_t) d];
-        auto* video = videos[(size_t) d];
-        if (video->hasVideo())
-        {
-            layer.image = video->getFrame();
-            layer.version = video->getFrameNumber();
-            layer.slot = d == 0 ? videoA : videoB;
-        }
-        if (! layer.image.isValid())
-        {
-            // Sin video (o aun sin primer fotograma): el rotulo.
-            const juce::SpinLock::ScopedLockType sl (cardLock);
-            layer.image = cards[(size_t) d].image;
-            layer.version = cards[(size_t) d].version;
-            layer.slot = d == 0 ? cardA : cardB;
-        }
-        has[(size_t) d] = layer.image.isValid();
-    }
+    std::array<Compositor::Layer, 2> picture { this->picture (0), this->picture (1) };
+    const std::array<bool, 2> has { picture[0].image.isValid(), picture[1].image.isValid() };
 
     const auto w = weights (mixer.getCrossfader(), has[0], has[1]);
     if (! has[0] && ! has[1])
     {
-        Compositor::Layer l;
-        l.slot = logoSlot;
-        l.image = logo;
-        l.version = 1;
+        auto l = logoLayer();
         l.area = { 0.0f, 0.0f, (float) width, (float) height };
         layers.push_back (std::move (l));
         return;

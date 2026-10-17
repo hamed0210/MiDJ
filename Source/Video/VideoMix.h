@@ -24,6 +24,12 @@ public:
     // Hilo del compositor: las capas del fotograma (deck A debajo, B encima con su parte).
     void buildLayers (std::vector<Compositor::Layer>& layers);
 
+    // Hilo del compositor: la imagen de un deck (su video o, si no tiene, su rotulo); no valida
+    // si el deck esta vacio. Para las escenas, que la colocan donde diga el elemento.
+    Compositor::Layer picture (int deckIndex);
+    Compositor::Layer logoLayer() const;
+    float getCrossfader() const { return mixer.getCrossfader(); }
+
     // El rotulo de una cancion sin video, del tamano del programa.
     static juce::Image renderCard (const juce::String& title, double bpm, int deckIndex, int width, int height);
     static juce::Image renderLogo (int width, int height);

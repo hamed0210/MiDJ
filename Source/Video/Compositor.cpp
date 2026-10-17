@@ -26,8 +26,8 @@ namespace midj
 {
 namespace
 {
-    // Un solo vertex shader: un rectangulo (4 vertices sin bufer) colocado por las constantes.
-    // Dos pixel shaders:
+    // Un solo vertex shader: un cuadrilatero (4 vertices sin bufer) con sus esquinas en las
+    // constantes, asi sirve para capas giradas. Dos pixel shaders:
     //  - capa: las imagenes de JUCE son premultiplicadas en espacio sRGB; se pasan a luz lineal
     //    (como OBS, que mezcla en lineal: un fundido a la mitad no oscurece) y se aplica la opacidad.
     //    El programa es una textura sRGB: la GPU mezcla en lineal y guarda en sRGB.
@@ -35,8 +35,9 @@ namespace
     const char* shaderSource = R"(
 cbuffer Placement : register(b0)
 {
-    float4 dest;     // izquierda, arriba, derecha, abajo en coordenadas de pantalla (-1..1)
-    float4 uv;       // zona de la textura
+    float4 p01;      // esquinas arriba izquierda y arriba derecha en coordenadas de pantalla (-1..1)
+    float4 p23;      // abajo izquierda y abajo derecha
+    float4 uv;       // zona de la textura (izquierda, arriba, derecha, abajo)
     float4 params;   // x = opacidad
 };
 Texture2D image : register(t0);
@@ -47,8 +48,9 @@ struct VsOut { float4 pos : SV_Position; float2 uv : TEXCOORD0; };
 VsOut vs (uint id : SV_VertexID)
 {
     float2 corner = float2 (id & 1, id >> 1);   // (0,0) (1,0) (0,1) (1,1): tira de 2 triangulos
+    float2 p = id == 0 ? p01.xy : id == 1 ? p01.zw : id == 2 ? p23.xy : p23.zw;
     VsOut o;
-    o.pos = float4 (lerp (dest.x, dest.z, corner.x), lerp (dest.y, dest.w, corner.y), 0, 1);
+    o.pos = float4 (p, 0, 1);
     o.uv = lerp (uv.xy, uv.zw, corner);
     return o;
 }
@@ -74,7 +76,7 @@ float4 psCopy (VsOut i) : SV_Target
 
     struct Placement
     {
-        float dest[4];
+        float points[8];
         float uv[4];
         float params[4];
     };
@@ -86,6 +88,16 @@ float4 psCopy (VsOut i) : SV_Target
         ComPtr<ID3D11RenderTargetView> target;
         int width = 0, height = 0;
         bool failed = false;
+        std::vector<Compositor::Quad> overlay;
+    };
+
+    // Una textura que se puede usar de destino (sRGB: mezcla en lineal) y de imagen.
+    struct RenderTexture
+    {
+        ComPtr<ID3D11Texture2D> texture;
+        ComPtr<ID3D11RenderTargetView> target;
+        ComPtr<ID3D11ShaderResourceView> srgbView;    // se lee en lineal (para copiar a las salidas)
+        ComPtr<ID3D11ShaderResourceView> plainView;   // se lee tal cual (como las imagenes, para el shader de capas)
     };
 
     struct SlotTexture
@@ -115,9 +127,10 @@ struct Compositor::Impl
     ComPtr<ID3D11BlendState> premultipliedBlend;
     ComPtr<ID3D11RasterizerState> rasterizer;
 
-    ComPtr<ID3D11Texture2D> program, staging;
-    ComPtr<ID3D11RenderTargetView> programTarget;
-    ComPtr<ID3D11ShaderResourceView> programView;
+    RenderTexture program;
+    std::array<RenderTexture, 2> sceneTextures;   // escenas de una transicion
+    ComPtr<ID3D11Texture2D> staging;
+    ComPtr<ID3D11ShaderResourceView> overlayColour;   // 1x1 del color de la seleccion
 
     std::map<int, SlotTexture> slots;
     std::mutex gpuLock;   // el contexto de Direct3D se usa desde un hilo cada vez
@@ -127,7 +140,7 @@ struct Compositor::Impl
 
     std::thread thread;
     std::atomic<bool> running { false };
-    std::function<void (std::vector<Layer>&)>* build = nullptr;
+    std::function<void (Frame&)>* build = nullptr;
 
     std::atomic<juce::uint64> frames { 0 }, lagged { 0 };
     std::atomic<double> renderMs { 0.0 };
@@ -189,7 +202,29 @@ struct Compositor::Impl
         if (FAILED (hr = device->CreateRasterizerState (&rd, &rasterizer)))
             return fail ("CreateRasterizerState", hr);
 
-        // El programa: sin tipo para poder verlo como sRGB (mezcla en lineal) y copiarlo a la CPU.
+        if (! createRenderTexture (program) || ! createRenderTexture (sceneTextures[0]) || ! createRenderTexture (sceneTextures[1]))
+            return false;
+
+        // Color de la seleccion de la vista previa (rojo, como OBS).
+        const uint32_t red = 0xffff3030u;
+        D3D11_TEXTURE2D_DESC td {};
+        td.Width = td.Height = 1;
+        td.MipLevels = td.ArraySize = 1;
+        td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        td.SampleDesc.Count = 1;
+        td.Usage = D3D11_USAGE_IMMUTABLE;
+        td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        D3D11_SUBRESOURCE_DATA init { &red, 4, 4 };
+        ComPtr<ID3D11Texture2D> redTexture;
+        if (FAILED (hr = device->CreateTexture2D (&td, &init, &redTexture))
+            || FAILED (hr = device->CreateShaderResourceView (redTexture.Get(), nullptr, &overlayColour)))
+            return fail ("Textura de la seleccion", hr);
+        return true;
+    }
+
+    // Sin tipo para verla como sRGB (mezcla en lineal), tal cual (para el shader de capas) y copiarla a la CPU.
+    bool createRenderTexture (RenderTexture& rt)
+    {
         D3D11_TEXTURE2D_DESC td {};
         td.Width = (UINT) settings.width;
         td.Height = (UINT) settings.height;
@@ -198,8 +233,9 @@ struct Compositor::Impl
         td.SampleDesc.Count = 1;
         td.Usage = D3D11_USAGE_DEFAULT;
         td.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
-        if (FAILED (hr = device->CreateTexture2D (&td, nullptr, &program)))
-            return fail ("Textura del programa", hr);
+        HRESULT hr = device->CreateTexture2D (&td, nullptr, &rt.texture);
+        if (FAILED (hr))
+            return fail ("Textura de composicion", hr);
         D3D11_RENDER_TARGET_VIEW_DESC rtv {};
         rtv.Format = DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
         rtv.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
@@ -207,11 +243,14 @@ struct Compositor::Impl
         srv.Format = DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
         srv.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
         srv.Texture2D.MipLevels = 1;
-        if (FAILED (hr = device->CreateRenderTargetView (program.Get(), &rtv, &programTarget))
-            || FAILED (hr = device->CreateShaderResourceView (program.Get(), &srv, &programView)))
-            return fail ("Vistas del programa", hr);
+        D3D11_SHADER_RESOURCE_VIEW_DESC plain = srv;
+        plain.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        if (FAILED (hr = device->CreateRenderTargetView (rt.texture.Get(), &rtv, &rt.target))
+            || FAILED (hr = device->CreateShaderResourceView (rt.texture.Get(), &srv, &rt.srgbView))
+            || FAILED (hr = device->CreateShaderResourceView (rt.texture.Get(), &plain, &rt.plainView)))
+            return fail ("Vistas de composicion", hr);
         const float black[4] = { 0, 0, 0, 1 };
-        context->ClearRenderTargetView (programTarget.Get(), black);
+        context->ClearRenderTargetView (rt.target.Get(), black);
         return true;
     }
 
@@ -253,15 +292,21 @@ struct Compositor::Impl
 
     // --- Dibujo ------------------------------------------------------------------------------
 
-    void draw (ID3D11ShaderResourceView* view, ID3D11PixelShader* shader, juce::Rectangle<float> rect,
-               float targetW, float targetH, float opacity)
+    // Un cuadrilatero (esquinas en pixeles del destino, en el orden de Quad) con una zona de la textura.
+    void draw (ID3D11ShaderResourceView* view, ID3D11PixelShader* shader, const Quad& q,
+               float targetW, float targetH, juce::Rectangle<float> uv, float opacity)
     {
         Placement p {};
-        p.dest[0] = rect.getX() / targetW * 2.0f - 1.0f;
-        p.dest[1] = 1.0f - rect.getY() / targetH * 2.0f;
-        p.dest[2] = rect.getRight() / targetW * 2.0f - 1.0f;
-        p.dest[3] = 1.0f - rect.getBottom() / targetH * 2.0f;
-        p.uv[0] = 0.0f; p.uv[1] = 0.0f; p.uv[2] = 1.0f; p.uv[3] = 1.0f;
+        auto put = [&] (int i, juce::Point<float> pt)
+        {
+            p.points[i * 2] = pt.x / targetW * 2.0f - 1.0f;
+            p.points[i * 2 + 1] = 1.0f - pt.y / targetH * 2.0f;
+        };
+        put (0, q[0]);   // arriba izquierda
+        put (1, q[1]);   // arriba derecha
+        put (2, q[3]);   // abajo izquierda (orden de la tira de triangulos)
+        put (3, q[2]);   // abajo derecha
+        p.uv[0] = uv.getX(); p.uv[1] = uv.getY(); p.uv[2] = uv.getRight(); p.uv[3] = uv.getBottom();
         p.params[0] = opacity;
         context->UpdateSubresource (constants.Get(), 0, nullptr, &p, 0, 0);
         context->PSSetShader (shader, nullptr, 0);
@@ -328,50 +373,70 @@ struct Compositor::Impl
         return &slot;
     }
 
-    void compose (const std::vector<Layer>& layers)
+    // Dibuja las capas en una textura de composicion (el programa o una escena).
+    void compose (RenderTexture& into, const std::vector<Layer>& layers)
     {
         const float w = (float) settings.width, h = (float) settings.height;
         const float black[4] = { 0, 0, 0, 1 };
-        context->OMSetRenderTargets (1, programTarget.GetAddressOf(), nullptr);
-        context->ClearRenderTargetView (programTarget.Get(), black);
+        context->OMSetRenderTargets (1, into.target.GetAddressOf(), nullptr);
+        context->ClearRenderTargetView (into.target.Get(), black);
         context->OMSetBlendState (premultipliedBlend.Get(), nullptr, 0xffffffff);
         setViewport (w, h);
-        for (auto& [id, slot] : slots)
-            slot.used = false;
         for (const auto& layer : layers)
         {
-            if (! layer.image.isValid() || layer.image.getFormat() != juce::Image::ARGB || layer.opacity <= 0.0f)
+            if (layer.opacity <= 0.0f || layer.uv.isEmpty())
                 continue;
-            if (auto* slot = upload (layer))
+            ID3D11ShaderResourceView* view = nullptr;
+            float sw = w, sh = h;
+            if (layer.source == imageSource)
             {
-                const auto area = layer.area.isEmpty()
-                                      ? fitInside ((float) slot->width, (float) slot->height, { w, h })
-                                      : layer.area;
-                draw (slot->view.Get(), layerShader.Get(), area, w, h, juce::jlimit (0.0f, 1.0f, layer.opacity));
+                if (! layer.image.isValid() || layer.image.getFormat() != juce::Image::ARGB)
+                    continue;
+                auto* slot = upload (layer);
+                if (slot == nullptr)
+                    continue;
+                view = slot->view.Get();
+                sw = (float) slot->width;
+                sh = (float) slot->height;
             }
+            else if (juce::isPositiveAndBelow (layer.source, 2) && &into != &sceneTextures[(size_t) layer.source])
+            {
+                view = sceneTextures[(size_t) layer.source].plainView.Get();
+            }
+            if (view == nullptr)
+                continue;
+            const auto area = layer.area.isEmpty()
+                                  ? fitInside (sw * layer.uv.getWidth(), sh * layer.uv.getHeight(), { w, h })
+                                  : layer.area;
+            auto quad = corners (area, layer.rotation);
+            if (! layer.transform.isIdentity())
+                for (auto& p : quad)
+                    p.applyTransform (layer.transform);
+            draw (view, layerShader.Get(), quad, w, h, layer.uv, juce::jlimit (0.0f, 1.0f, layer.opacity));
         }
-        // Las texturas de capas que ya no estan se sueltan (p. ej. al quitar un video).
-        for (auto it = slots.begin(); it != slots.end();)
-            it = it->second.used ? std::next (it) : slots.erase (it);
         ID3D11ShaderResourceView* none = nullptr;
         context->PSSetShaderResources (0, 1, &none);
+        ID3D11RenderTargetView* noTarget = nullptr;
+        context->OMSetRenderTargets (1, &noTarget, nullptr);
     }
 
     void present()
     {
         const std::lock_guard<std::mutex> sl (outputsLock);
-        context->OMSetBlendState (nullptr, nullptr, 0xffffffff);
         for (auto& out : outputs)
         {
             if (out.failed || ! prepareOutput (out))
                 continue;
             const float black[4] = { 0, 0, 0, 1 };
             context->OMSetRenderTargets (1, out.target.GetAddressOf(), nullptr);
+            context->OMSetBlendState (nullptr, nullptr, 0xffffffff);
             context->ClearRenderTargetView (out.target.Get(), black);
-            setViewport ((float) out.width, (float) out.height);
-            const auto area = fitInside ((float) settings.width, (float) settings.height,
-                                         { (float) out.width, (float) out.height });
-            draw (programView.Get(), copyShader.Get(), area, (float) out.width, (float) out.height, 1.0f);
+            const float ow = (float) out.width, oh = (float) out.height;
+            setViewport (ow, oh);
+            const auto area = fitInside ((float) settings.width, (float) settings.height, { ow, oh });
+            draw (program.srgbView.Get(), copyShader.Get(), corners (area, 0.0f), ow, oh, { 0.0f, 0.0f, 1.0f, 1.0f }, 1.0f);
+            if (! out.overlay.empty())
+                drawOverlay (out, area);
             ID3D11ShaderResourceView* none = nullptr;
             context->PSSetShaderResources (0, 1, &none);
             const HRESULT hr = out.swapChain->Present (0, 0);   // sin esperar al refresco: el ritmo lo lleva el hilo
@@ -380,6 +445,33 @@ struct Compositor::Impl
         }
         ID3D11RenderTargetView* none = nullptr;
         context->OMSetRenderTargets (1, &none, nullptr);
+    }
+
+    // Los recuadros de seleccion: lados de 2 pixeles de pantalla y asas de 8 en las esquinas.
+    void drawOverlay (const Output& out, juce::Rectangle<float> area)
+    {
+        context->OMSetBlendState (premultipliedBlend.Get(), nullptr, 0xffffffff);
+        const float sx = area.getWidth() / (float) settings.width, sy = area.getHeight() / (float) settings.height;
+        const float ow = (float) out.width, oh = (float) out.height;
+        const juce::Rectangle<float> all { 0.0f, 0.0f, 1.0f, 1.0f };
+        for (const auto& box : out.overlay)
+        {
+            Quad q;
+            for (size_t i = 0; i < 4; ++i)
+                q[i] = { area.getX() + box[i].x * sx, area.getY() + box[i].y * sy };
+            for (size_t i = 0; i < 4; ++i)
+            {
+                const auto a = q[i], b = q[(i + 1) % 4];
+                const auto d = b - a;
+                const float len = std::sqrt (d.x * d.x + d.y * d.y);
+                if (len < 0.5f)
+                    continue;
+                const juce::Point<float> n { -d.y / len, d.x / len };   // normal de 1 pixel
+                draw (overlayColour.Get(), layerShader.Get(), { a - n, b - n, b + n, a + n }, ow, oh, all, 1.0f);
+            }
+            for (const auto& c : q)
+                draw (overlayColour.Get(), layerShader.Get(), corners ({ c.x - 4.0f, c.y - 4.0f, 8.0f, 8.0f }, 0.0f), ow, oh, all, 1.0f);
+        }
     }
 
     // Crea la cadena de intercambio de la ventana, o la redimensiona si cambio de tamano.
@@ -444,11 +536,19 @@ struct Compositor::Impl
         return true;
     }
 
-    void renderFrame (const std::vector<Layer>& layers)
+    void renderFrame (const Frame& frame)
     {
         const std::lock_guard<std::mutex> sl (gpuLock);
         bindPipeline();
-        compose (layers);
+        for (auto& [id, slot] : slots)
+            slot.used = false;
+        for (size_t s = 0; s < 2; ++s)
+            if (frame.useScene[s])
+                compose (sceneTextures[s], frame.scenes[s]);
+        compose (program, frame.layers);
+        // Las texturas de capas que ya no estan se sueltan (p. ej. al quitar un video).
+        for (auto it = slots.begin(); it != slots.end();)
+            it = it->second.used ? std::next (it) : slots.erase (it);
         present();
         ++frames;
     }
@@ -466,16 +566,16 @@ struct Compositor::Impl
         const double interval = (double) freq.QuadPart / settings.fps;
         QueryPerformanceCounter (&now);
         double next = (double) now.QuadPart;
-        std::vector<Layer> layers;
+        Frame frame;
 
         while (running.load())
         {
             LARGE_INTEGER begin {};
             QueryPerformanceCounter (&begin);
-            layers.clear();
+            frame.clear();
             if (build != nullptr && *build)
-                (*build) (layers);
-            renderFrame (layers);
+                (*build) (frame);
+            renderFrame (frame);
             QueryPerformanceCounter (&now);
             const double ms = (double) (now.QuadPart - begin.QuadPart) * 1000.0 / (double) freq.QuadPart;
             renderMs = renderMs.load() * 0.95 + ms * 0.05;
@@ -574,10 +674,25 @@ int Compositor::getNumOutputs() const
     return (int) impl->outputs.size();
 }
 
+void Compositor::setOverlay (void* hwnd, std::vector<Quad> boxes)
+{
+    const std::lock_guard<std::mutex> sl (impl->outputsLock);
+    for (auto& out : impl->outputs)
+        if (out.hwnd == (HWND) hwnd)
+            out.overlay = std::move (boxes);
+}
+
 void Compositor::renderOnce (const std::vector<Layer>& layers)
 {
+    Frame frame;
+    frame.layers = layers;
+    renderOnce (frame);
+}
+
+void Compositor::renderOnce (const Frame& frame)
+{
     if (isReady() && ! isRunning())
-        impl->renderFrame (layers);
+        impl->renderFrame (frame);
 }
 
 juce::Image Compositor::readProgram()
@@ -588,14 +703,14 @@ juce::Image Compositor::readProgram()
     if (impl->staging == nullptr)
     {
         D3D11_TEXTURE2D_DESC td {};
-        impl->program->GetDesc (&td);
+        impl->program.texture->GetDesc (&td);
         td.Usage = D3D11_USAGE_STAGING;
         td.BindFlags = 0;
         td.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
         if (FAILED (impl->device->CreateTexture2D (&td, nullptr, &impl->staging)))
             return {};
     }
-    impl->context->CopyResource (impl->staging.Get(), impl->program.Get());
+    impl->context->CopyResource (impl->staging.Get(), impl->program.texture.Get());
     D3D11_MAPPED_SUBRESOURCE mapped {};
     if (FAILED (impl->context->Map (impl->staging.Get(), 0, D3D11_MAP_READ, 0, &mapped)))
         return {};
@@ -627,5 +742,17 @@ juce::Rectangle<float> Compositor::fitInside (float w, float h, juce::Rectangle<
     const float scale = juce::jmin (area.getWidth() / w, area.getHeight() / h);
     const float fw = w * scale, fh = h * scale;
     return { area.getX() + (area.getWidth() - fw) * 0.5f, area.getY() + (area.getHeight() - fh) * 0.5f, fw, fh };
+}
+
+Compositor::Quad Compositor::corners (juce::Rectangle<float> area, float rotationDegrees)
+{
+    Quad q { area.getTopLeft(), area.getTopRight(), area.getBottomRight(), area.getBottomLeft() };
+    if (rotationDegrees != 0.0f)
+    {
+        const auto t = juce::AffineTransform::rotation (juce::degreesToRadians (rotationDegrees), area.getCentreX(), area.getCentreY());
+        for (auto& p : q)
+            p.applyTransform (t);
+    }
+    return q;
 }
 }

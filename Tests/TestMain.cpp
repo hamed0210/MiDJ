@@ -18,6 +18,7 @@
 #include "Video/Compositor.h"
 #include "Video/DeckVideo.h"
 #include "Video/VideoMix.h"
+#include "Video/VideoProgram.h"
 #include "Video/MediaFoundation.h"
 #include "Library/TagReader.h"
 
@@ -2322,10 +2323,10 @@ void testCompositor()
     HWND window = CreateWindowExW (WS_EX_TOOLWINDOW, L"STATIC", L"MiDJ prueba", WS_POPUP, 0, 0, 320, 180, nullptr, nullptr, nullptr, nullptr);
     compositor.addOutput (window);
     std::atomic<int> builds { 0 };
-    compositor.buildFrame = [&] (std::vector<Compositor::Layer>& layers)
+    compositor.buildFrame = [&] (Compositor::Frame& frame)
     {
         ++builds;
-        layers.push_back (white);
+        frame.layers.push_back (white);
     };
     const auto before = compositor.getStats().frames;
     compositor.start();
@@ -2339,6 +2340,157 @@ void testCompositor()
     compositor.removeOutput (window);
     DestroyWindow (window);
     check (compositor.getNumOutputs() == 0, "compositor: salida quitada", compositor.getNumOutputs(), 0.0);
+}
+
+void testScenes()
+{
+    using namespace midj;
+    // Coleccion: por defecto la mezcla a pantalla completa, y vuelta completa por XML.
+    auto c = SceneCollection::createDefault (1280, 720);
+    check (c.scenes.size() == 1 && c.scenes[0].items.size() == 1 && c.scenes[0].items[0].type == SourceType::decks,
+           "escenas: por defecto una con la mezcla de decks", (double) c.scenes.size(), 1.0);
+    auto& second = c.addScene ("Fin");
+    auto text = c.makeItem (SourceType::text, 1280, 720);
+    text.text = "Ahora: {titulo}\n{bpm} BPM";
+    text.rotation = 15.0f;
+    text.cropLeft = 4.0f;
+    second.items.push_back (text);
+    second.items.push_back (c.makeItem (SourceType::colour, 1280, 720));
+    c.transition = { TransitionType::slide, 900 };
+    c.currentScene = second.id;
+    const auto xml = c.toXml();
+    auto back = SceneCollection::fromXml (*xml, 1280, 720);
+    const auto* s = back.findScene (second.id);
+    check (s != nullptr && s->items.size() == 2 && s->items[0].text == text.text && s->items[0].rotation == 15.0f
+               && s->items[0].cropLeft == 4.0f && back.transition.type == TransitionType::slide && back.transition.milliseconds == 900
+               && back.currentScene == second.id && back.newId() > text.id,
+           "escenas: se guardan y se leen en XML", s != nullptr ? (double) s->items.size() : 0.0, 2.0);
+
+    NowPlaying now { "La Maria", "Luister La Voz", 116.0 };
+    check (SceneGeometry::resolveText ("{artista} - {titulo} ({bpm})", now) == "Luister La Voz - La Maria (116.0)",
+           "escenas: {artista}, {titulo} y {bpm} en los textos", 0.0, 0.0);
+    check (SceneGeometry::resolveText ("{artista} - {titulo}", { "Solo titulo", "", 0.0 }) == "Solo titulo"
+               && SceneGeometry::resolveText ("{artista} - {titulo}", {}).isEmpty(),
+           "escenas: sin artista no quedan guiones sueltos", 0.0, 0.0);
+
+    // Geometria: recuadro con recorte y escala, giro y clic dentro.
+    SceneItem item;
+    item.position = { 100.0f, 50.0f };
+    item.scaleX = item.scaleY = 2.0f;
+    item.cropLeft = 10.0f;
+    item.cropRight = 10.0f;
+    const auto b = SceneGeometry::box (item, { 120, 60 });
+    check (b == juce::Rectangle<float> (100.0f, 50.0f, 200.0f, 120.0f), "escenas: recuadro = (fuente - recorte) x escala", b.getWidth(), 200.0);
+    Compositor::Layer layer;
+    SceneGeometry::place (layer, item, { 120, 60 }, 120.0f, 60.0f);
+    check (std::abs (layer.uv.getX() - 10.0f / 120.0f) < 1e-5f && std::abs (layer.uv.getWidth() - 100.0f / 120.0f) < 1e-5f
+               && layer.area == b,
+           "escenas: el recorte es la parte de la imagen que se ve", layer.uv.getX(), 10.0 / 120.0);
+    item.rotation = 90.0f;   // de pie: 120 de ancho y 200 de alto alrededor del centro (200, 110)
+    check (SceneGeometry::contains (item, { 120, 60 }, { 200.0f, 30.0f }) && ! SceneGeometry::contains (item, { 120, 60 }, { 120.0f, 110.0f }),
+           "escenas: clic dentro de un elemento girado", 0.0, 0.0);
+
+    // En la GPU: un rectangulo girado 90 grados queda de pie.
+    Compositor compositor ({ 1280, 720, 30, true });
+    if (! compositor.isReady())
+        return;
+    Compositor::Layer bar;
+    bar.image = solidImage (4, 4, juce::Colours::white);
+    bar.version = 1;
+    bar.area = { 440.0f, 310.0f, 400.0f, 100.0f };
+    bar.rotation = 90.0f;
+    compositor.renderOnce ({ bar });
+    auto img = compositor.readProgram();
+    check (img.getPixelAt (640, 200).getRed() > 250 && img.getPixelAt (800, 360).getRed() < 5,
+           "escenas: capa girada 90 grados en la GPU", img.getPixelAt (640, 200).getRed(), 255.0);
+
+    // Transiciones: dos escenas (roja y azul) en sus texturas y mezcladas en el programa.
+    Compositor::Frame frame;
+    Compositor::Layer red, blue;
+    red.image = solidImage (4, 4, juce::Colours::red);
+    red.slot = 1;
+    red.version = 1;
+    red.area = { 0.0f, 0.0f, 1280.0f, 720.0f };
+    blue = red;
+    blue.image = solidImage (4, 4, juce::Colours::blue);
+    blue.slot = 2;
+    frame.scenes[0] = { red };
+    frame.scenes[1] = { blue };
+    frame.useScene = { true, true };
+    VideoProgram::transitionLayers (TransitionType::fade, 0.5f, 1280.0f, 720.0f, frame.layers);
+    compositor.renderOnce (frame);
+    img = compositor.readProgram();
+    const auto mid = img.getPixelAt (640, 360);
+    check (std::abs (mid.getRed() - 188) <= 2 && std::abs (mid.getBlue() - 188) <= 2, "escenas: fundido a la mitad (en luz lineal)", mid.getRed(), 188.0);
+    frame.layers.clear();
+    VideoProgram::transitionLayers (TransitionType::slide, 0.5f, 1280.0f, 720.0f, frame.layers);
+    compositor.renderOnce (frame);
+    img = compositor.readProgram();
+    check (img.getPixelAt (320, 360).getRed() > 250 && img.getPixelAt (960, 360).getBlue() > 250,
+           "escenas: deslizar a la mitad = vieja a la izquierda, nueva a la derecha", img.getPixelAt (960, 360).getBlue(), 255.0);
+    frame.layers.clear();
+    VideoProgram::transitionLayers (TransitionType::fadeToBlack, 0.5f, 1280.0f, 720.0f, frame.layers);
+    compositor.renderOnce (frame);
+    check (compositor.readProgram().getPixelAt (640, 360).getBrightness() < 0.02f, "escenas: fundido a negro pasa por negro", 0.0, 0.0);
+
+    // El programa: escena con un color, cambio de escena con transicion y despues sin ella.
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    Deck da (formats), db (formats);
+    Mixer mixer (da, db);
+    DeckVideo va (da, 160), vb (db, 160);
+    VideoMix mix ({ &va, &vb }, { &da, &db }, mixer);
+    VideoProgram videoProgram (mix, 1280, 720);
+    auto col = SceneCollection::createDefault (1280, 720);
+    auto& green = col.addScene ("Verde");
+    auto fill = col.makeItem (SourceType::colour, 1280, 720);
+    fill.colour = juce::Colours::lime;
+    fill.width = 1280;
+    fill.height = 720;
+    fill.position = {};
+    green.items.push_back (fill);
+    col.transition = { TransitionType::fade, 300 };
+    videoProgram.setScenes (col);
+    Compositor::Frame f;
+    videoProgram.buildFrame (f);
+    check (f.layers.size() == 1 && ! f.useScene[0] && f.layers[0].slot == 4, "escenas: al aire la de la mezcla (logo)", (double) f.layers.size(), 1.0);
+    videoProgram.switchTo (green.id);
+    f.clear();
+    videoProgram.buildFrame (f);
+    check (videoProgram.isInTransition() && f.useScene[0] && f.useScene[1] && f.scenes[1].size() == 1 && f.layers.size() == 2,
+           "escenas: al cambiar, transicion con las dos escenas", (double) f.layers.size(), 2.0);
+    juce::Thread::sleep (350);
+    f.clear();
+    videoProgram.buildFrame (f);
+    compositor.renderOnce (f);
+    const auto g = compositor.readProgram().getPixelAt (100, 100);
+    check (! videoProgram.isInTransition() && ! f.useScene[1] && g.getGreen() > 250 && g.getRed() < 5,
+           "escenas: acabada la transicion, la escena verde", g.getGreen(), 255.0);
+
+    // Fuente de imagen: un PNG de 200x100 en el centro, a su tamano.
+    const auto png = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("MiDJTestsLogo.png");
+    {
+        png.deleteFile();
+        juce::FileOutputStream out (png);
+        juce::PNGImageFormat().writeImageToStream (solidImage (200, 100, juce::Colours::magenta), out);
+    }
+    auto& logoScene = col.addScene ("Logo");
+    auto pic = col.makeItem (SourceType::image, 1280, 720);
+    pic.file = png;
+    pic.position = { 540.0f, 310.0f };
+    logoScene.items.push_back (pic);
+    col.transition = { TransitionType::cut, 0 };
+    videoProgram.setScenes (col);
+    videoProgram.switchTo (logoScene.id);
+    f.clear();
+    videoProgram.buildFrame (f);
+    compositor.renderOnce (f);
+    img = compositor.readProgram();
+    const auto natural = videoProgram.naturalSize (pic);
+    check (natural == juce::Point<int> (200, 100) && img.getPixelAt (640, 360) == juce::Colours::magenta
+               && img.getPixelAt (520, 360).getBrightness() < 0.02f,
+           "escenas: imagen PNG a su tamano donde se coloca", natural.x, 200.0);
+    png.deleteFile();
 }
 
 void testVideoMix()
@@ -2566,6 +2718,7 @@ int main (int argc, char* argv[])
     testVideo();
     testCompositor();
     testVideoMix();
+    testScenes();
 
     std::printf ("== Stems con IA ==\n");
     testStemStft();

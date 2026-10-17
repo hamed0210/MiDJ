@@ -2,6 +2,7 @@
 
 #include <juce_graphics/juce_graphics.h>
 
+#include <array>
 #include <atomic>
 #include <functional>
 #include <memory>
@@ -15,18 +16,41 @@ namespace midj
 // a pantalla completa). Tener varias salidas apenas cuesta: no se vuelve a componer.
 //
 // Lo que se dibuja lo dice quien use el compositor con 'buildFrame', que se llama en el hilo
-// del compositor en cada fotograma y rellena una lista de capas (de abajo arriba).
+// del compositor en cada fotograma y rellena las capas (de abajo arriba). Para las transiciones
+// entre escenas, cada escena se compone antes en su propia textura y el programa las mezcla
+// como dos capas mas (fundido, deslizar...).
 class Compositor
 {
 public:
-    // Una capa: una imagen colocada en el programa con una opacidad.
+    static constexpr int imageSource = -1;   // la capa es una imagen; 0 o 1: la textura de esa escena
+
+    // Una capa: una imagen (o una escena ya compuesta) colocada en el programa.
     struct Layer
     {
         int slot = 0;                  // identifica la textura en la GPU (se reutiliza entre fotogramas)
         juce::Image image;             // ARGB premultiplicada de JUCE (B, G, R, A en memoria)
         juce::uint64 version = 0;      // cambia cuando cambia la imagen: solo entonces se sube a la GPU
+        int source = imageSource;
         juce::Rectangle<float> area;   // en pixeles del programa; vacia = encajada sin deformar en todo el programa
+        juce::Rectangle<float> uv { 0.0f, 0.0f, 1.0f, 1.0f };   // parte de la imagen que se ve (recorte)
+        float rotation = 0.0f;         // grados en el sentido del reloj, alrededor del centro del area
+        juce::AffineTransform transform;   // se aplica despues (p. ej. el giro de un elemento de escena)
         float opacity = 1.0f;
+    };
+
+    // Lo que se dibuja en un fotograma.
+    struct Frame
+    {
+        std::array<std::vector<Layer>, 2> scenes;   // se componen antes en las texturas de escena 0 y 1
+        std::array<bool, 2> useScene {};            // (solo las que se usan en una transicion)
+        std::vector<Layer> layers;                  // el programa
+
+        void clear()
+        {
+            for (auto& s : scenes) s.clear();
+            useScene = {};
+            layers.clear();
+        }
     };
 
     struct Settings
@@ -45,6 +69,9 @@ public:
         juce::String adapter;          // nombre de la tarjeta grafica
     };
 
+    // Un cuadrilatero en pixeles del programa: arriba izquierda, arriba derecha, abajo derecha, abajo izquierda.
+    using Quad = std::array<juce::Point<float>, 4>;
+
     explicit Compositor (Settings settings);
     ~Compositor();
 
@@ -54,9 +81,9 @@ public:
     int getHeight() const { return settings.height; }
     int getFps() const { return settings.fps; }
 
-    // Se llama en el hilo del compositor: las capas del fotograma (la lista llega vacia).
+    // Se llama en el hilo del compositor: lo que se dibuja (el fotograma llega vacio).
     // Asignarlo antes de start() o con el hilo parado.
-    std::function<void (std::vector<Layer>& layers)> buildFrame;
+    std::function<void (Frame& frame)> buildFrame;
 
     void start();
     void stop();
@@ -67,9 +94,12 @@ public:
     void addOutput (void* hwnd);
     void removeOutput (void* hwnd);
     int getNumOutputs() const;
+    // Recuadros que se dibujan encima del programa solo en esa salida (la seleccion de la vista previa).
+    void setOverlay (void* hwnd, std::vector<Quad> boxes);
 
-    // Sin hilo: compone un fotograma con estas capas y lo presenta en las salidas (pruebas).
+    // Sin hilo: compone un fotograma y lo presenta en las salidas (pruebas).
     void renderOnce (const std::vector<Layer>& layers);
+    void renderOnce (const Frame& frame);
     // El ultimo fotograma compuesto, leido de la GPU (lento: para pruebas y miniaturas).
     juce::Image readProgram();
 
@@ -77,6 +107,8 @@ public:
 
     // Donde queda una imagen de w x h encajada sin deformar en un area (bandas negras).
     static juce::Rectangle<float> fitInside (float w, float h, juce::Rectangle<float> area);
+    // Las cuatro esquinas de un area girada alrededor de su centro.
+    static Quad corners (juce::Rectangle<float> area, float rotationDegrees);
 
 private:
     struct Impl;
