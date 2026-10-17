@@ -22,6 +22,12 @@ juce::Point<int> VideoProgram::naturalSize (const SceneItem& item) const
             return { width / 4, height / 4 };
         case SourceType::colour:
             return { juce::jmax (1, item.width), juce::jmax (1, item.height) };
+        case SourceType::screen:
+        case SourceType::window:
+            if (auto c = captures != nullptr ? captures->find (item.id) : nullptr)
+                if (const auto s = c->getSize(); s.x > 0 && s.y > 0)
+                    return s;
+            return { width, height };
         case SourceType::decks:
         case SourceType::deckA:
         case SourceType::deckB:
@@ -47,6 +53,12 @@ VideoProgram::Prepared VideoProgram::prepare (const SceneItem& item)
         case SourceType::colour:
             key = "col|" + item.colour.toString();
             break;
+        case SourceType::screen:
+        case SourceType::window:
+            if (captures != nullptr)
+                p.capture = captures->get (item);
+            p.natural = naturalSize (item);
+            return p;   // la imagen la pone la captura en la GPU en cada fotograma
         case SourceType::decks:
         case SourceType::deckA:
         case SourceType::deckB:
@@ -97,6 +109,8 @@ void VideoProgram::republish()
         scenes->push_back (std::move (ps));
     }
     // Lo preparado para elementos que ya no existen se suelta.
+    if (captures != nullptr)
+        captures->keepOnly (alive);
     for (auto it = cache.begin(); it != cache.end();)
         it = alive.count (it->first) > 0 ? std::next (it) : cache.erase (it);
 
@@ -240,6 +254,21 @@ void VideoProgram::sceneLayers (const PreparedScene& scene, std::vector<Composit
                 auto pic = mix.picture (item.type == SourceType::deckA ? 0 : 1);
                 if (pic.image.isValid())
                     add (pic, (float) pic.image.getWidth(), (float) pic.image.getHeight());
+                break;
+            }
+            case SourceType::screen:
+            case SourceType::window:
+            {
+                if (p.capture == nullptr)
+                    break;
+                const auto size = p.capture->getSize();
+                if (size.x <= 0 || size.y <= 0)
+                    break;   // aun sin imagen
+                Compositor::Layer layer;
+                layer.gpu = p.capture;
+                // El tamano natural es el de la ultima imagen (la ventana puede cambiar de tamano).
+                if (SceneGeometry::place (layer, item, size, (float) size.x, (float) size.y))
+                    layers.push_back (std::move (layer));
                 break;
             }
             case SourceType::image:

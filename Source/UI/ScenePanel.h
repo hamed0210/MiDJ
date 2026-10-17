@@ -9,7 +9,7 @@ namespace midj
 // Panel de escenas de la ventana de video, como los paneles Escenas, Fuentes y Transiciones de
 // OBS: elegir la escena al aire, sus elementos (de arriba = el que se ve encima) y las
 // propiedades del elemento elegido. Edita la coleccion y avisa con onChanged.
-class ScenePanel : public juce::Component
+class ScenePanel : public juce::Component, private juce::Timer
 {
 public:
     ScenePanel (SceneCollection& scenes, const VideoProgram& program, int programWidth, int programHeight);
@@ -43,6 +43,9 @@ private:
     void moveSelected (int delta);
     void chooseColour();
     void chooseImage();
+    void fillCaptureTargets();
+    void chooseCaptureTarget();
+    void timerCallback() override;   // el estado de la captura elegida
     juce::Slider& addSlider (juce::Slider& s, double min, double max, double step, std::function<void (SceneItem&, float)> apply);
 
     SceneCollection& scenes;
@@ -68,6 +71,12 @@ private:
     juce::ToggleButton boldToggle { "Negrita" }, shadowToggle { "Sombra" };
     juce::TextButton colourButton { "Color..." }, fileButton { "Imagen..." }, fitButton { "Ajustar a pantalla" },
                      resetButton { "Restablecer" };
+    juce::ComboBox captureTarget;
+    juce::TextButton refreshTargets { "Actualizar" };
+    juce::ToggleButton cursorToggle { "Capturar el puntero" }, clientToggle { "Solo el contenido (sin bordes)" };
+    juce::Label captureStatus;
+    std::vector<ScreenCapture::Monitor> monitorList;
+    std::vector<ScreenCapture::Window> windowList;
     std::unique_ptr<juce::FileChooser> chooser;
 };
 }

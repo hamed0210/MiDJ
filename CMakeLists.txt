@@ -81,7 +81,8 @@ add_library(MiDJEngine STATIC
     Source/Video/Compositor.cpp
     Source/Video/VideoMix.cpp
     Source/Video/Scenes.cpp
-    Source/Video/VideoProgram.cpp)
+    Source/Video/VideoProgram.cpp
+    Source/Video/Capture.cpp)
 target_include_directories(MiDJEngine PUBLIC Source)
 # Los modulos JUCE se compilan una sola vez aqui (PRIVATE) y se exportan sus
 # cabeceras y definiciones a la app y a las pruebas (patron recomendado por JUCE).

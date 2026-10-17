@@ -96,6 +96,10 @@ public:
             label << ": " << item->text.upToFirstOccurrenceOf ("\n", false, false);
         else if (item->type == SourceType::image && item->file != juce::File())
             label << ": " << item->file.getFileName();
+        else if (item->type == SourceType::window && item->windowTitle.isNotEmpty())
+            label << ": " << item->windowTitle;
+        else if (item->type == SourceType::screen)
+            label << ": " << juce::String (item->monitor + 1);
         g.drawText (label, 24, 0, w - 28, h, juce::Justification::centredLeft, true);
     }
 
@@ -213,7 +217,8 @@ ScenePanel::ScenePanel (SceneCollection& s, const VideoProgram& p, int w, int h)
     addItemButton.onClick = [this]
     {
         juce::PopupMenu menu;
-        for (auto type : { SourceType::decks, SourceType::deckA, SourceType::deckB, SourceType::image, SourceType::text, SourceType::colour })
+        for (auto type : { SourceType::decks, SourceType::deckA, SourceType::deckB, SourceType::image, SourceType::text, SourceType::colour,
+                           SourceType::screen, SourceType::window })
             menu.addItem (SceneCollection::typeName (type), [this, type] { addItem (type); });
         menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (addItemButton));
     };
@@ -264,6 +269,24 @@ ScenePanel::ScenePanel (SceneCollection& s, const VideoProgram& p, int w, int h)
     resetButton.onClick = [this] { resetSelected(); };
     for (auto* c : std::initializer_list<juce::Component*> { &boldToggle, &shadowToggle, &colourButton, &fileButton, &fitButton, &resetButton })
         addChildComponent (*c);
+
+    captureTarget.setTextWhenNothingSelected ("Elige...");
+    captureTarget.onChange = [this] { if (! updating) chooseCaptureTarget(); };
+    refreshTargets.setTooltip ("Volver a leer las ventanas abiertas");
+    refreshTargets.onClick = [this] { fillCaptureTargets(); };
+    cursorToggle.onClick = [this]
+    {
+        if (auto* i = selected(); i != nullptr && ! updating) { i->cursor = cursorToggle.getToggleState(); changed(); }
+    };
+    clientToggle.onClick = [this]
+    {
+        if (auto* i = selected(); i != nullptr && ! updating) { i->clientArea = clientToggle.getToggleState(); changed(); }
+    };
+    captureStatus.setFont (juce::FontOptions (12.0f));
+    captureStatus.setColour (juce::Label::textColourId, juce::Colour (0xffffb74d));
+    for (auto* c : std::initializer_list<juce::Component*> { &captureTarget, &refreshTargets, &cursorToggle, &clientToggle, &captureStatus })
+        addChildComponent (*c);
+    startTimer (500);
 
     refresh();
 }
@@ -355,6 +378,12 @@ void ScenePanel::updateProperties()
     shadowToggle.setVisible (isText);
     colourButton.setVisible (any && (type == SourceType::text || type == SourceType::colour));
     fileButton.setVisible (any && type == SourceType::image);
+    const bool isCapture = any && (type == SourceType::screen || type == SourceType::window);
+    captureTarget.setVisible (isCapture);
+    cursorToggle.setVisible (isCapture);
+    captureStatus.setVisible (isCapture);
+    refreshTargets.setVisible (isCapture && type == SourceType::window);
+    clientToggle.setVisible (isCapture && type == SourceType::window);
     for (auto* c : std::initializer_list<juce::Component*> { &opacity, &opacityLabel, &rotation, &rotationLabel, &cropLabel,
                                                               &cropLeft, &cropTop, &cropRight, &cropBottom, &fitButton, &resetButton })
         c->setVisible (any);
@@ -365,6 +394,10 @@ void ScenePanel::updateProperties()
         fontSize.setValue (item->fontSize, juce::dontSendNotification);
         boldToggle.setToggleState (item->bold, juce::dontSendNotification);
         shadowToggle.setToggleState (item->shadow, juce::dontSendNotification);
+        cursorToggle.setToggleState (item->cursor, juce::dontSendNotification);
+        clientToggle.setToggleState (item->clientArea, juce::dontSendNotification);
+        if (isCapture)
+            fillCaptureTargets();
         opacity.setValue (item->opacity * 100.0, juce::dontSendNotification);
         rotation.setValue (item->rotation, juce::dontSendNotification);
         const auto natural = program.naturalSize (*item);
@@ -390,14 +423,30 @@ void ScenePanel::addItem (SourceType type)
     auto* scene = currentScene();
     if (scene == nullptr)
         return;
-    scene->items.push_back (scenes.makeItem (type, width, height));
-    selectedItem = scene->items.back().id;
+    auto item = scenes.makeItem (type, width, height);
+    if (type == SourceType::screen)
+    {
+        // La pantalla principal (antes de publicar: asi no se crea una captura de mas).
+        monitorList = ScreenCapture::monitors();
+        for (size_t m = 0; m < monitorList.size(); ++m)
+            if (monitorList[m].primary)
+            {
+                item.monitor = (int) m;
+                item.monitorId = monitorList[m].id;
+            }
+    }
+    scene->items.push_back (item);
+    selectedItem = item.id;
     changed();
     setSelectedItem (selectedItem);
     if (onItemSelected)
         onItemSelected (selectedItem);
     if (type == SourceType::image)
         chooseImage();
+    if (type == SourceType::screen)
+        fitSelectedToScreen();   // encajada en el programa (ya se sabe su tamano)
+    if (type == SourceType::window)
+        captureTarget.showPopup();   // que elija cual
 }
 
 void ScenePanel::deleteSelectedItem()
@@ -508,6 +557,93 @@ void ScenePanel::chooseImage()
     });
 }
 
+// La lista de pantallas o de ventanas del elemento elegido (id = posicion + 1; la ventana guardada
+// que ya no esta abierta sale arriba con id = 10000).
+void ScenePanel::fillCaptureTargets()
+{
+    auto* item = selected();
+    if (item == nullptr)
+        return;
+    const juce::ScopedValueSetter<bool> svs (updating, true);
+    captureTarget.clear (juce::dontSendNotification);
+    if (item->type == SourceType::screen)
+    {
+        monitorList = ScreenCapture::monitors();
+        for (size_t m = 0; m < monitorList.size(); ++m)
+            captureTarget.addItem (ScreenCapture::describe (monitorList[m], (int) m), (int) m + 1);
+        const int index = ScreenCapture::findMonitor (monitorList, item->monitorId, item->monitor);
+        captureTarget.setSelectedId (index + 1, juce::dontSendNotification);
+        return;
+    }
+    windowList = ScreenCapture::windows();
+    int chosen = 0;
+    for (size_t w = 0; w < windowList.size(); ++w)
+    {
+        const auto& win = windowList[w];
+        captureTarget.addItem (ScreenCapture::describe (win), (int) w + 1);
+        if (chosen == 0 && win.title == item->windowTitle && win.className == item->windowClass && win.exe.equalsIgnoreCase (item->windowExe))
+            chosen = (int) w + 1;
+    }
+    if (chosen == 0 && item->windowTitle.isNotEmpty())
+    {
+        // Guardada pero no abierta ahora (o con otro titulo): se muestra igual.
+        ScreenCapture::Window saved { nullptr, item->windowTitle, item->windowClass, item->windowExe };
+        captureTarget.addItem (ScreenCapture::describe (saved), 10000);
+        chosen = 10000;
+    }
+    captureTarget.setSelectedId (chosen, juce::dontSendNotification);
+}
+
+void ScenePanel::chooseCaptureTarget()
+{
+    auto* item = selected();
+    const int index = captureTarget.getSelectedId() - 1;
+    if (item == nullptr || index < 0)
+        return;
+    bool first = false;
+    if (item->type == SourceType::screen && juce::isPositiveAndBelow (index, (int) monitorList.size()))
+    {
+        item->monitor = index;
+        item->monitorId = monitorList[(size_t) index].id;
+    }
+    else if (item->type == SourceType::window && juce::isPositiveAndBelow (index, (int) windowList.size()))
+    {
+        const auto& win = windowList[(size_t) index];
+        first = item->windowTitle.isEmpty();
+        item->windowTitle = win.title;
+        item->windowClass = win.className;
+        item->windowExe = win.exe;
+    }
+    else
+    {
+        return;
+    }
+    changed();
+    if (first)
+        fitSelectedToScreen();   // la primera ventana elegida se encaja en el programa
+    timerCallback();
+}
+
+void ScenePanel::timerCallback()
+{
+    auto* item = selected();
+    if (item == nullptr || (item->type != SourceType::screen && item->type != SourceType::window))
+        return;
+    juce::String text;
+    if (auto capture = program.captureFor (item->id))
+    {
+        text = capture->getStatus();
+        if (text.isEmpty())
+        {
+            const auto size = capture->getSize();
+            text = size.x > 0 ? "Capturando " + juce::String (size.x) + "x" + juce::String (size.y) + " (" + capture->getMethod() + ")" : "Esperando imagen...";
+        }
+    }
+    captureStatus.setColour (juce::Label::textColourId, text.startsWith ("Capturando") ? juce::Colours::grey : juce::Colour (0xffffb74d));
+    if (captureStatus.getText() != text)
+        captureStatus.setText (text, juce::dontSendNotification);
+}
+
 void ScenePanel::paint (juce::Graphics& g)
 {
     g.fillAll (juce::Colour (0xff1b1e24));
@@ -558,6 +694,20 @@ void ScenePanel::resized()
         colourButton.setBounds (row (24));
     if (fileButton.isVisible())
         fileButton.setBounds (row (24));
+    if (captureTarget.isVisible())
+    {
+        auto a = row (24);
+        if (refreshTargets.isVisible())
+        {
+            refreshTargets.setBounds (a.removeFromRight (80));
+            a.removeFromRight (4);
+        }
+        captureTarget.setBounds (a);
+        cursorToggle.setBounds (row (22));
+        if (clientToggle.isVisible())
+            clientToggle.setBounds (row (22));
+        captureStatus.setBounds (row (18));
+    }
     if (opacity.isVisible())
     {
         labelled (opacityLabel, opacity);

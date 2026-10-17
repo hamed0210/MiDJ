@@ -15,6 +15,7 @@
 #include "Engine/StemSeparator.h"
 #include "Engine/StemsService.h"
 #include "Library/Library.h"
+#include "Video/Capture.h"
 #include "Video/Compositor.h"
 #include "Video/DeckVideo.h"
 #include "Video/VideoMix.h"
@@ -26,12 +27,16 @@
  #define NOMINMAX
 #endif
 #include <windows.h>
+#include <d3d11.h>
 #include <mfapi.h>
 #include <mfidl.h>
 #include <mfreadwrite.h>
 #include <wrl/client.h>
 
 #include <cmath>
+#include <functional>
+#include <mutex>
+#include <thread>
 #include <map>
 #include <cstdio>
 #include <vector>
@@ -2248,7 +2253,8 @@ void testVideo()
             followed += juce::String::charToString (colourAt (t));
         check (deckVideo.hasVideo() && followed == "BRMG", ("video: el video del deck sigue su posicion (" + followed + ")").toRawUTF8(), 0.0, 0.0);
         deckVideo.setFile ({});
-        juce::Thread::sleep (100);
+        for (int i = 0; i < 200 && (deckVideo.hasVideo() || deckVideo.getFrame().isValid()); ++i)   // hasta 2 s (con el equipo cargado tarda mas)
+            juce::Thread::sleep (10);
         check (! deckVideo.hasVideo() && ! deckVideo.getFrame().isValid(), "video: cancion sin video = sin imagen", 0.0, 0.0);
     }
     file.deleteFile();
@@ -2493,6 +2499,284 @@ void testScenes()
     png.deleteFile();
 }
 
+
+// Una fuente de la GPU de prueba: 100x100 azul sin alfa (como el escritorio) con un "puntero"
+// blanco de 10x10 en (50, 50).
+struct FakeGpuSource : midj::Compositor::GpuSource
+{
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> image, cursor;
+    int updates = 0;
+
+    static Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> make (ID3D11Device* device, int size, uint32_t pixel)
+    {
+        std::vector<uint32_t> pixels ((size_t) (size * size), pixel);
+        D3D11_TEXTURE2D_DESC td {};
+        td.Width = td.Height = (UINT) size;
+        td.MipLevels = td.ArraySize = 1;
+        td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        td.SampleDesc.Count = 1;
+        td.Usage = D3D11_USAGE_IMMUTABLE;
+        td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        D3D11_SUBRESOURCE_DATA init { pixels.data(), (UINT) size * 4, 0 };
+        Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> view;
+        if (SUCCEEDED (device->CreateTexture2D (&td, &init, &texture)))
+            device->CreateShaderResourceView (texture.Get(), nullptr, &view);
+        return view;
+    }
+
+    Picture update (void* device, void*) override
+    {
+        ++updates;
+        if (image == nullptr)
+        {
+            image = make ((ID3D11Device*) device, 100, 0x000000ffu);   // azul con alfa 0
+            cursor = make ((ID3D11Device*) device, 10, 0xffffffffu);
+        }
+        Picture p;
+        p.view = image.Get();
+        p.width = p.height = 100;
+        p.opaque = true;
+        p.cursorView = cursor.Get();
+        p.cursor = { 50.0f, 50.0f, 10.0f, 10.0f };
+        return p;
+    }
+    juce::Point<int> getSize() const override { return { 100, 100 }; }
+};
+
+LRESULT CALLBACK testWindowProc (HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    return DefWindowProcW (hwnd, msg, wp, lp);
+}
+
+void pumpMessages()
+{
+    MSG msg;
+    while (PeekMessageW (&msg, nullptr, 0, 0, PM_REMOVE))
+    {
+        TranslateMessage (&msg);
+        DispatchMessageW (&msg);
+    }
+}
+
+void testCapture()
+{
+    using namespace midj;
+    CoInitializeEx (nullptr, COINIT_MULTITHREADED);   // WinRT (si ya estaba en otro modo, vale igual)
+
+    // Guardar y leer los elementos de captura.
+    {
+        SceneCollection col = SceneCollection::createDefault (1280, 720);
+        auto s = col.makeItem (SourceType::screen, 1280, 720);
+        s.monitor = 1;
+        s.monitorId = "\\\\.\\DISPLAY2";
+        s.cursor = false;
+        auto w = col.makeItem (SourceType::window, 1280, 720);
+        w.windowTitle = "Sin titulo - Bloc de notas";
+        w.windowClass = "Notepad";
+        w.windowExe = "notepad.exe";
+        w.clientArea = false;
+        col.scenes[0].items.push_back (s);
+        col.scenes[0].items.push_back (w);
+        const auto back = SceneCollection::fromXml (*col.toXml(), 1280, 720);
+        const auto& items = back.scenes[0].items;
+        check (items.size() == 3 && items[1].type == SourceType::screen && items[1].monitor == 1 && items[1].monitorId == "\\\\.\\DISPLAY2"
+                   && ! items[1].cursor && items[2].type == SourceType::window && items[2].windowTitle == w.windowTitle
+                   && items[2].windowClass == "Notepad" && items[2].windowExe == "notepad.exe" && ! items[2].clientArea && items[2].cursor,
+               "captura: pantalla y ventana se guardan y se leen", (double) items.size(), 3.0);
+    }
+
+    // Pantallas: se encuentran por nombre y, si no esta, por numero.
+    const auto monitors = ScreenCapture::monitors();
+    check (! monitors.empty(), "captura: hay pantallas", (double) monitors.size(), 1.0);
+    if (monitors.empty())
+        return;
+    check (ScreenCapture::findMonitor (monitors, monitors.back().id, 0) == (int) monitors.size() - 1
+               && ScreenCapture::findMonitor (monitors, "\\\\.\\NOEXISTE", 0) == 0
+               && ScreenCapture::findMonitor (monitors, "\\\\.\\NOEXISTE", 99) == -1,
+           "captura: pantalla por nombre, si no por numero", (double) ScreenCapture::findMonitor (monitors, monitors.back().id, 0),
+           (double) monitors.size() - 1);
+
+    Compositor compositor ({ 1280, 720, 30, true });
+    if (! compositor.isReady())
+        return;
+
+    // El compositor: una fuente de la GPU sin alfa se ve opaca y su puntero se coloca encima
+    // (100x100 encajada en 1280x720 = 720x720 desde x = 280: el puntero en (50, 50) va a (640, 360)).
+    {
+        auto fake = std::make_shared<FakeGpuSource>();
+        Compositor::Layer layer;
+        layer.gpu = fake;
+        Compositor::Layer again = layer;   // la misma fuente dos veces: se pone al dia una sola vez
+        compositor.renderOnce ({ layer, again });
+        auto img = compositor.readProgram();
+        const auto blue = img.getPixelAt (400, 200), cur = img.getPixelAt (676, 396), outside = img.getPixelAt (630, 396);
+        check (blue.getBlue() > 250 && blue.getRed() < 5 && cur.getRed() > 250 && cur.getBlue() > 250 && outside.getRed() < 5
+                   && fake->updates == 1,
+               "captura: imagen de la GPU opaca, puntero encima, una sola puesta al dia", cur.getRed(), 255.0);
+        // Recortada a la mitad izquierda (u de 0 a 0.5): el puntero en u = 0.5..0.6 queda fuera.
+        layer.uv = { 0.0f, 0.0f, 0.5f, 1.0f };
+        layer.area = { 0.0f, 0.0f, 640.0f, 720.0f };
+        compositor.renderOnce ({ layer });
+        img = compositor.readProgram();
+        const auto edge = img.getPixelAt (636, 396);
+        check (edge.getBlue() > 250 && edge.getRed() < 5, "captura: el puntero se recorta con la imagen", edge.getRed(), 0.0);
+    }
+
+    // Captura de pantalla (DXGI): la imagen tiene el tamano de la pantalla y no es todo negro.
+    {
+        SceneItem screen;
+        screen.id = 1;
+        screen.type = SourceType::screen;
+        screen.monitorId = monitors[0].id;
+        auto capture = std::make_shared<Capture> (compositor.getDevice(), screen);
+        Compositor::Layer layer;
+        layer.gpu = capture;
+        juce::Image img;
+        const auto until = juce::Time::getMillisecondCounter() + 3000;
+        bool any = false;
+        while (! any && juce::Time::getMillisecondCounter() < until)
+        {
+            compositor.renderOnce ({ layer });
+            img = compositor.readProgram();
+            for (int y = 0; y < 720 && ! any; y += 9)
+                for (int x = 0; x < 1280 && ! any; x += 9)
+                    any = img.getPixelAt (x, y).getBrightness() > 0.05f;
+            if (! any)
+                juce::Thread::sleep (30);
+        }
+        const auto size = capture->getSize();
+        std::printf ("        (pantalla %s: %dx%d, %s)\n", monitors[0].id.toRawUTF8(), size.x, size.y,
+                     capture->getStatus().isEmpty() ? capture->getMethod().toRawUTF8() : capture->getStatus().toRawUTF8());
+        check (size == juce::Point<int> (monitors[0].bounds.getWidth(), monitors[0].bounds.getHeight()) && any,
+               "captura: pantalla del tamano del monitor y con imagen", size.x, monitors[0].bounds.getWidth());
+    }
+
+    // Captura de ventana (Windows Graphics Capture): una ventana roja de prueba de 320x240.
+    if (! ScreenCapture::windowCaptureSupported())
+    {
+        std::printf ("        (este Windows no captura ventanas: se salta)\n");
+        return;
+    }
+    WNDCLASSW wc {};
+    wc.lpfnWndProc = testWindowProc;
+    wc.hInstance = GetModuleHandleW (nullptr);
+    wc.hbrBackground = CreateSolidBrush (RGB (255, 0, 0));
+    wc.lpszClassName = L"MiDJCaptureTest";
+    RegisterClassW (&wc);
+    RECT rc { 0, 0, 320, 240 };
+    AdjustWindowRect (&rc, WS_OVERLAPPEDWINDOW, FALSE);
+    HWND hwnd = CreateWindowW (L"MiDJCaptureTest", L"MiDJ prueba de captura", WS_OVERLAPPEDWINDOW, 60, 60, rc.right - rc.left,
+                               rc.bottom - rc.top, nullptr, nullptr, wc.hInstance, nullptr);
+    ShowWindow (hwnd, SW_SHOWNOACTIVATE);
+    UpdateWindow (hwnd);
+    pumpMessages();
+
+    bool listed = false;
+    juce::String exe;
+    for (const auto& w : ScreenCapture::windows())
+        if (w.hwnd == hwnd)
+        {
+            listed = true;
+            exe = w.exe;
+        }
+    check (listed && exe.endsWithIgnoreCase (".exe"), "captura: la ventana sale en la lista con su programa", listed ? 1.0 : 0.0, 1.0);
+    check (ScreenCapture::findWindow ("MiDJ prueba de captura", "MiDJCaptureTest", exe) == hwnd
+               && ScreenCapture::findWindow ("MiDJ prueba de captura", "JUCE_otraClase", exe) == hwnd
+               && ScreenCapture::findWindow ("Otro titulo", "MiDJCaptureTest", exe) == hwnd
+               && ScreenCapture::findWindow ("Otro titulo", "OtraClase", "noexiste.exe") == nullptr,
+           "captura: ventana por titulo, clase y programa (o sin el titulo)", 1.0, 1.0);
+
+    {
+        CaptureManager manager (compositor.getDevice());
+        SceneItem win;
+        win.id = 7;
+        win.type = SourceType::window;
+        win.windowTitle = "MiDJ prueba de captura";
+        win.windowClass = "MiDJCaptureTest";
+        win.windowExe = exe;
+        // Creada en un hilo STA (como el de la interfaz) y usada desde este (MTA, como el compositor).
+        std::shared_ptr<Capture> capture;
+        std::thread ([&]
+        {
+            CoInitializeEx (nullptr, COINIT_APARTMENTTHREADED);
+            capture = manager.get (win);
+            CoUninitialize();
+        }).join();
+        SceneItem twin = win;
+        twin.id = 8;
+        check (manager.get (win) == capture && manager.get (twin) == capture,
+               "captura: la misma mientras capture lo mismo (tambien en otro elemento)", 1.0, 1.0);
+        // Como en la app: el compositor la usa desde su hilo (MTA) a 30 fps.
+        std::mutex sourceLock;
+        std::shared_ptr<Compositor::GpuSource> shown = capture;
+        compositor.buildFrame = [&] (Compositor::Frame& frame)
+        {
+            const std::lock_guard<std::mutex> sl (sourceLock);
+            Compositor::Layer layer;
+            layer.gpu = shown;
+            frame.layers.push_back (layer);
+        };
+        compositor.start();
+        auto waitFor = [] (std::function<bool()> done)
+        {
+            const auto until = juce::Time::getMillisecondCounter() + 3000;
+            while (! done() && juce::Time::getMillisecondCounter() < until)
+            {
+                pumpMessages();
+                juce::Thread::sleep (20);
+            }
+            for (int i = 0; i < 10; ++i)   // unos fotogramas mas, por si algo falla despues
+            {
+                pumpMessages();
+                juce::Thread::sleep (20);
+            }
+        };
+        auto isRed = [&compositor]
+        {
+            const auto c = compositor.readProgram().getPixelAt (640, 360);
+            return c.getRed() > 250 && c.getGreen() < 5;
+        };
+        waitFor ([&] { return isRed() && capture->getSize() == juce::Point<int> (320, 240); });
+        const auto size = capture->getSize();
+        check (isRed() && size == juce::Point<int> (320, 240) && capture->getStatus().isEmpty(),
+               ("captura: ventana roja, solo el contenido (320x240) " + capture->getStatus()).toRawUTF8(), size.x, 320.0);
+
+        // La ventana cambia de tamano: el grupo de fotogramas se rehace y la imagen sigue.
+        RECT bigger { 0, 0, 400, 300 };
+        AdjustWindowRect (&bigger, WS_OVERLAPPEDWINDOW, FALSE);
+        SetWindowPos (hwnd, nullptr, 0, 0, bigger.right - bigger.left, bigger.bottom - bigger.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        waitFor ([&] { return capture->getSize() == juce::Point<int> (400, 300); });
+        check (capture->getSize() == juce::Point<int> (400, 300) && capture->getStatus().isEmpty() && isRed(),
+               ("captura: la ventana cambia de tamano (creada en STA) " + capture->getStatus()).toRawUTF8(), capture->getSize().x, 400.0);
+
+        // Sin "solo el contenido", la imagen trae la barra de titulo: es mas alta.
+        win.clientArea = false;
+        auto whole = manager.get (win);
+        {
+            const std::lock_guard<std::mutex> sl (sourceLock);
+            shown = whole;
+        }
+        waitFor ([&] { return whole->getSize().y > 300; });
+        check (whole != capture && whole->getSize().y > 300 && whole->getStatus().isEmpty(), "captura: con bordes, mas alta (barra de titulo)",
+               whole->getSize().y, 330.0);
+        compositor.stop();
+        compositor.buildFrame = nullptr;
+
+        // Se cierra la ventana: la captura lo dice y no se puede rehacer.
+        DestroyWindow (hwnd);
+        pumpMessages();
+        const bool again = whole->reconnect();
+        check (! again && whole->getStatus() == "La ventana no esta abierta", ("captura: ventana cerrada: " + whole->getStatus()).toRawUTF8(),
+               again ? 1.0 : 0.0, 0.0);
+        manager.keepOnly ({});
+        check (manager.find (7) == nullptr && manager.find (8) == nullptr, "captura: se suelta la de un elemento borrado", 0.0, 0.0);
+    }
+    UnregisterClassW (L"MiDJCaptureTest", wc.hInstance);
+    DeleteObject (wc.hbrBackground);
+}
+
+
 void testVideoMix()
 {
     using midj::VideoMix;
@@ -2719,6 +3003,7 @@ int main (int argc, char* argv[])
     testCompositor();
     testVideoMix();
     testScenes();
+    testCapture();
 
     std::printf ("== Stems con IA ==\n");
     testStemStft();

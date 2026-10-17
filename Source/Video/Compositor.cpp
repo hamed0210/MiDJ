@@ -38,7 +38,7 @@ cbuffer Placement : register(b0)
     float4 p01;      // esquinas arriba izquierda y arriba derecha en coordenadas de pantalla (-1..1)
     float4 p23;      // abajo izquierda y abajo derecha
     float4 uv;       // zona de la textura (izquierda, arriba, derecha, abajo)
-    float4 params;   // x = opacidad
+    float4 params;   // x = opacidad, y = 1 si la imagen no tiene alfa (capturas del escritorio)
 };
 Texture2D image : register(t0);
 SamplerState linearClamp : register(s0);
@@ -63,6 +63,7 @@ float3 srgbToLinear (float3 c)
 float4 psLayer (VsOut i) : SV_Target
 {
     float4 c = image.Sample (linearClamp, i.uv);
+    if (params.y > 0.5) c.a = 1;
     float3 straight = c.a > 0 ? c.rgb / c.a : 0;
     float a = c.a * params.x;
     return float4 (srgbToLinear (saturate (straight)) * a, a);
@@ -133,6 +134,7 @@ struct Compositor::Impl
     ComPtr<ID3D11ShaderResourceView> overlayColour;   // 1x1 del color de la seleccion
 
     std::map<int, SlotTexture> slots;
+    std::map<GpuSource*, GpuSource::Picture> pictures;   // las fuentes de la GPU ya puestas al dia en este fotograma
     std::mutex gpuLock;   // el contexto de Direct3D se usa desde un hilo cada vez
 
     std::mutex outputsLock;
@@ -294,7 +296,7 @@ struct Compositor::Impl
 
     // Un cuadrilatero (esquinas en pixeles del destino, en el orden de Quad) con una zona de la textura.
     void draw (ID3D11ShaderResourceView* view, ID3D11PixelShader* shader, const Quad& q,
-               float targetW, float targetH, juce::Rectangle<float> uv, float opacity)
+               float targetW, float targetH, juce::Rectangle<float> uv, float opacity, bool opaque = false)
     {
         Placement p {};
         auto put = [&] (int i, juce::Point<float> pt)
@@ -308,6 +310,7 @@ struct Compositor::Impl
         put (3, q[2]);   // abajo derecha
         p.uv[0] = uv.getX(); p.uv[1] = uv.getY(); p.uv[2] = uv.getRight(); p.uv[3] = uv.getBottom();
         p.params[0] = opacity;
+        p.params[1] = opaque ? 1.0f : 0.0f;
         context->UpdateSubresource (constants.Get(), 0, nullptr, &p, 0, 0);
         context->PSSetShader (shader, nullptr, 0);
         context->PSSetShaderResources (0, 1, &view);
@@ -373,6 +376,42 @@ struct Compositor::Impl
         return &slot;
     }
 
+    // La imagen de una fuente de la GPU, puesta al dia una sola vez por fotograma.
+    GpuSource::Picture picture (GpuSource& source)
+    {
+        if (auto it = pictures.find (&source); it != pictures.end())
+            return it->second;
+        auto pic = source.update (device.Get(), context.Get());
+        if (pic.width <= 0 || pic.height <= 0)
+            pic.view = pic.cursorView = nullptr;
+        bindPipeline();   // por si la fuente uso el contexto
+        return pictures[&source] = pic;
+    }
+
+    // El puntero del raton de una captura: su rectangulo en la imagen se lleva al area de la capa
+    // (recortado como la imagen) y se gira igual.
+    void drawCursor (const Layer& layer, juce::Rectangle<float> area, const GpuSource::Picture& pic, float sw, float sh, float w, float h)
+    {
+        const juce::Rectangle<float> cursor { pic.cursor.getX() / sw, pic.cursor.getY() / sh, pic.cursor.getWidth() / sw, pic.cursor.getHeight() / sh };
+        const auto visible = cursor.getIntersection (layer.uv);
+        if (visible.isEmpty() || cursor.isEmpty())
+            return;
+        auto toArea = [&] (float u, float v)
+        {
+            return juce::Point<float> { area.getX() + (u - layer.uv.getX()) / layer.uv.getWidth() * area.getWidth(),
+                                        area.getY() + (v - layer.uv.getY()) / layer.uv.getHeight() * area.getHeight() };
+        };
+        const auto sub = juce::Rectangle<float> (toArea (visible.getX(), visible.getY()), toArea (visible.getRight(), visible.getBottom()));
+        Quad quad { sub.getTopLeft(), sub.getTopRight(), sub.getBottomRight(), sub.getBottomLeft() };
+        const auto spin = juce::AffineTransform::rotation (juce::degreesToRadians (layer.rotation), area.getCentreX(), area.getCentreY())
+                              .followedBy (layer.transform);
+        for (auto& p : quad)
+            p.applyTransform (spin);
+        const juce::Rectangle<float> uv { (visible.getX() - cursor.getX()) / cursor.getWidth(), (visible.getY() - cursor.getY()) / cursor.getHeight(),
+                                          visible.getWidth() / cursor.getWidth(), visible.getHeight() / cursor.getHeight() };
+        draw ((ID3D11ShaderResourceView*) pic.cursorView, layerShader.Get(), quad, w, h, uv, juce::jlimit (0.0f, 1.0f, layer.opacity));
+    }
+
     // Dibuja las capas en una textura de composicion (el programa o una escena).
     void compose (RenderTexture& into, const std::vector<Layer>& layers)
     {
@@ -388,7 +427,15 @@ struct Compositor::Impl
                 continue;
             ID3D11ShaderResourceView* view = nullptr;
             float sw = w, sh = h;
-            if (layer.source == imageSource)
+            GpuSource::Picture gpu;
+            if (layer.gpu != nullptr)
+            {
+                gpu = picture (*layer.gpu);
+                view = (ID3D11ShaderResourceView*) gpu.view;
+                sw = (float) gpu.width;
+                sh = (float) gpu.height;
+            }
+            else if (layer.source == imageSource)
             {
                 if (! layer.image.isValid() || layer.image.getFormat() != juce::Image::ARGB)
                     continue;
@@ -412,7 +459,9 @@ struct Compositor::Impl
             if (! layer.transform.isIdentity())
                 for (auto& p : quad)
                     p.applyTransform (layer.transform);
-            draw (view, layerShader.Get(), quad, w, h, layer.uv, juce::jlimit (0.0f, 1.0f, layer.opacity));
+            draw (view, layerShader.Get(), quad, w, h, layer.uv, juce::jlimit (0.0f, 1.0f, layer.opacity), gpu.opaque && gpu.view != nullptr);
+            if (gpu.cursorView != nullptr)
+                drawCursor (layer, area, gpu, sw, sh, w, h);
         }
         ID3D11ShaderResourceView* none = nullptr;
         context->PSSetShaderResources (0, 1, &none);
@@ -542,6 +591,12 @@ struct Compositor::Impl
         bindPipeline();
         for (auto& [id, slot] : slots)
             slot.used = false;
+        pictures.clear();
+        // Primero se ponen al dia las capturas (copian en sus texturas), luego se compone.
+        for (const auto* list : { &frame.scenes[0], &frame.scenes[1], &frame.layers })
+            for (const auto& layer : *list)
+                if (layer.gpu != nullptr)
+                    picture (*layer.gpu);
         for (size_t s = 0; s < 2; ++s)
             if (frame.useScene[s])
                 compose (sceneTextures[s], frame.scenes[s]);
@@ -625,6 +680,7 @@ Compositor::~Compositor()
 }
 
 bool Compositor::isReady() const { return impl->device != nullptr; }
+void* Compositor::getDevice() const { return impl->device.Get(); }
 juce::String Compositor::getError() const { return impl->error; }
 
 void Compositor::start()
@@ -635,7 +691,11 @@ void Compositor::start()
     {
         juce::Thread::setCurrentThreadName ("MiDJ compositor");
         SetThreadPriority (GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
+        // COM multihilo: las capturas de Windows (WinRT) se leen desde este hilo.
+        const HRESULT com = CoInitializeEx (nullptr, COINIT_MULTITHREADED);
         impl->run();
+        if (SUCCEEDED (com))
+            CoUninitialize();
     });
 }
 

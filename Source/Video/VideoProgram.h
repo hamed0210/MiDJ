@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Video/Capture.h"
 #include "Video/Scenes.h"
 #include "Video/VideoMix.h"
 
@@ -17,6 +18,10 @@ class VideoProgram
 {
 public:
     VideoProgram (VideoMix& mix, int programWidth, int programHeight);
+    // Las capturas de pantalla y ventana (sin gestor, esos elementos no se ven). Antes de setScenes.
+    void setCaptures (CaptureManager* manager) { captures = manager; }
+    // Hilo de interfaz: la captura de un elemento (para mostrar si va bien), o nullptr.
+    std::shared_ptr<Capture> captureFor (int itemId) const { return captures != nullptr ? captures->find (itemId) : nullptr; }
 
     // Hilo de interfaz: las escenas (copia). Solo se vuelven a preparar las imagenes y textos que cambian.
     void setScenes (const SceneCollection& scenes);
@@ -45,6 +50,7 @@ private:
         juce::Image image;          // imagen, texto o color
         juce::uint64 version = 0;
         juce::Point<int> natural;
+        std::shared_ptr<Capture> capture;   // captura de pantalla o ventana
     };
     struct PreparedScene
     {
@@ -64,6 +70,7 @@ private:
 
     VideoMix& mix;
     const int width, height;
+    CaptureManager* captures = nullptr;
 
     // Hilo de interfaz
     SceneCollection collection;

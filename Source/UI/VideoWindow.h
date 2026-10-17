@@ -93,6 +93,7 @@ private:
     void save();
 
     Compositor compositor;
+    CaptureManager captures;
     VideoMix mix;
     VideoProgram program;
     std::array<DeckVideo*, 2> videos;

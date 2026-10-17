@@ -24,6 +24,27 @@ class Compositor
 public:
     static constexpr int imageSource = -1;   // la capa es una imagen; 0 o 1: la textura de esa escena
 
+    // Una fuente que ya esta en la tarjeta grafica (captura de pantalla o de ventana): el compositor
+    // le pide su textura en cada fotograma y la dibuja sin pasar por la memoria normal.
+    class GpuSource
+    {
+    public:
+        struct Picture
+        {
+            void* view = nullptr;            // ID3D11ShaderResourceView* BGRA; nullptr = aun no hay imagen
+            int width = 0, height = 0;
+            bool opaque = true;              // sin alfa (el escritorio): se dibuja opaca
+            void* cursorView = nullptr;      // el puntero del raton encima (BGRA premultiplicado), o nullptr
+            juce::Rectangle<float> cursor;   // donde, en pixeles de la imagen
+        };
+        virtual ~GpuSource() = default;
+        // Hilo del compositor, con su contexto de Direct3D (ID3D11Device*, ID3D11DeviceContext*):
+        // pone al dia la imagen. Se llama una vez por fotograma aunque salga en varias capas.
+        virtual Picture update (void* device, void* context) = 0;
+        // Tamano de la ultima imagen (cualquier hilo); 0 x 0 si aun no hay.
+        virtual juce::Point<int> getSize() const = 0;
+    };
+
     // Una capa: una imagen (o una escena ya compuesta) colocada en el programa.
     struct Layer
     {
@@ -31,6 +52,7 @@ public:
         juce::Image image;             // ARGB premultiplicada de JUCE (B, G, R, A en memoria)
         juce::uint64 version = 0;      // cambia cuando cambia la imagen: solo entonces se sube a la GPU
         int source = imageSource;
+        std::shared_ptr<GpuSource> gpu;   // si hay, la imagen es la de esta fuente (no se usa 'image')
         juce::Rectangle<float> area;   // en pixeles del programa; vacia = encajada sin deformar en todo el programa
         juce::Rectangle<float> uv { 0.0f, 0.0f, 1.0f, 1.0f };   // parte de la imagen que se ve (recorte)
         float rotation = 0.0f;         // grados en el sentido del reloj, alrededor del centro del area
@@ -76,6 +98,8 @@ public:
     ~Compositor();
 
     bool isReady() const;              // false si no se pudo crear Direct3D 11
+    // El ID3D11Device* (para crear las capturas en la misma tarjeta).
+    void* getDevice() const;
     juce::String getError() const;
     int getWidth() const { return settings.width; }
     int getHeight() const { return settings.height; }

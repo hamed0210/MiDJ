@@ -247,13 +247,14 @@ private:
 
 VideoStage::VideoStage (std::array<DeckVideo*, 2> v, std::array<const Deck*, 2> d, const Mixer& mixer,
                         Compositor::Settings settings, juce::File file)
-    : compositor (settings), mix (v, d, mixer), program (mix, compositor.getWidth(), compositor.getHeight()),
+    : compositor (settings), captures (compositor.getDevice()), mix (v, d, mixer), program (mix, compositor.getWidth(), compositor.getHeight()),
       videos (v), decks (d), scenesFile (std::move (file))
 {
     mix.setProgramSize (compositor.getWidth(), compositor.getHeight());
     const auto xml = juce::XmlDocument::parse (scenesFile);
     scenes = xml != nullptr ? SceneCollection::fromXml (*xml, compositor.getWidth(), compositor.getHeight())
                             : SceneCollection::createDefault (compositor.getWidth(), compositor.getHeight());
+    program.setCaptures (&captures);
     program.setScenes (scenes);
     compositor.buildFrame = [this] (Compositor::Frame& frame) { program.buildFrame (frame); };
 }
@@ -567,6 +568,7 @@ void VideoStage::timerCallback()
 {
     for (int d = 0; d < 2; ++d)
         mix.setTitle (d, getTitle != nullptr ? getTitle (d) : juce::String());
+    captures.tick();                        // capturas perdidas (ventana cerrada y vuelta a abrir...)
     program.setNowPlaying (nowPlaying());   // los textos con {titulo} se rehacen solo si cambia
     updateOverlay();                        // (y un texto que cambia cambia de tamano)
     // Se guarda un segundo despues del ultimo cambio (no a cada movimiento del raton).

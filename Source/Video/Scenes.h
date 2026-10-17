@@ -14,7 +14,9 @@ enum class SourceType
     deckB,    // solo el deck B
     image,    // un archivo PNG/JPG/GIF
     text,     // texto; {titulo}, {artista} y {bpm} se cambian por la cancion que suena
-    colour    // un rectangulo de color
+    colour,   // un rectangulo de color
+    screen,   // captura de una pantalla (monitor)
+    window    // captura de una ventana
 };
 
 struct SceneItem
@@ -40,6 +42,12 @@ struct SceneItem
     bool shadow = true;
     juce::Colour colour { juce::Colours::white };    // del texto o del rectangulo
     int width = 1280, height = 720;                  // del rectangulo de color
+
+    int monitor = 0;                                 // captura de pantalla: numero y nombre de Windows (p. ej. DISPLAY1)
+    juce::String monitorId;
+    juce::String windowTitle, windowClass, windowExe;   // captura de ventana: cual (como la guarda OBS)
+    bool cursor = true;                              // capturar el puntero del raton
+    bool clientArea = true;                          // ventana: solo el contenido, sin bordes ni barra de titulo
 };
 
 struct Scene

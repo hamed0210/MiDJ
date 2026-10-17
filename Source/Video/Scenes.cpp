@@ -4,7 +4,7 @@ namespace midj
 {
 namespace
 {
-    const char* typeIds[] = { "decks", "deckA", "deckB", "image", "text", "colour" };
+    const char* typeIds[] = { "decks", "deckA", "deckB", "image", "text", "colour", "screen", "window" };
     const char* transitionIds[] = { "cut", "fade", "fadeToBlack", "slide", "swipe" };
 
     template <typename Enum, size_t N>
@@ -89,6 +89,8 @@ SceneItem SceneCollection::makeItem (SourceType type, int w, int h)
         case SourceType::deckA:
         case SourceType::deckB:
         case SourceType::image:
+        case SourceType::screen:
+        case SourceType::window:
         default:
             break;   // a pantalla completa (la imagen se coloca al elegir el archivo)
     }
@@ -105,6 +107,8 @@ juce::String SceneCollection::typeName (SourceType type)
         case SourceType::image:  return "Imagen";
         case SourceType::text:   return "Texto";
         case SourceType::colour: return "Color";
+        case SourceType::screen: return "Captura de pantalla";
+        case SourceType::window: return "Captura de ventana";
     }
     return {};
 }
@@ -166,6 +170,20 @@ std::unique_ptr<juce::XmlElement> SceneCollection::toXml() const
                 e->setAttribute ("width", i.width);
                 e->setAttribute ("height", i.height);
             }
+            if (i.type == SourceType::screen)
+            {
+                e->setAttribute ("monitor", i.monitor);
+                e->setAttribute ("monitorId", i.monitorId);
+            }
+            if (i.type == SourceType::window)
+            {
+                e->setAttribute ("windowTitle", i.windowTitle);
+                e->setAttribute ("windowClass", i.windowClass);
+                e->setAttribute ("windowExe", i.windowExe);
+                e->setAttribute ("clientArea", i.clientArea);
+            }
+            if (i.type == SourceType::screen || i.type == SourceType::window)
+                e->setAttribute ("cursor", i.cursor);
         }
     }
     return xml;
@@ -206,6 +224,13 @@ SceneCollection SceneCollection::fromXml (const juce::XmlElement& xml, int w, in
                 i.colour = juce::Colour::fromString (e->getStringAttribute ("colour"));
             i.width = e->getIntAttribute ("width", w);
             i.height = e->getIntAttribute ("height", h);
+            i.monitor = e->getIntAttribute ("monitor");
+            i.monitorId = e->getStringAttribute ("monitorId");
+            i.windowTitle = e->getStringAttribute ("windowTitle");
+            i.windowClass = e->getStringAttribute ("windowClass");
+            i.windowExe = e->getStringAttribute ("windowExe");
+            i.clientArea = e->getBoolAttribute ("clientArea", true);
+            i.cursor = e->getBoolAttribute ("cursor", true);
             s.items.push_back (std::move (i));
         }
         c.scenes.push_back (std::move (s));

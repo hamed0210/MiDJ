@@ -55,6 +55,7 @@ Source/
     VideoMix.*          capas de cada fotograma: los decks segun el crossfader, rotulos y logo
     Scenes.*            escenas y elementos (como OBS): fuentes, colocacion, recorte y XML
     VideoProgram.*      la escena al aire, sus capas y las transiciones entre escenas
+    Capture.*           captura de pantalla (DXGI) y de ventana (Windows Graphics Capture) en la GPU
   Control/              controladoras MIDI
     Actions.*           acciones asignables (play, cue, tempo, EQ, efectos, jog...)
     MidiMapping.*       asignaciones mensaje MIDI -> accion, guardadas en XML
@@ -129,13 +130,29 @@ A la derecha de la vista previa está el panel de escenas, como el de OBS (se gu
 - **Escenas**: clic para ponerla al aire con la transición elegida (Corte, Fundido, Fundido a negro,
   Deslizar o Barrido, de 0 a 3 s). Botones para crear, borrar y renombrar.
 - **Fuentes** de la escena (la de arriba se ve encima): Mezcla de decks, Deck A, Deck B, Imagen (PNG, JPG,
-  GIF), Texto y Color. En el texto, `{titulo}`, `{artista}` y `{bpm}` se cambian por la canción del deck que
-  más se ve (por ejemplo "Ahora suena: {titulo}"). Clic en el punto: mostrar u ocultar; Subir y Bajar.
+  GIF), Texto, Color, Captura de pantalla y Captura de ventana. En el texto, `{titulo}`, `{artista}` y
+  `{bpm}` se cambian por la canción del deck que más se ve (por ejemplo "Ahora suena: {titulo}"). Clic en
+  el punto: mostrar u ocultar; Subir y Bajar.
 - **Propiedades** de la fuente elegida: texto, tamaño, negrita, sombra, color, imagen, opacidad, giro,
   recorte, Ajustar a pantalla y Restablecer.
 - En la vista previa: clic para elegir una fuente (recuadro rojo), arrastrar para moverla (se pega a los
   bordes y al centro; Mayús para no pegarse), arrastrar una esquina para escalarla sin deformar (Mayús para
   deformar), flechas para mover de 1 en 1 (Mayús: de 10 en 10) y Supr para quitarla.
+
+### Captura de pantalla y de ventana
+
+Como en OBS, la imagen capturada no sale de la tarjeta gráfica (se copia de textura a textura):
+- **Captura de pantalla**: se elige el monitor (por defecto, el principal, encajado en el programa). Usa la
+  duplicación del escritorio de DXGI, que en Windows 10 no pinta el borde amarillo, y dibuja encima el
+  puntero del ratón (se puede quitar). Si la pantalla es de otra tarjeta gráfica, usa Windows Graphics Capture.
+- **Captura de ventana**: se elige de la lista de ventanas abiertas (`[programa] título`, botón Actualizar).
+  Usa Windows Graphics Capture (Windows 10 1903+): captura la ventana aunque esté tapada; con "Solo el
+  contenido" quita la barra de título y los bordes. En Windows 10 la ventana capturada lleva un borde
+  amarillo (lo pone Windows; en Windows 11 se quita). Se guarda el título, la clase y el programa: al abrir
+  MiDJ se busca la misma ventana (mismo título, si no la misma clase, si no el mismo programa), y si se
+  cierra y se vuelve a abrir, la captura vuelve sola.
+- Debajo se ve el estado: tamaño capturado y método (DXGI o WGC), o por qué no captura. Dos fuentes que
+  capturan lo mismo comparten la captura.
 
 ## Sampler
 
@@ -189,3 +206,4 @@ los pesos de Spleeter son de Deezer con licencia MIT (exportados a ONNX por el p
 - Video en la GPU: decodificación DXVA con Direct3D 11 (8 veces menos CPU en este equipo; saltos en ~45 ms) con vuelta a la CPU si falla, y sin decodificar mientras la ventana de video está cerrada.
 - Compositor de video en la GPU como el de OBS (Direct3D 11, 1280x720 a 30 fps, fundido en luz lineal) con vista previa y proyectores a pantalla completa en cualquier monitor, sin bordes ni cursor; sin copias de fotogramas entre el decodificador y la GPU más allá de la subida.
 - Escenas como en OBS: fuentes (mezcla de decks, deck A/B, imagen, texto con título/artista/BPM de la canción que suena, color) con posición, escala, giro, recorte y opacidad; edición con el ratón en la vista previa; transiciones Corte, Fundido, Fundido a negro, Deslizar y Barrido compuestas en la GPU; guardadas en `scenes.xml`.
+- Captura de pantalla (duplicación de DXGI, con el puntero del ratón y sin el borde amarillo de Windows 10) y de ventana (Windows Graphics Capture, solo el contenido o con bordes) como fuentes de escena, sin salir de la GPU; la ventana se vuelve a encontrar al reabrir MiDJ o al reabrirla.
