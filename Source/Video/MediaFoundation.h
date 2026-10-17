@@ -42,13 +42,16 @@ class VideoDecoder
 {
 public:
     // maxWidth: se reduce a ese ancho (manteniendo la proporcion) para aligerar.
-    static std::unique_ptr<VideoDecoder> open (const juce::File& file, int maxWidth, juce::String& error);
+    // allowGpu: decodificar en la tarjeta grafica (DXVA con Direct3D 11) si se puede; si falla
+    // o el controlador no lo admite, en la CPU.
+    static std::unique_ptr<VideoDecoder> open (const juce::File& file, int maxWidth, juce::String& error, bool allowGpu = true);
     ~VideoDecoder();
 
     int getWidth() const;
     int getHeight() const;
     double getFrameRate() const;
     double getDuration() const;
+    bool isUsingGpu() const;   // decodificado en la tarjeta grafica
 
     // El fotograma que se ve en 'seconds'. false si no hay (final o error).
     // maxFrames > 0: decodifica como mucho esos fotogramas y entrega el ultimo aunque aun no
@@ -59,6 +62,7 @@ public:
 
 private:
     struct Impl;
+    static std::unique_ptr<VideoDecoder> openWith (const juce::File& file, int maxWidth, juce::String& error, bool useGpu);
     explicit VideoDecoder (std::unique_ptr<Impl>);
     std::unique_ptr<Impl> impl;
 };

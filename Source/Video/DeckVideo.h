@@ -14,11 +14,16 @@ namespace midj
 class DeckVideo : private juce::Thread
 {
 public:
-    explicit DeckVideo (const Deck& deck, int maxWidth = 960);
+    // allowGpu: decodificar en la tarjeta grafica si se puede (ver VideoDecoder::open).
+    explicit DeckVideo (const Deck& deck, int maxWidth = 960, bool allowGpu = true);
     ~DeckVideo() override;
 
     // Hilo de interfaz: la cancion que hay en el deck (se abre en el hilo de video).
     void setFile (const juce::File& file);
+    // Solo se decodifica mientras alguien mira (ventana de video abierta): si no, el hilo duerme.
+    void setActive (bool shouldDecode);
+    bool isActive() const { return active.load(); }
+    bool isUsingGpu() const { return usingGpu.load(); }
 
     // Cualquier hilo: el ultimo fotograma (no valido si la cancion no tiene video).
     juce::Image getFrame() const;
@@ -32,6 +37,8 @@ private:
 
     const Deck& deck;
     const int maxWidth;
+    const bool allowGpu;
+    std::atomic<bool> active { false }, usingGpu { false };
     mutable juce::SpinLock lock;
     juce::Image latest;
     juce::File wanted;

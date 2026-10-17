@@ -10,7 +10,9 @@ MainComponent::MainComponent()
 
     // Biblioteca: lo que un deck analiza se guarda para la proxima vez.
     if (! library.open())
+    {
         DBG ("No se pudo abrir la biblioteca: " << Library::getDefaultFile().getFullPathName());
+    }
     for (auto* deck : { &deckA, &deckB })
         deck->onAnalysed = [this] (const juce::File& file, const TempoAnalysis& analysis) { library.setAnalysis (file, analysis); };
     deckViewA.onLoadFile = [this] (const juce::File& file) { loadIntoDeck (deckA, file); };
@@ -263,10 +265,18 @@ void MainComponent::toggleVideoWindow()
         videoWindow = std::make_unique<VideoWindow> (std::array<DeckVideo*, 2> { &videoA, &videoB },
                                                      std::array<const Deck*, 2> { &deckA, &deckB }, mixer);
         videoWindow->getOutput().getTitle = [this] (int d) { return videoTitleFor (d); };
-        videoWindow->onClosed = [this] { videoButton.setToggleState (false, juce::dontSendNotification); };
+        videoWindow->onClosed = [this]
+        {
+            videoButton.setToggleState (false, juce::dontSendNotification);
+            videoA.setActive (false);   // nadie mira: no se gasta CPU ni GPU en decodificar
+            videoB.setActive (false);
+        };
         videoWindow->centreWithSize (640, 360 + 32);
     }
-    videoWindow->setVisible (videoButton.getToggleState());
+    const bool show = videoButton.getToggleState();
+    videoA.setActive (show);
+    videoB.setActive (show);
+    videoWindow->setVisible (show);
     if (videoButton.getToggleState())
         videoWindow->toFront (true);
 }
@@ -286,5 +296,11 @@ juce::String MainComponent::videoTitleFor (int deckIndex)
             cached.second = track->artist.isNotEmpty() ? track->artist + " - " + track->title : track->title;
     }
     return cached.second;
+}
+
+bool MainComponent::videoGpuAllowed()
+{
+    const auto xml = juce::XmlDocument::parse (getDataFolder().getChildFile ("video.xml"));
+    return xml == nullptr || xml->getStringAttribute ("device") != "cpu";
 }
 }

@@ -2,7 +2,8 @@
 
 namespace midj
 {
-DeckVideo::DeckVideo (const Deck& d, int width) : juce::Thread ("MiDJ video"), deck (d), maxWidth (width)
+DeckVideo::DeckVideo (const Deck& d, int width, bool gpu)
+    : juce::Thread ("MiDJ video"), deck (d), maxWidth (width), allowGpu (gpu)
 {
     startThread (juce::Thread::Priority::normal);
 }
@@ -30,6 +31,12 @@ void DeckVideo::setFile (const juce::File& file)
     notify();
 }
 
+void DeckVideo::setActive (bool shouldDecode)
+{
+    if (active.exchange (shouldDecode) != shouldDecode)
+        notify();
+}
+
 juce::Image DeckVideo::getFrame() const
 {
     const juce::SpinLock::ScopedLockType sl (lock);
@@ -46,6 +53,12 @@ void DeckVideo::run()
 
     while (! threadShouldExit())
     {
+        if (! active.load())
+        {
+            wait (-1);   // nadie mira: no se decodifica hasta que se abra la ventana de video
+            continue;
+        }
+
         juce::File file;
         {
             const juce::SpinLock::ScopedLockType sl (lock);
@@ -59,13 +72,14 @@ void DeckVideo::run()
             delivered = -1.0;
             juce::String error;
             if (file != juce::File() && isVideoFile (file))
-                decoder = VideoDecoder::open (file, maxWidth, error);   // si falla: como si fuera solo audio
+                decoder = VideoDecoder::open (file, maxWidth, error, allowGpu);   // si falla: como si fuera solo audio
             juce::Image old;
             {
                 const juce::SpinLock::ScopedLockType sl (lock);
                 std::swap (latest, old);
             }
             videoOpen = decoder != nullptr;
+            usingGpu = decoder != nullptr && decoder->isUsingGpu();
             frameTime = -1.0;
         }
 

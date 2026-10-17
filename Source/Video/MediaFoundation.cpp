@@ -4,6 +4,7 @@
  #define NOMINMAX
 #endif
 #include <windows.h>
+#include <d3d11.h>
 #include <mfapi.h>
 #include <mferror.h>
 #include <mfidl.h>
@@ -15,6 +16,7 @@
 #include <mutex>
 #include <vector>
 
+#pragma comment (lib, "d3d11.lib")
 #pragma comment (lib, "mfplat.lib")
 #pragma comment (lib, "mfreadwrite.lib")
 #pragma comment (lib, "mfuuid.lib")
@@ -36,7 +38,8 @@ namespace
         return {};
     }
 
-    ComPtr<IMFSourceReader> openReader (const juce::File& file, bool advancedVideo)
+    // d3dManager: decodificar y convertir en la tarjeta grafica (DXVA) en vez de en la CPU.
+    ComPtr<IMFSourceReader> openReader (const juce::File& file, bool advancedVideo, IUnknown* d3dManager = nullptr)
     {
         if (! MediaFoundation::initialiseThisThread())
             return nullptr;
@@ -45,6 +48,11 @@ namespace
             return nullptr;
         if (advancedVideo)   // conversion de color y cambio de tamano dentro de Media Foundation
             attributes->SetUINT32 (MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING, TRUE);
+        if (d3dManager != nullptr)
+        {
+            attributes->SetUnknown (MF_SOURCE_READER_D3D_MANAGER, d3dManager);
+            attributes->SetUINT32 (MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, TRUE);
+        }
         ComPtr<IMFSourceReader> reader;
         if (FAILED (MFCreateSourceReaderFromURL (file.getFullPathName().toWideCharPointer(), attributes.Get(), &reader)))
             return nullptr;
@@ -291,6 +299,56 @@ struct VideoDecoder::Impl
     bool ended = false;
     bool catchingUp = false;    // tras buscar, aun no se ha llegado al instante pedido
     double seekTarget = 0.0;
+    bool gpu = false;           // los fotogramas llegan de la tarjeta grafica
+    ComPtr<ID3D11Device> device;              // solo con GPU: se mantienen vivos con el lector
+    ComPtr<IMFDXGIDeviceManager> deviceManager;
+
+    // Copia un fotograma RGB32 a la imagen. En la GPU la memoria es una textura con su propio
+    // paso por fila: IMF2DBuffer la trae a la CPU y da ese paso; si no, el bufer contiguo.
+    bool copyFrame (IMFSample* sample, juce::Image& image)
+    {
+        ComPtr<IMFMediaBuffer> buffer;
+        ComPtr<IMF2DBuffer> buffer2d;
+        BYTE* scan0 = nullptr;
+        LONG pitch = 0;
+        bool locked2d = false;
+        if (SUCCEEDED (sample->GetBufferByIndex (0, &buffer)) && SUCCEEDED (buffer.As (&buffer2d))
+            && SUCCEEDED (buffer2d->Lock2D (&scan0, &pitch)))
+        {
+            locked2d = true;   // scan0 = fila de arriba (pitch < 0 si la imagen va de abajo arriba)
+        }
+        else
+        {
+            buffer.Reset();
+            if (FAILED (sample->ConvertToContiguousBuffer (&buffer)))
+                return false;
+            BYTE* data = nullptr;
+            DWORD size = 0;
+            if (FAILED (buffer->Lock (&data, nullptr, &size)))
+                return false;
+            if ((size_t) std::abs (stride) * (size_t) height > size)
+            {
+                buffer->Unlock();
+                return false;
+            }
+            pitch = stride;
+            scan0 = stride >= 0 ? data : data + (size_t) (height - 1) * (size_t) -stride;
+        }
+        {
+            juce::Image::BitmapData out (image, juce::Image::BitmapData::writeOnly);
+            for (int y = 0; y < height; ++y)
+            {
+                // RGB32 de Media Foundation = B, G, R, X en memoria: como PixelARGB de JUCE.
+                auto* src = reinterpret_cast<const uint32_t*> (scan0 + (std::ptrdiff_t) y * pitch);
+                auto* dst = reinterpret_cast<uint32_t*> (out.getLinePointer (y));
+                for (int x = 0; x < width; ++x)
+                    dst[x] = src[x] | 0xff000000u;   // opaco
+            }
+        }
+        if (locked2d) buffer2d->Unlock2D();
+        else          buffer->Unlock();
+        return true;
+    }
 
     bool readFrameAtOrAfter (double target, juce::Image& image, int maxFrames)
     {
@@ -315,29 +373,10 @@ struct VideoDecoder::Impl
             if (early && (maxFrames <= 0 || read < maxFrames))
                 continue;   // aun antes de lo pedido: se salta sin copiar
 
-            ComPtr<IMFMediaBuffer> buffer;
-            sample->ConvertToContiguousBuffer (&buffer);
-            BYTE* data = nullptr;
-            DWORD size = 0;
-            buffer->Lock (&data, nullptr, &size);
             if (! image.isValid() || image.getWidth() != width || image.getHeight() != height)
                 image = juce::Image (juce::Image::ARGB, width, height, false, juce::SoftwareImageType());   // se escribe en la CPU
-            {
-                juce::Image::BitmapData out (image, juce::Image::BitmapData::writeOnly);
-                const int absStride = std::abs (stride);
-                for (int y = 0; y < height; ++y)
-                {
-                    // RGB32 de Media Foundation = B, G, R, X en memoria: como PixelARGB de JUCE.
-                    const int srcRow = stride >= 0 ? y : height - 1 - y;
-                    if ((size_t) (srcRow + 1) * (size_t) absStride > size)
-                        break;
-                    auto* src = reinterpret_cast<const uint32_t*> (data + (size_t) srcRow * (size_t) absStride);
-                    auto* dst = reinterpret_cast<uint32_t*> (out.getLinePointer (y));
-                    for (int x = 0; x < width; ++x)
-                        dst[x] = src[x] | 0xff000000u;   // opaco
-                }
-            }
-            buffer->Unlock();
+            if (! copyFrame (sample.Get(), image))
+                continue;
             currentTime = start;
             currentEnd = end;
             if (! early)
@@ -350,10 +389,51 @@ struct VideoDecoder::Impl
 VideoDecoder::VideoDecoder (std::unique_ptr<Impl> i) : impl (std::move (i)) {}
 VideoDecoder::~VideoDecoder() = default;
 
-std::unique_ptr<VideoDecoder> VideoDecoder::open (const juce::File& file, int maxWidth, juce::String& error)
+namespace
 {
+    // Dispositivo Direct3D 11 con video (DXVA) y su gestor para Media Foundation.
+    bool createGpuDevice (ComPtr<ID3D11Device>& device, ComPtr<IMFDXGIDeviceManager>& manager)
+    {
+        const D3D_FEATURE_LEVEL levels[] = { D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_10_0 };
+        if (FAILED (D3D11CreateDevice (nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
+                                       D3D11_CREATE_DEVICE_VIDEO_SUPPORT | D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                                       levels, (UINT) std::size (levels), D3D11_SDK_VERSION, &device, nullptr, nullptr)))
+            return false;
+        // Media Foundation usa el dispositivo desde sus propios hilos.
+        ComPtr<ID3D10Multithread> multithread;
+        if (SUCCEEDED (device.As (&multithread)))
+            multithread->SetMultithreadProtected (TRUE);
+        UINT token = 0;
+        return SUCCEEDED (MFCreateDXGIDeviceManager (&token, &manager))
+            && SUCCEEDED (manager->ResetDevice (device.Get(), token));
+    }
+}
+
+std::unique_ptr<VideoDecoder> VideoDecoder::open (const juce::File& file, int maxWidth, juce::String& error, bool allowGpu)
+{
+    if (allowGpu)
+    {
+        juce::String gpuError;
+        if (auto decoder = openWith (file, maxWidth, gpuError, true))
+            return decoder;
+    }
+    return openWith (file, maxWidth, error, false);
+}
+
+std::unique_ptr<VideoDecoder> VideoDecoder::openWith (const juce::File& file, int maxWidth, juce::String& error, bool useGpu)
+{
+    if (! MediaFoundation::initialiseThisThread())
+    {
+        error = "Media Foundation no esta disponible";
+        return nullptr;
+    }
     auto impl = std::make_unique<Impl>();
-    impl->reader = openReader (file, true);
+    if (useGpu && ! createGpuDevice (impl->device, impl->deviceManager))
+    {
+        error = "Sin Direct3D 11 con video";
+        return nullptr;
+    }
+    impl->reader = openReader (file, true, useGpu ? impl->deviceManager.Get() : nullptr);
     if (impl->reader == nullptr)
     {
         error = "Media Foundation no puede abrir " + file.getFileName();
@@ -410,8 +490,38 @@ std::unique_ptr<VideoDecoder> VideoDecoder::open (const juce::File& file, int ma
     impl->height = (int) h;
     impl->stride = (int) (INT32) MFGetAttributeUINT32 (actual.Get(), MF_MT_DEFAULT_STRIDE, (UINT32) (w * 4));
     impl->duration = durationOf (r);
+
+    if (useGpu)
+    {
+        // Con GPU se comprueba que de verdad sale un fotograma (si el controlador falla, a la CPU)
+        // y si llega como textura de la tarjeta (decodificado alli) o como memoria normal.
+        DWORD flags = 0;
+        LONGLONG timestamp = 0;
+        ComPtr<IMFSample> sample;
+        for (int tries = 0; tries < 10 && sample == nullptr; ++tries)
+            if (FAILED (r->ReadSample ((DWORD) MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0, nullptr, &flags, &timestamp, &sample))
+                || (flags & MF_SOURCE_READERF_ENDOFSTREAM) != 0)
+                break;
+        juce::Image test (juce::Image::ARGB, (int) w, (int) h, false, juce::SoftwareImageType());
+        if (sample == nullptr || ! impl->copyFrame (sample.Get(), test))
+        {
+            error = "La GPU no entrega fotogramas";
+            return nullptr;
+        }
+        ComPtr<IMFMediaBuffer> buffer;
+        ComPtr<IMFDXGIBuffer> dxgi;
+        impl->gpu = SUCCEEDED (sample->GetBufferByIndex (0, &buffer)) && SUCCEEDED (buffer.As (&dxgi));
+        if (! impl->gpu)
+        {
+            error = "Media Foundation no uso la GPU";
+            return nullptr;   // mejor el camino normal de CPU, ya probado
+        }
+        seekTo (r, 0.0);
+    }
     return std::unique_ptr<VideoDecoder> (new VideoDecoder (std::move (impl)));
 }
+
+bool VideoDecoder::isUsingGpu() const { return impl->gpu; }
 
 int VideoDecoder::getWidth() const          { return impl->width; }
 int VideoDecoder::getHeight() const         { return impl->height; }

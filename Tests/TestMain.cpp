@@ -2158,6 +2158,20 @@ void testVideo()
     check (video->getWidth() == 160 && video->getHeight() == 120 && std::abs (video->getFrameRate() - 25.0) < 0.01
                && std::abs (video->getDuration() - 5.0) < 0.1,
            "video: 160x120 (reducido), 25 fps, 5 s", video->getWidth(), 160);
+    std::printf ("        (este video se decodifica en la %s)\n", video->isUsingGpu() ? "GPU" : "CPU");
+
+    // El camino de CPU (el de reserva si la GPU falla) da lo mismo.
+    {
+        juce::String cpuError;
+        auto cpuVideo = midj::VideoDecoder::open (file, 160, cpuError, false);
+        juce::Image frame;
+        juce::String colours;
+        if (cpuVideo != nullptr)
+            for (double t : { 0.5, 1.5, 2.5, 3.5, 4.5 })
+                colours += cpuVideo->frameAt (t, frame) ? juce::String::charToString (dominantColour (frame)) : "-";
+        check (cpuVideo != nullptr && ! cpuVideo->isUsingGpu() && colours == "RGBYM",
+               ("video: en la CPU tambien (" + colours + ")").toRawUTF8(), 0.0, 0.0);
+    }
 
     juce::Image image;
     juce::String seen;
@@ -2211,6 +2225,9 @@ void testVideo()
         deck.loadBuffer (juce::AudioBuffer<float> (2, 5 * 44100), 44100.0, "video", { 120.0, 0.0 });
         midj::DeckVideo deckVideo (deck, 160);
         deckVideo.setFile (file);
+        juce::Thread::sleep (300);
+        check (! deckVideo.getFrame().isValid() && ! deckVideo.hasVideo(), "video: sin ventana abierta no se decodifica", 0.0, 0.0);
+        deckVideo.setActive (true);
         auto colourAt = [&] (double seconds)
         {
             deck.setPositionSeconds (seconds);
@@ -2234,45 +2251,59 @@ void testVideo()
     file.deleteFile();
 }
 
-// MiDJTests --video archivo: datos del video y velocidad de decodificacion.
+// Tiempo de CPU del proceso en segundos (todos sus hilos: Media Foundation decodifica con varios).
+double processCpuSeconds()
+{
+    FILETIME created, exited, kernel, user;
+    GetProcessTimes (GetCurrentProcess(), &created, &exited, &kernel, &user);
+    auto toSeconds = [] (const FILETIME& t) { return (double) ((ULONGLONG) t.dwHighDateTime << 32 | t.dwLowDateTime) / 1.0e7; };
+    return toSeconds (kernel) + toSeconds (user);
+}
+
+// MiDJTests --video archivo: datos del video y coste de decodificarlo en la GPU y en la CPU.
 int videoInfo (const juce::File& file)
 {
-    juce::String error;
-    auto video = midj::VideoDecoder::open (file, 640, error);
-    if (video == nullptr)
-    {
-        std::printf ("%s\n", error.toRawUTF8());
-        return 1;
-    }
-    std::printf ("%s: %dx%d (reducido), %.2f fps, %.1f s\n", file.getFileName().toRawUTF8(), video->getWidth(), video->getHeight(),
-                 video->getFrameRate(), video->getDuration());
     juce::Image image;
-    const auto start = juce::Time::getMillisecondCounterHiRes();
-    int frames = 0;
-    for (double t = 10.0; t < 20.0; t += 1.0 / video->getFrameRate(), ++frames)
-        if (! video->frameAt (t, image))
-            break;
-    const double took = (juce::Time::getMillisecondCounterHiRes() - start) / 1000.0;
-    std::printf ("  10 s de video (%d fotogramas) decodificados en %.2f s: %.0f %% del tiempo real\n", frames, took, took / 10.0 * 100.0);
-    const auto seekStart = juce::Time::getMillisecondCounterHiRes();
-    video->frameAt (60.0, image);
-    video->frameAt (30.0, image);
-    std::printf ("  dos saltos (a 60 s y atras a 30 s): %.0f ms\n", juce::Time::getMillisecondCounterHiRes() - seekStart);
-    // Lo que hace un deck tras un salto: entregar enseguida un fotograma y seguir hasta alcanzar.
-    const auto jumpStart = juce::Time::getMillisecondCounterHiRes();
-    video->frameAt (100.0, image, 1);
-    const double firstFrame = juce::Time::getMillisecondCounterHiRes() - jumpStart;
-    const double keyFrame = video->getCurrentFrameTime();
-    while (video->isCatchingUp() && video->frameAt (100.0, image, 6)) {}
-    std::printf ("  salto a 100 s: primer fotograma (el clave de %.2f s) en %.0f ms, alcanzado en %.0f ms\n",
-                 keyFrame, firstFrame, juce::Time::getMillisecondCounterHiRes() - jumpStart);
-    video->frameAt (30.0, image);
-    // El fotograma de los 30 s, para mirarlo.
-    const auto png = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("MiDJ video 30s.png");
-    png.deleteFile();
-    juce::FileOutputStream out (png);
-    if (image.isValid() && juce::PNGImageFormat().writeImageToStream (image, out))
-        std::printf ("  fotograma de los 30 s: %s\n", png.getFullPathName().toRawUTF8());
+    for (const bool gpu : { true, false })
+    {
+        juce::String error;
+        auto video = midj::VideoDecoder::open (file, 960, error, gpu);
+        if (video == nullptr)
+        {
+            std::printf ("%s\n", error.toRawUTF8());
+            return 1;
+        }
+        std::printf ("%s [%s]: %dx%d (reducido), %.2f fps, %.1f s\n", file.getFileName().toRawUTF8(),
+                     video->isUsingGpu() ? "GPU" : "CPU", video->getWidth(), video->getHeight(), video->getFrameRate(), video->getDuration());
+        const auto start = juce::Time::getMillisecondCounterHiRes();
+        const double cpuStart = processCpuSeconds();
+        int frames = 0;
+        for (double t = 10.0; t < 20.0; t += 1.0 / video->getFrameRate(), ++frames)
+            if (! video->frameAt (t, image))
+                break;
+        const double took = (juce::Time::getMillisecondCounterHiRes() - start) / 1000.0;
+        const double cpu = processCpuSeconds() - cpuStart;
+        // Coste al reproducir: CPU por cada segundo de video, en % de un nucleo y del procesador entero.
+        const int cores = juce::SystemStats::getNumCpus();
+        std::printf ("  10 s de video (%d fotogramas) en %.2f s; CPU %.2f s = %.0f %% de un nucleo al reproducir (%.0f %% de %d nucleos)\n",
+                     frames, took, cpu, cpu / 10.0 * 100.0, cpu / 10.0 * 100.0 / cores, cores);
+        // Lo que hace un deck tras un salto: entregar enseguida un fotograma y seguir hasta alcanzar.
+        const auto jumpStart = juce::Time::getMillisecondCounterHiRes();
+        video->frameAt (100.0, image, 1);
+        const double firstFrame = juce::Time::getMillisecondCounterHiRes() - jumpStart;
+        const double keyFrame = video->getCurrentFrameTime();
+        while (video->isCatchingUp() && video->frameAt (100.0, image, 6)) {}
+        std::printf ("  salto a 100 s: primer fotograma (el clave de %.2f s) en %.0f ms, alcanzado en %.0f ms\n",
+                     keyFrame, firstFrame, juce::Time::getMillisecondCounterHiRes() - jumpStart);
+        video->frameAt (30.0, image);
+        // El fotograma de los 30 s, para mirarlo.
+        const auto png = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                             .getChildFile (juce::String ("MiDJ video 30s ") + (video->isUsingGpu() ? "GPU" : "CPU") + ".png");
+        png.deleteFile();
+        juce::FileOutputStream out (png);
+        if (image.isValid() && juce::PNGImageFormat().writeImageToStream (image, out))
+            std::printf ("  fotograma de los 30 s: %s\n", png.getFullPathName().toRawUTF8());
+    }
     return 0;
 }
 

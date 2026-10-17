@@ -76,7 +76,7 @@ Tests/
                         MiDJTests --sample archivo            datos de un sonido (.vdjsample o audio)
                         MiDJTests --mixpoints canciones...    puntos de automix
                         MiDJTests --stems cancion [cpu|gpu] [s] separa voz e instrumental (WAV)
-                        MiDJTests --video archivo             datos y velocidad de decodificacion de un video
+                        MiDJTests --video archivo             coste de decodificar un video en la GPU y en la CPU
                         MiDJTests --benchmark                 CPU del keylock y de los efectos
 ```
 
@@ -103,6 +103,9 @@ codecs de Windows (Media Foundation, sin FFmpeg). Botón **VIDEO** (junto a MIDI
 mezcla los dos decks según el crossfader; una canción sin video se ve como un rótulo con el título y el
 artista. Doble clic en la ventana: pantalla completa, en el segundo monitor si hay uno (Esc para salir).
 El video sigue la posición que se oye del deck: pitch, saltos, CUE y bucles.
+Se decodifica en la tarjeta gráfica (DXVA con Direct3D 11) y solo mientras la ventana de video está abierta;
+si la GPU falla se usa la CPU. Para forzar la CPU: `<VIDEO device="cpu"/>` en `%APPDATA%\MiDJ\video.xml`.
+En este portátil (A8 + Radeon R5) un video cuesta 24 % de un núcleo en la GPU frente a 204 % en la CPU.
 
 ## Sampler
 
@@ -153,3 +156,4 @@ los pesos de Spleeter son de Deezer con licencia MIT (exportados a ONNX por el p
 - Automix de dos decks con puntos de automix calculados al cargar cada canción (sonido, fundido y parte rítmica, con las reglas de VirtualDJ): mezcla a tempo o con fundido, mezclar ya, saltar, lista guardada y acciones MIDI.
 - Stems con IA: voz e instrumental con Spleeter 2 stems (ONNX Runtime, CPU o DirectML) separados en segundo plano con caché en disco; mezcla en el deck sin clics y exacta con los dos encendidos; botones VOZ/INSTR, preparar desde el navegador y acciones MIDI.
 - Video: MP4/MOV/WMV (y M4A/AAC/WMA) en los decks con Media Foundation de Windows; un hilo de video por deck que sigue la posición que se oye (tras un salto, primer fotograma en ~0,1 s y alcanza al audio sin congelarse); ventana VIDEO con la mezcla según el crossfader, rótulo con título y artista para las canciones sin video y pantalla completa sin bordes en el segundo monitor.
+- Video en la GPU: decodificación DXVA con Direct3D 11 (8 veces menos CPU en este equipo; saltos en ~45 ms) con vuelta a la CPU si falla, y sin decodificar mientras la ventana de video está cerrada.
