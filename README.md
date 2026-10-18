@@ -1,7 +1,8 @@
 # MiDJ
 
-Aplicación de DJ para Windows escrita en C++20 con [JUCE](https://juce.com).
-Primer objetivo: dos decks que reproducen MP3/WAV/FLAC/Ogg, BPM detectado, control de tempo y crossfader.
+Aplicación de DJ y video para Windows escrita en C++20 con [JUCE](https://juce.com): dos decks con
+keylock, SYNC, efectos, stems con IA y video; sampler, automix, audífonos con pre-escucha, biblioteca
+con favoritos y listas, escenas y fuentes como OBS (capturas, capturadoras, visualizador) y YouTube.
 
 ## Requisitos
 
@@ -14,7 +15,12 @@ Primer objetivo: dos decks que reproducen MP3/WAV/FLAC/Ogg, BPM detectado, contr
 | SQLite (amalgamation) | 3.46.1 | `D:\Tools\sqlite` (otra ruta: `-DSQLITE_DIR=...`) |
 | ONNX Runtime + DirectML | 1.20.1 / 1.15.4 | `D:\Tools\onnxruntime` (otra ruta: `-DONNXRUNTIME_DIR=...`) |
 | Modelo Spleeter 2 stems int8 | sherpa-onnx | `D:\Tools\models\spleeter-2stems-int8` (se copia junto al programa) |
+| WebView2 SDK (cargador estático) | 1.0.3240.44 | `D:\Tools\WebView2` (otra ruta: `-DWEBVIEW2_DIR=...`) |
+| Inno Setup (solo para el instalador) | 6.7 | `%LOCALAPPDATA%\Programs\Inno Setup 6` |
 | Git | cualquiera | ya instalado |
+
+Para usar MiDJ hace falta Windows 10 1903 o posterior. YouTube usa además el motor WebView2 de Microsoft,
+que traen Windows 11 y casi todos los Windows 10 (si falta, el instalador lo avisa).
 
 ## Compilar y ejecutar
 
@@ -29,6 +35,19 @@ build\MiDJ_artefacts\Debug\MiDJ.exe
 
 Para una versión optimizada usa `--preset release` en la compilación.
 
+### Instalador
+
+Con la versión Release compilada, el instalador se arma con Inno Setup:
+
+```bat
+"%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" Installer\MiDJ.iss
+```
+
+Deja `build\installer\MiDJ-Setup-<versión>.exe`. Instala para el usuario (sin administrador) o para todos;
+lleva el programa, ONNX Runtime y DirectML, el modelo de stems y las DLL de Visual C++ (no hace falta el
+paquete de Microsoft), accesos directos y desinstalador. Los datos de `%APPDATA%\MiDJ` (biblioteca, escenas,
+ajustes) no se tocan ni al instalar ni al desinstalar.
+
 ## Estructura
 
 ```
@@ -40,6 +59,7 @@ Source/
     Mixer.*             mezcla de dos decks con crossfader
     MasterTap.*         lo que sale por el master y su pulso, para el visualizador
     AuxAudio.*          sonidos que no son de los decks al master (multimedia, capturadora)
+    HeadphoneOutput.*   audifonos por otra tarjeta de sonido (cola con correccion de reloj)
     ChannelStrip.*      canal de un deck: ganancia, EQ de 3 bandas, filtro, volumen
     BpmDetector.*       detección de tempo y del primer pulso
     TimeStretcher.*     keylock: cambio de tempo sin cambio de tono (Rubber Band)
@@ -60,6 +80,7 @@ Source/
     Capture.*           captura de pantalla (DXGI) y de ventana (Windows Graphics Capture) en la GPU
     Visualizer.*        visualizador del master: espectro, onda y pulso
     MediaSources.*      fuentes Multimedia (archivo) y Dispositivo de captura de video
+    YouTubeSearch.*     busqueda en YouTube sin clave (lee la pagina de resultados)
   Control/              controladoras MIDI
     Actions.*           acciones asignables (play, cue, tempo, EQ, efectos, jog...)
     MidiMapping.*       asignaciones mensaje MIDI -> accion, guardadas en XML
@@ -70,9 +91,11 @@ Source/
     TagReader.*         etiquetas ID3 (v1, v2.2-2.4) y 'Artista - Titulo' del nombre
   UI/                   interfaz
     DeckComponent.*     panel de un deck: forma de onda, botones, tempo
-    MixerComponent.*    mezclador con pestanas AUDIO / VIDEO (vista previa) y crossfader
-    LibraryBrowser.*    navegador: carpetas, buscador y lista con icono audio/video
-    AutomixPanel.*      panel del automix: lista, encender, mezclar ya, saltar
+    MixerComponent.*    centro: volumenes con pre-escucha, AUDIO (EQ, master, audifonos) / PROGRAMA, crossfader y transiciones
+    LibraryBrowser.*    navegador: carpetas, favoritos, listas, YouTube, buscador y lista
+    AutomixPanel.*      panel del automix: pestanas AUTOMIX y YOUTUBE, lista, encender, mezclar ya, saltar
+    YouTubePlayer.*     reproductor de YouTube: WebView2 en una ventana fuera de las pantallas
+    YouTubePanel.*      pestana YOUTUBE: lo que suena, avance, volumen y lista del automix de YouTube
     EffectsRow.*        fila FX de un deck: elegir efecto, encender y mando
     MidiLearnOverlay.*  capa del modo aprender MIDI
     SamplerPanel.*      panel del sampler: pads, volumen y STOP
@@ -91,62 +114,129 @@ Tests/
                         MiDJTests --stems cancion [cpu|gpu] [s] separa voz e instrumental (WAV)
                         MiDJTests --video archivo             coste de decodificar un video en la GPU y en la CPU
                         MiDJTests --benchmark                 CPU del keylock y de los efectos
+Installer/
+  MiDJ.iss              instalador (Inno Setup)
 ```
 
 ## Interfaz y atajos de teclado
 
-Diseño "Escenario" (oscuro, deck A en azul y B en ámbar):
-- **Arriba**, una barra con el formato de la salida de video, **Proyector** (pantalla completa en un monitor),
-  **MIDI**, **Atajos** y **Ajustes** (paneles visibles: Biblioteca, Automix, Escenas y fuentes y Sampler;
-  restablecer anchos).
+Diseño "Escenario" (oscuro, deck A en azul y B en ámbar), pensado para una pantalla de 1366x768:
+- **Arriba**, una barra con el formato de la salida de video, el **sampler** (8 pads, volumen y Parar), las
+  pestañas **AUDIO / PROGRAMA** del centro, **Proyector** (pantalla completa en un monitor), **MIDI**,
+  **Atajos** y **Ajustes**.
 - **Decks** a los lados: portada (un fotograma si es un video), título, artista, BPM y tiempo, la forma de
-  onda (lo ya sonado más apagado), el **pitch** ±16 % con el centro marcado (raya y 0 en verde cuando está en
-  0; se engancha al pasar cerca; doble clic: 0) y **KEY**, bucles 1-2-4-8, stems (Voz / Instrumental o
-  "Separar stems"), tres efectos (el nombre enciende, la flecha elige otro, el mando es la cantidad) y Play,
-  Cue y Sync.
-- **Centro**: pestañas **AUDIO** (High, Mid, Low, Gain y Filter de cada deck con su vúmetro, y el **master**
-  con su volumen y vúmetro estéreo) y **PROGRAMA** (la salida de video y el nivel de video de cada deck).
-  Debajo, el **crossfader** con su centro marcado (CENTRO en verde o "40 % hacia B"; se engancha y doble clic
-  lo centra) y a cada lado el **volumen** del deck con su vúmetro; y los botones de transición (las de
-  siempre, las propias y **+ Personalizada**) con su duración. Debajo, el **sampler** (8 pads en fila).
-- **Abajo**: biblioteca, automix y escenas/fuentes; las barritas entre ellos (y entre el árbol y la lista)
-  cambian el ancho (doble clic: el original). Anchos, paneles visibles y pestaña se guardan en
-  `%APPDATA%\MiDJ\layout.xml`.
-- **Biblioteca**: árbol con **Música local** (Música = solo audio, Videos = solo video), **Mis carpetas**
-  (las añadidas) y **Discos** (cada disco y las carpetas donde hay canciones). La **x** de una carpeta o un
-  disco lo quita de la biblioteca sin borrar archivos (las canciones quedan ocultas con su análisis y no
-  vuelven al re-escanear) y sale un aviso con **Deshacer**. **Sincronizar** (flechas en círculo) busca
-  música y/o video en los discos elegidos (sin Windows, Archivos de programa ni AppData) y añade las
-  carpetas nuevas, que se analizan en segundo plano. Cada canción tiene **A** / **B** (cargar en ese deck)
-  y **+** (al automix); doble clic la carga en el deck libre.
-- **Automix** en su propio panel: Mezclar ya, Saltar y Vaciar como iconos, la x de cada canción la quita.
+  onda delgada (lo ya sonado más apagado), el **pitch** ±16 % con el centro marcado (raya y 0 en verde cuando
+  está en 0; se engancha al pasar cerca; doble clic: 0) y **KEY**, bucles 1-2-4-8, stems (Voz / Instrumental
+  o "Separar stems"), tres efectos (el nombre enciende, la flecha elige otro, el mando es la cantidad) y
+  Play, Cue y Sync.
+- **Centro**: a los lados el **volumen** de cada deck (fader con vúmetro y, con audífonos, su botón de
+  pre-escucha) y en medio la página elegida: **PROGRAMA** (la salida de video, lo más grande que quepa) o
+  **AUDIO** (High, Mid, Low, Gain y Filter de cada deck con su vúmetro, el **master** con su volumen y
+  vúmetro estéreo y, con audífonos, sus mandos). Debajo, en una línea, el **crossfader** con su centro
+  marcado (CENTRO en verde o "40 % hacia B"; se engancha y doble clic lo centra) y la **transición** entre
+  escenas (las de siempre, las propias y **+**) con su duración (botón: lista de duraciones).
+- **Abajo**: biblioteca, automix y escenas/fuentes; las barritas entre ellos (y entre el árbol y la lista, y
+  entre Escenas y Fuentes) cambian el tamaño (doble clic: el original).
+- **Ajustes**: ocultar Biblioteca, Automix, Escenas, Fuentes, Sampler o Transiciones; el crossfader
+  automático; en los decks, la forma de onda, el pitch y KEY, los loops, los stems o los efectos (el deck se
+  compacta sin huecos y lo de abajo crece); **Audio y audífonos...** (ver abajo) y restablecer. Se guarda en
+  `%APPDATA%\MiDJ\layout.xml`; la ventana recuerda su tamaño, posición y si estaba maximizada (`window.txt`).
+- **Crossfader automático**: al dar Play a un deck que el crossfader deja apagado, si el otro no suena, el
+  crossfader pasa a su lado en 0,4 s (no con el automix encendido).
 
 El **deck activo** (marco del color del deck) es el de los atajos: se elige con un clic en el deck, con
 Tab o cargando una canción en él. Botón **Atajos**:
 
 | Tecla | Acción |
 |---|---|
-| Espacio | Play / Pausa del deck activo |
+| Espacio | Pausa lo que suena (uno o los dos decks, o YouTube); otra vez: vuelve eso mismo. Sin nada sonando: Play del deck activo |
 | Tab | Cambiar de deck activo |
 | C / S / K | CUE / SYNC / Keylock del deck activo |
-| Intro | Cargar la canción elegida en el deck activo |
+| Intro | Cargar la canción elegida en el deck activo (en YouTube: verla) |
 | Flechas arriba / abajo (RePág / AvPág) | Moverse por la lista de canciones |
 | Flechas izquierda / derecha | Crossfader a pasos del 5 % (con Mayús: del todo) |
-| A | Agregar la canción elegida al automix |
+| A | Agregar la canción elegida al automix (en YouTube: al automix de YouTube) |
 | 1 - 8 | Pads del sampler (al soltar, se suelta el pad) |
-| F1 - F9 | Pasar a la escena 1 - 9 |
+| Ctrl+1 - 9 (o F1 - F9) | Pasar a la escena 1 - 9 (en portátiles HP las F necesitan la tecla Fn) |
 | V | Pestaña AUDIO / PROGRAMA del centro |
 | Ctrl+F | Buscar (Esc o Intro: salir del buscador) |
 | Supr | Quitar la fuente elegida (vista previa o panel Fuentes) |
 
 Mientras se escribe en el buscador o en un texto, las teclas escriben (no son atajos). Los botones no se
-quedan con el foco al hacer clic, así que el espacio nunca vuelve a pulsar el último botón.
+quedan con el foco al hacer clic, así que el espacio nunca vuelve a pulsar el último botón; los atajos llegan
+aunque ningún control tenga el foco.
+
+## Audio, audífonos y limitador
+
+**Ajustes > Audio y audífonos...**: la tarjeta de sonido (tipo, salida, frecuencia y tamaño del bloque) y por
+dónde van los **audífonos**:
+- **Salidas 3 y 4** de una tarjeta de 4 canales (las controladoras con tarjeta propia);
+- **partir la salida estéreo con un cable en Y**: izquierda = master en mono (a los parlantes), derecha =
+  audífonos en mono; sirve con la salida normal de un portátil;
+- **otra tarjeta de sonido** (p. ej. un adaptador USB de audífonos): se le pasa el audio por una cola de 40 ms
+  que corrige la diferencia de reloj entre las dos tarjetas.
+
+Con audífonos aparece un botón de **pre-escucha** bajo el volumen de cada deck (se oye tras el EQ y el filtro
+y antes del volumen: el deck se puede escuchar con el fader abajo) y, en la página AUDIO, **Cue / Mst** (de solo
+la pre-escucha a solo el master) y **Auricular** (volumen). Sin ningún deck en pre-escucha los audífonos oyen el
+master. La pre-escucha también se asigna por MIDI.
+
+El **limitador** del master (activado por defecto, se quita en el mismo diálogo) no deja que la salida pase de
+-0,3 dBFS: baja la ganancia al momento y la recupera en 150 ms. Mientras actúa, el valor bajo los volúmenes
+dice **LIM** en rojo. Todo se guarda en `%APPDATA%\MiDJ\audio.xml`.
+
+## Biblioteca
+
+Árbol de la izquierda:
+- **Música local** (Música = solo audio, Videos = solo video).
+- **Favoritos**: las canciones con la **estrella** encendida (clic en la estrella de la lista o clic derecho >
+  Agregar a favoritos).
+- **Más reproducidos**: las 50 que más han sonado (cuenta una vez por carga, a los 30 s sonando en un deck).
+- **Listas**: listas de reproducción propias. Clic derecho en "Listas" > Nueva lista; en una canción >
+  **Agregar a lista** (o a una nueva); arrastrar canciones encima de una lista. Dentro de una lista, clic
+  derecho > Quitar de esta lista / Mover arriba / Mover abajo; en la lista del árbol: renombrar, borrar (las
+  canciones no se borran) o reproducirla en el automix.
+- **YouTube** (ver abajo).
+- **Mis carpetas** (las añadidas) y **Discos** (cada disco y las carpetas donde hay canciones). La **x** de una
+  carpeta o un disco lo quita de la biblioteca sin borrar archivos (las canciones quedan ocultas con su
+  análisis y no vuelven al re-escanear) y sale un aviso con **Deshacer**. **Sincronizar** (flechas en círculo)
+  busca música y/o video en los discos elegidos (sin Windows, Archivos de programa ni AppData) y añade las
+  carpetas nuevas, que se analizan en segundo plano.
+
+Cada canción tiene **A** / **B** (cargar en ese deck) y **+** (al automix); doble clic la carga en el deck libre.
+Favoritos, reproducciones y listas se guardan en `library.db`.
+
+## YouTube
+
+**Biblioteca > YouTube**: se escribe en el buscador y se pulsa **Intro** (o se pega un enlace de YouTube).
+Cada video tiene **Ver** (suena ya) y **+** (a la lista del automix de YouTube); clic derecho, también "como el
+siguiente". Lo que suena se ve en la pestaña **YOUTUBE** del panel del automix: título, estado (Cargando,
+Anuncio, Sonando...), avance (clic en la barra: saltar), Play/Pausa, Detener (cierra el reproductor) y volumen.
+
+- El video se reproduce en una ventana con **WebView2** (el motor de Edge) que está fuera de las pantallas y
+  solo existe mientras hay un video (unos 400 MB de RAM mientras está abierta). Abre la página normal de
+  YouTube, así que se ven también los videos que no se dejan incrustar; los anuncios se ven igual que en el
+  navegador. Pide H.264 a 720p, que decodifica la tarjeta gráfica.
+- Al **programa** llega con la fuente de escena **YouTube** (Añadir fuente > YouTube), que captura esa ventana.
+  Con una escena con "Pasar a esta escena automáticamente > Cuando suena YouTube", el programa pasa a ella
+  sola mientras suena YouTube (manda sobre los decks).
+- El **sonido** sale por la tarjeta predeterminada de Windows: no pasa por el mezclador de MiDJ (sin EQ ni
+  crossfader); su volumen es el de la pestaña YOUTUBE.
+- El **automix de YouTube** es el mismo automix con su propia lista (pestaña YOUTUBE, Encendido/Apagado,
+  siguiente y vaciar): al terminar un video suena el siguiente; un video que no se puede ver se salta. Sin
+  automix, al terminar se cierra el reproductor. La lista se guarda en `youtube.xml`.
+- La ventana del reproductor aparece agrupada bajo el icono de MiDJ en la barra de tareas: si se quita de
+  ahí, Windows no deja capturarla.
+- Si YouTube cambia su página y algo deja de ocultarse o de funcionar, el script del reproductor se puede
+  cambiar sin recompilar dejando un `youtube.js` en `%APPDATA%\MiDJ`.
 
 ## Automix
 
 Panel **AUTOMIX** abajo, entre las canciones y las escenas: se le arrastran canciones (o clic derecho en una
 canción > **Agregar a automix**, o tecla A). Encendido/Apagado, Mezclar ya, Saltar, Quitar, Vaciar y la
-duración del fundido.
+duración del fundido. **Listas**: reproducir (la lista pasa a ser esa y se enciende) o añadir al final los
+Favoritos, los Más reproducidos o una lista propia. La pestaña **YOUTUBE** es el automix de YouTube, con su
+propia lista (ver YouTube).
 Cada transición se planifica como el modo Smart de VirtualDJ: **a tempo** (16 pulsos, compases alineados y el
 tempo deslizándose de una canción a la otra) si la actual tiene fin de parte rítmica, la siguiente tiene inicio
 y sus BPM difieren menos de un 6 %; si no, **fundido**. La lista se guarda al cerrar.
@@ -162,22 +252,20 @@ Por defecto se usa la CPU; la tarjeta gráfica (DirectML) se activa escribiendo 
 ## Video
 
 Los MP4, MOV, M4V, WMV y 3GP se cargan en un deck como cualquier canción (también M4A, AAC y WMA), con los
-codecs de Windows (Media Foundation, sin FFmpeg). Pestaña **VIDEO** del mezclador (como en VirtualDJ; tecla
-V): la vista previa del programa, que por defecto mezcla los dos decks según el crossfader (una canción sin
-video se ve como un rótulo con el título y el artista); a los lados, el nivel de video de cada deck (0 = no se
-ve) y debajo la transición entre escenas. El video sigue la posición que se oye del deck: pitch, saltos, CUE
-y bucles.
+codecs de Windows (Media Foundation, sin FFmpeg). Pestaña **PROGRAMA** del centro (tecla V): la vista previa
+del programa, que por defecto mezcla los dos decks según el crossfader (una canción sin video se ve como un
+rótulo con el título y el artista). El video sigue la posición que se oye del deck: pitch, saltos, CUE y bucles.
 
 Como en OBS, un compositor en la tarjeta gráfica (Direct3D 11) arma la imagen una vez por fotograma a ritmo
 fijo (1280x720 a 30 fps) y la dibuja en cada salida; el fundido entre decks se hace en luz lineal (a la mitad
 no oscurece). Salidas:
-- **Vista previa** (pestaña VIDEO), para el DJ. Clic derecho > **Vista previa grande**: la misma en su propia
+- **Vista previa** (pestaña PROGRAMA), para el DJ. Clic derecho > **Vista previa grande**: la misma en su propia
   ventana, para colocar las fuentes con comodidad.
 - **Proyectores a pantalla completa**, uno por monitor, sin bordes ni cursor: doble clic en la vista previa
   abre o cierra el del segundo monitor; clic derecho, el menú con todas las pantallas y el estado del
   compositor (tarjeta, ms por fotograma, fotogramas perdidos). En el proyector: Esc o doble clic lo cierra.
 
-Solo se compone y se decodifica mientras se ve la pestaña VIDEO, la vista previa grande o un proyector (el
+Solo se compone y se decodifica mientras se ve la pestaña PROGRAMA, la vista previa grande o un proyector (el
 sonido de las fuentes multimedia sigue aunque no se vea). El video se decodifica en la
 tarjeta gráfica (DXVA) y, si falla, en la CPU. Ajustes en `%APPDATA%\MiDJ\video.xml`:
 `<VIDEO device="cpu" width="1280" height="720" fps="30"/>` (`device="cpu"` fuerza la CPU; el resto, el
@@ -189,11 +277,14 @@ de un núcleo con la vista previa y ~5 % más con un proyector; componer, ~1,2 m
 Abajo a la derecha están los paneles **Escenas** y **Fuentes**, como los de OBS (se guarda en
 `%APPDATA%\MiDJ\scenes.xml`; por defecto, una escena "Mezcla" con la mezcla de los decks):
 - **Escenas**: clic para ponerla al aire con la transición elegida bajo el crossfader (Corte, Fundido,
-  A negro, Deslizar o Barrido, de 0,1 a 3 s, o una propia); F1-F9 pasan a las nueve primeras. Botones para crear,
-  borrar, renombrar y ordenar; clic derecho para duplicar.
+  A negro, Deslizar o Barrido, de 0,1 a 3 s, o una propia); Ctrl+1-9 (o F1-F9) pasan a las nueve primeras.
+  Botones para crear, borrar, renombrar y ordenar; clic derecho para duplicar y para **Pasar a esta escena
+  automáticamente**: cuando lo que más se oye de los decks es una canción de audio, un video, cuando no suena
+  nada (tras 1,5 s) o cuando suena YouTube (un icono en la lista lo indica). Solo actúa al cambiar: una escena
+  elegida a mano se respeta hasta el próximo cambio.
 - **Fuentes** de la escena (la de arriba se ve encima), con su ojo (mostrar u ocultar) y su candado (no se
   mueve en la vista previa). Botones: **+** abre **Añadir fuente** (a la izquierda los tipos: Mezcla de decks,
-  Deck A, Deck B, Captura de pantalla, Captura de ventana, Dispositivo de captura de video, Imagen,
+  Deck A, Deck B, YouTube, Captura de pantalla, Captura de ventana, Dispositivo de captura de video, Imagen,
   Multimedia, Texto, Color y Visualizador; a la derecha "Crear nueva fuente" o "Añadir existente", la misma
   fuente de otra escena, que comparte la captura o el video), quitar, propiedades y subir/bajar. Doble clic
   o el engranaje: **Propiedades para 'fuente'**, con su imagen arriba, sus ajustes (se ven al momento), la
@@ -268,7 +359,7 @@ Fuente que dibuja lo que suena por el master (lo que se oye, descontando la late
 
 ## Sampler
 
-8 pads en la fila del medio, bajo el deck A y el mezclador (teclas 1-8). Clic en un pad vacío o arrastrar encima un archivo (o una canción del
+8 pads en la barra de arriba (teclas 1-8; el nombre del sonido sale al pasar el ratón). Clic en un pad vacío o arrastrar encima un archivo (o una canción del
 navegador) para cargarlo; acepta audio y los `.vdjsample` de VirtualDJ con su tempo y bucle. Clic: disparar.
 Clic derecho: grabar 4, 8 o 16 pulsos de un deck (empieza en el siguiente pulso y queda como bucle bloqueado),
 modo de disparo (on/off, mantener, repetir), bucle, tempo (libre, sincronizado, bloqueado) y quitar.
@@ -276,7 +367,7 @@ El banco se guarda en `%APPDATA%\MiDJ\sampler.xml` y las grabaciones en `%APPDAT
 
 ## Controladoras MIDI
 
-Botón **MIDI** (junto al crossfader): clic en un control de la pantalla y después moverlo en la
+Botón **MIDI** (barra de arriba): clic en un control de la pantalla y después moverlo en la
 controladora; queda asignado (verde). Clic derecho quita la asignación. Se guarda en
 `%APPDATA%\MiDJ\midi.xml` y las controladoras que se conecten con la app abierta se detectan solas.
 
@@ -323,3 +414,9 @@ los pesos de Spleeter son de Deezer con licencia MIT (exportados a ONNX por el p
 - Interfaz como VirtualDJ + OBS: video integrado en la pestaña VIDEO del mezclador (vista previa, nivel de video por deck, transición), crossfader dentro del mezclador, sampler en la fila del medio, paneles inferiores ajustables a lo ancho (carpetas, canciones, automix en su propio panel, escenas y fuentes), diálogos Añadir fuente y Propiedades como los de OBS, ojo y candado por fuente, icono de audio o video en la lista, una sola forma de onda por deck y atajos de teclado (Espacio, Tab, C/S/K, Intro, flechas, A, 1-8, F1-F9, V, Ctrl+F).
 - Interfaz "Escenario": estilo oscuro nuevo; decks con portada del video, pitch con el centro marcado y enganche, loops, stems, efectos y transporte; centro con pestañas AUDIO (EQ, filtro, vúmetros y volumen del master) y PROGRAMA, crossfader con centro marcado y volúmenes a los lados, sampler en fila; paneles de abajo con barritas de ancho y Ajustes para ocultarlos; biblioteca con árbol Música local / Mis carpetas / Discos, quitar con Deshacer y sincronizar con el PC; automix con iconos.
 - Transiciones propias: stinger (video con punto de cambio y su sonido), barrido con imagen en grises (máscara en la GPU) y a color, con probar en el programa; guardadas en `scenes.xml`.
+- Interfaz "Escenario" v2: programa grande con los volúmenes a los lados, sampler y pestañas AUDIO / PROGRAMA en la barra de arriba, crossfader y transiciones en una línea, forma de onda delgada y partes de los decks ocultables desde Ajustes (el deck se compacta y lo de abajo crece).
+- Biblioteca: favoritos (estrella), más reproducidos (30 s sonando) y listas de reproducción propias; el automix las reproduce desde "Listas".
+- Escenas automáticas (cuando suena audio, video, YouTube o nada), Ctrl+1-9 para las escenas, Espacio que pausa lo que suena y vuelve a eso mismo, crossfader automático al dar Play, Escenas y Fuentes ocultables por separado con barrita entre ellas.
+- Audio: tarjeta de sonido, frecuencia y bloque en Ajustes; audífonos con pre-escucha por deck (salidas 3-4, cable en Y u otra tarjeta con corrección de reloj), mezcla cue / master y volumen; limitador del master a -0,3 dBFS. La ventana recuerda su tamaño y posición.
+- YouTube: búsqueda sin clave en la biblioteca, reproductor WebView2 fuera de las pantallas (página normal, H.264, anuncios incluidos), fuente de escena YouTube, escena automática y automix de YouTube con su propia lista.
+- Instalador con Inno Setup (para el usuario o para todos, con las DLL de Visual C++ y aviso si falta WebView2).
