@@ -409,6 +409,39 @@ void MainComponent::toggleMidiLearn()
     midiButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffffa726).withAlpha (0.8f));
 }
 
+void MainComponent::updateAutoCrossfader()
+{
+    // Al empezar a sonar un deck que el crossfader deja sin volumen (o casi), si el otro no
+    // suena, el crossfader se desliza a su lado en ~0,4 s. Con el otro sonando no se toca: puede
+    // ser una mezcla preparada. El automix maneja el crossfader solo.
+    for (int d = 0; d < 2; ++d)
+    {
+        const bool playing = (d == 0 ? deckA : deckB).isPlaying();
+        const bool otherPlaying = (d == 0 ? deckB : deckA).isPlaying();
+        if (playing && ! wasPlaying[(size_t) d] && ! otherPlaying && panels.autoCrossfader && ! automix.isEnabled())
+        {
+            const float cross = mixer.getCrossfader();
+            const float gain = juce::jmin (1.0f, 2.0f * (d == 0 ? 1.0f - cross : cross));
+            if (gain < 0.99f)
+                crossfaderTarget = d == 0 ? 0.0f : 1.0f;
+        }
+        wasPlaying[(size_t) d] = playing;
+    }
+    if (crossfaderTarget < 0.0f)
+        return;
+    if (mixerView.getCrossfader().isMouseButtonDown() || automix.isEnabled())
+    {
+        crossfaderTarget = -1.0f;   // la mano (o el automix) manda
+        return;
+    }
+    const float cross = mixer.getCrossfader();
+    const float step = 1.0f / 12.0f;   // 12 pasos a 30 por segundo
+    const float next = std::abs (crossfaderTarget - cross) <= step ? crossfaderTarget : cross + (crossfaderTarget > cross ? step : -step);
+    mixer.setCrossfader (next);
+    if (next == crossfaderTarget)
+        crossfaderTarget = -1.0f;
+}
+
 void MainComponent::updateAutoScene()
 {
     // Lo que mas se oye: de los decks que suenan, el de mas volumen tras el crossfader.
@@ -429,11 +462,13 @@ void MainComponent::updateAutoScene()
             kind = DeckVideo::isVideoFile (deck.getLoadedFile()) ? 2 : 1;
         }
     }
-    // Sin nada sonando no se cambia nada. El cambio tiene que durar 0,6 s (un crossfader que
-    // pasa por el centro no hace saltar la escena) y solo actua al cambiar: si despues se elige
-    // otra escena a mano, se respeta hasta el proximo cambio de audio a video o al reves.
+    // Sin nada sonando: 3. El cambio tiene que durar 0,6 s (un crossfader que pasa por el centro
+    // no hace saltar la escena; 1,5 s para "no suena nada": una pausa corta tampoco) y solo actua
+    // al cambiar: si despues se elige otra escena a mano, se respeta hasta el proximo cambio.
+    if (kind == 0)
+        kind = 3;
     const auto now = juce::Time::getMillisecondCounter();
-    if (kind == 0 || kind == autoKind)
+    if (kind == autoKind)
     {
         pendingAutoKind = 0;
         return;
@@ -444,11 +479,11 @@ void MainComponent::updateAutoScene()
         pendingAutoSince = now;
         return;
     }
-    if (now - pendingAutoSince < 600)
+    if (now - pendingAutoSince < (kind == 3 ? 1500u : 600u))
         return;
     autoKind = kind;
     pendingAutoKind = 0;
-    const auto wanted = kind == 2 ? SceneAuto::video : SceneAuto::audio;
+    const auto wanted = kind == 2 ? SceneAuto::video : kind == 1 ? SceneAuto::audio : SceneAuto::idle;
     for (const auto& scene : videoStage->getScenes().scenes)
         if (scene.autoWhen == wanted)
         {
@@ -493,6 +528,7 @@ void MainComponent::timerCallback()
             }
         }
     }
+    updateAutoCrossfader();
     if (timerTicks % 6 == 0)
         updateAutoScene();
     if (++timerTicks % 8 == 0)
@@ -681,6 +717,7 @@ void MainComponent::showSettings()
             const std::array<std::pair<bool*, const char*>, numToggles> items { {
                 { &p.library, "Biblioteca" }, { &p.automix, "Automix" }, { &p.scenes, "Escenas" }, { &p.sources, "Fuentes" },
                 { &p.sampler, "Sampler (barra de arriba)" }, { &p.transitions, "Transiciones (junto al crossfader)" },
+                { &p.autoCrossfader, "Crossfader automatico al dar Play" },
                 { &p.deck.waveform, "Forma de onda" }, { &p.deck.pitch, "Pitch y KEY" }, { &p.deck.loops, "Loops" },
                 { &p.deck.stems, "Stems" }, { &p.deck.effects, "Efectos (FX)" } } };
             for (size_t i = 0; i < items.size(); ++i)
@@ -710,7 +747,7 @@ void MainComponent::showSettings()
             g.drawText ("Ajustes", 16, 12, getWidth() - 32, 24, juce::Justification::centredLeft);
             g.setColour (DarkLookAndFeel::textQuiet);
             g.setFont (DarkLookAndFeel::sans (11.0f, true).withKerningFactor (0.08f));
-            g.drawText ("PANELES VISIBLES", 16, 44, getWidth() - 32, 16, juce::Justification::centredLeft);
+            g.drawText ("PANELES Y OPCIONES", 16, 44, getWidth() - 32, 16, juce::Justification::centredLeft);
             g.drawText ("EN LOS DECKS", 16, 64 + numPanels * step + 6, getWidth() - 32, 16, juce::Justification::centredLeft);
             g.drawText ("ANCHOS", 16, widthsY, getWidth() - 32, 16, juce::Justification::centredLeft);
             const auto& p = owner.getPanels();
@@ -733,7 +770,7 @@ void MainComponent::showSettings()
         }
 
     private:
-        enum { numPanels = 6, numToggles = 11, step = 30, widthsY = 64 + numToggles * step + 28 + 8 };
+        enum { numPanels = 7, numToggles = 12, step = 30, widthsY = 64 + numToggles * step + 28 + 8 };
         MainComponent& owner;
         std::array<juce::ToggleButton, numToggles> toggles;
         juce::TextButton reset { "Mostrar todo y restablecer anchos" };
@@ -779,6 +816,7 @@ void MainComponent::saveLayout()
     xml.setAttribute ("showScenes", panels.scenes);
     xml.setAttribute ("showSources", panels.sources);
     xml.setAttribute ("showTransitions", panels.transitions);
+    xml.setAttribute ("autoCrossfader", panels.autoCrossfader);
     xml.setAttribute ("scenesShare", (double) panels.scenesShare);
     xml.setAttribute ("showSampler", panels.sampler);
     xml.setAttribute ("deckWaveform", panels.deck.waveform);
@@ -806,6 +844,7 @@ void MainComponent::loadLayout()
     panels.scenes = xml->getBoolAttribute ("showScenes", true);
     panels.sources = xml->getBoolAttribute ("showSources", panels.scenes);   // antes iban juntas
     panels.transitions = xml->getBoolAttribute ("showTransitions", true);
+    panels.autoCrossfader = xml->getBoolAttribute ("autoCrossfader", true);
     panels.scenesShare = juce::jlimit (0.15f, 0.85f, (float) xml->getDoubleAttribute ("scenesShare", PanelSettings::defaultScenesShare));
     mixerView.setShowTransitions (panels.transitions);
     panels.sampler = xml->getBoolAttribute ("showSampler", true);

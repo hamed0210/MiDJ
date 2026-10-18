@@ -91,8 +91,9 @@ struct SceneItem
 };
 
 // Cambio automatico de escena: la ventana pasa a esta escena cuando lo que mas se oye de los
-// decks pasa a ser una cancion de solo audio (audio) o un video (video).
-enum class SceneAuto { none, audio, video };
+// decks pasa a ser una cancion de solo audio (audio) o un video (video), o cuando no suena
+// ningun deck (idle).
+enum class SceneAuto { none, audio, video, idle };
 
 struct Scene
 {

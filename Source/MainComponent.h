@@ -51,6 +51,7 @@ public:
     struct PanelSettings
     {
         bool library = true, automix = true, scenes = true, sources = true, sampler = true, transitions = true;
+        bool autoCrossfader = true;   // no es un panel: el crossfader pasa solo al deck que empieza a sonar
         DeckComponent::Sections deck;
         int automixWidth = defaultAutomixWidth, scenesWidth = defaultScenesWidth;
         float scenesShare = defaultScenesShare;   // parte del alto de la columna para Escenas
@@ -116,7 +117,11 @@ private:
     std::array<bool, 2> playCounted {};
     // Cambio automatico de escena (audio / video) segun lo que mas se oye.
     void updateAutoScene();
-    int autoKind = 0, pendingAutoKind = 0;   // 0 nada, 1 audio, 2 video
+    int autoKind = 0, pendingAutoKind = 0;   // 0 sin decidir, 1 audio, 2 video, 3 no suena nada
+    // Crossfader automatico: al poner a sonar el deck del lado apagado (ver Ajustes).
+    void updateAutoCrossfader();
+    std::array<bool, 2> wasPlaying {};
+    float crossfaderTarget = -1.0f;   // < 0: no se esta moviendo solo
     juce::uint32 pendingAutoSince = 0;
 
     // Barra de arriba.

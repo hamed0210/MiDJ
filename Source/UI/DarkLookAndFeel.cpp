@@ -20,6 +20,7 @@ DarkLookAndFeel::DarkLookAndFeel()
     setColour (juce::PopupMenu::highlightedBackgroundColourId, selection);
     setColour (juce::PopupMenu::textColourId, text);
     setColour (juce::PopupMenu::highlightedTextColourId, text);
+    setColour (juce::PopupMenu::headerTextColourId, textQuiet);   // titulos de seccion (por defecto salen negros)
     setColour (juce::TextEditor::backgroundColourId, background);
     setColour (juce::TextEditor::outlineColourId, line);
     setColour (juce::TextEditor::focusedOutlineColourId, accentA);

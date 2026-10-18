@@ -164,12 +164,13 @@ void ScenesPanel::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bo
     g.setFont (DarkLookAndFeel::sans (14.0f, onAir));
     const int autoW = scene.autoWhen != SceneAuto::none ? 22 : 0;
     g.drawText (scene.name, 26, 0, w - 74 - autoW, h, juce::Justification::centredLeft, true);
-    // Cambio automatico: nota (audio) o pelicula (video).
+    // Cambio automatico: nota (audio), pelicula (video) o pausa (no suena nada).
     if (autoW > 0)
     {
-        const bool video = scene.autoWhen == SceneAuto::video;
+        const auto when = scene.autoWhen;
         Icons::draw (g, juce::Rectangle<float> ((float) (w - 70), 0.0f, 16.0f, (float) h).withSizeKeepingCentre (13.0f, 13.0f),
-                     video ? Icons::Glyph::film : Icons::Glyph::note, video ? juce::Colour (0xffd58cf5) : DarkLookAndFeel::accentA);
+                     when == SceneAuto::video ? Icons::Glyph::film : when == SceneAuto::audio ? Icons::Glyph::note : Icons::Glyph::pause,
+                     when == SceneAuto::video ? juce::Colour (0xffd58cf5) : when == SceneAuto::audio ? DarkLookAndFeel::accentA : DarkLookAndFeel::textQuiet);
     }
     // Atajo de teclado (Ctrl+1-9; tambien F1-F9).
     if (row < 9)
@@ -222,6 +223,7 @@ void ScenesPanel::listBoxItemClicked (int row, const juce::MouseEvent& e)
         autoMenu.addItem ("Nunca", true, current == SceneAuto::none, [setAuto] { setAuto (SceneAuto::none); });
         autoMenu.addItem ("Cuando suena una cancion de audio", true, current == SceneAuto::audio, [setAuto] { setAuto (SceneAuto::audio); });
         autoMenu.addItem ("Cuando suena un video", true, current == SceneAuto::video, [setAuto] { setAuto (SceneAuto::video); });
+        autoMenu.addItem ("Cuando no suena nada", true, current == SceneAuto::idle, [setAuto] { setAuto (SceneAuto::idle); });
         menu.addSeparator();
         menu.addSubMenu ("Pasar a esta escena automaticamente", autoMenu);
         menu.showMenuAsync (juce::PopupMenu::Options().withMousePosition());
