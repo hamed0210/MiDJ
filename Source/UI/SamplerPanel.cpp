@@ -24,6 +24,23 @@ class SamplerPanel::Pad : public juce::Component,
 public:
     Pad (SamplerPanel& o, int i) : owner (o), index (i) {}
 
+    void repaintIfChanged()
+    {
+        // Lo que se ve del pad en un numero: sonido, si suena, avance (en pasos del 1 %), grabando y modos.
+        auto& smp = owner.sampler;
+        const auto sample = smp.getSample (index);
+        const bool playing = smp.isPlaying (index);
+        const juce::int64 state = (juce::int64) (juce::pointer_sized_int) sample.get() * 31
+                                + (playing ? 1000 + (int) (smp.getProgress (index) * 100.0) : 0)
+                                + (smp.getRecordingPad() == index ? 7 : 0) + (smp.getLoop (index) ? 11 : 0)
+                                + (int) smp.getTempoMode (index) * 13 + (int) smp.getTrigger (index) * 17;
+        if (state != lastState)
+        {
+            lastState = state;
+            repaint();
+        }
+    }
+
     void paint (juce::Graphics& g) override
     {
         auto& smp = owner.sampler;
@@ -149,6 +166,7 @@ private:
     SamplerPanel& owner;
     const int index;
     bool dragOver = false;
+    juce::int64 lastState = -1;
 };
 
 SamplerPanel::SamplerPanel (Sampler& s, juce::AudioFormatManager& f) : sampler (s), formats (f)
@@ -188,8 +206,9 @@ SamplerPanel::~SamplerPanel()
 
 void SamplerPanel::timerCallback()
 {
+    // Solo los pads que cambian (los que suenan, por su barra de avance).
     for (auto& p : pads)
-        p->repaint();
+        p->repaintIfChanged();
     if (! volume.isMouseButtonDown())
         volume.setValue (sampler.getVolume(), juce::dontSendNotification);   // la controladora tambien lo mueve
 }

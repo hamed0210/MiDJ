@@ -257,6 +257,7 @@ void DeckComponent::updateLabels()
 
 void DeckComponent::changeListenerCallback (juce::ChangeBroadcaster*)
 {
+    waveDirty = true;   // cancion nueva, onda cargando o BPM analizado: rehacer la imagen de la onda
     updateLabels();
     repaint();
 }
@@ -275,61 +276,81 @@ float DeckComponent::timeToX (double seconds) const
     return (float) waveformArea.getX() + (float) (seconds / length) * (float) waveformArea.getWidth();
 }
 
-// Rejilla de pulsos: linea tenue en cada pulso y mas marcada cada 4 (inicio de compas).
-// Si los pulsos quedarian a menos de 4 px, solo se dibujan los inicios de compas.
-void DeckComponent::paintBeatGrid (juce::Graphics& g)
+void DeckComponent::renderWaveCache (float scale)
 {
-    const double bpm = deck.getOriginalBpm(), length = deck.getLengthSeconds();
-    if (bpm <= 0.0 || length <= 0.0)
+    // La onda (con la rejilla de pulsos) se dibuja una sola vez en dos imagenes: apagada (lo ya
+    // sonado) y del color del deck (lo que falta). En cada fotograma solo se copian.
+    const int w = juce::roundToInt ((float) waveformArea.getWidth() * scale), h = juce::roundToInt ((float) waveformArea.getHeight() * scale);
+    waveCacheSize = waveformArea.getWidth() * 10000 + waveformArea.getHeight();
+    waveCacheScale = scale;
+    waveDirty = false;
+    waveBright = waveDim = {};
+    if (w <= 0 || h <= 0 || ! deck.hasTrack())
         return;
-    const double period = 60.0 / bpm;
-    const double pixelsPerBeat = period / length * waveformArea.getWidth();
-    const int step = pixelsPerBeat < 4.0 ? 4 : 1;
-    const auto top = (float) waveformArea.getY(), bottom = (float) waveformArea.getBottom();
-    for (int beat = 0; ; beat += step)
+    auto& thumb = deck.getThumbnail();
+    const double length = deck.getLengthSeconds();
+    for (auto* target : { &waveDim, &waveBright })
     {
-        const double t = deck.beatTime (beat);
-        if (t > length)
-            break;
-        const bool barStart = beat % 4 == 0;
-        g.setColour (DarkLookAndFeel::text.withAlpha (barStart ? 0.22f : 0.08f));
-        g.drawVerticalLine ((int) timeToX (t), top, bottom);
+        *target = juce::Image (juce::Image::RGB, w, h, true);
+        juce::Graphics g (*target);
+        g.addTransform (juce::AffineTransform::scale (scale));
+        const auto area = juce::Rectangle<int> (0, 0, waveformArea.getWidth(), waveformArea.getHeight());
+        g.fillAll (DarkLookAndFeel::background);
+        // Rejilla de pulsos: tenue en cada pulso, mas marcada cada 4 (si quedan a menos de 4 px, solo los compases).
+        const double bpm = deck.getOriginalBpm();
+        if (bpm > 0.0 && length > 0.0)
+        {
+            const double pixelsPerBeat = 60.0 / bpm / length * area.getWidth();
+            const int step = pixelsPerBeat < 4.0 ? 4 : 1;
+            for (int beat = 0; ; beat += step)
+            {
+                const double t = deck.beatTime (beat);
+                if (t > length)
+                    break;
+                g.setColour (DarkLookAndFeel::text.withAlpha (beat % 4 == 0 ? 0.22f : 0.08f));
+                g.drawVerticalLine ((int) (t / length * area.getWidth()), 0.0f, (float) area.getHeight());
+            }
+        }
+        if (thumb.getTotalLength() > 0.0)
+        {
+            g.setColour (target == &waveDim ? accent().withAlpha (0.35f) : accent());
+            thumb.drawChannel (g, area.reduced (2, 3), 0.0, thumb.getTotalLength(), 0, 1.0f);   // una sola onda (no una por canal)
+        }
     }
 }
 
 void DeckComponent::paintWaveform (juce::Graphics& g)
 {
     g.setColour (DarkLookAndFeel::background);
-    g.fillRoundedRectangle (waveformArea.toFloat(), 6.0f);
+    g.fillRect (waveformArea);
     if (! deck.hasTrack())
         return;
+    const float scale = g.getInternalContext().getPhysicalPixelScaleFactor();
+    if (waveDirty || waveCacheScale != scale || waveCacheSize != waveformArea.getWidth() * 10000 + waveformArea.getHeight())
+        renderWaveCache (scale);
     const auto top = (float) waveformArea.getY(), bottom = (float) waveformArea.getBottom();
+    const float px = timeToX (deck.getPositionSeconds());
 
-    // Zona del bucle, detras de la forma de onda.
+    // Lo ya sonado de la imagen apagada y lo que falta de la del color del deck.
+    if (waveBright.isValid())
+    {
+        const auto toArea = juce::AffineTransform::scale (1.0f / waveCacheScale).translated ((float) waveformArea.getX(), top);
+        {
+            juce::Graphics::ScopedSaveState s (g);
+            g.reduceClipRegion (waveformArea.withRight ((int) px));
+            g.drawImageTransformed (waveDim, toArea);
+        }
+        juce::Graphics::ScopedSaveState s (g);
+        g.reduceClipRegion (waveformArea.withLeft ((int) px));
+        g.drawImageTransformed (waveBright, toArea);
+    }
+
+    // Zona del bucle encima, transparente.
     if (deck.isLooping())
     {
         const float x0 = timeToX (deck.getLoopStart()), x1 = timeToX (deck.getLoopEnd());
         g.setColour (accent().withAlpha (0.18f));
         g.fillRect (juce::Rectangle<float> (x0, top, juce::jmax (2.0f, x1 - x0), bottom - top));
-    }
-    paintBeatGrid (g);
-
-    // Lo ya sonado, apagado; lo que falta, del color del deck.
-    const float px = timeToX (deck.getPositionSeconds());
-    auto& thumb = deck.getThumbnail();
-    if (thumb.getTotalLength() > 0.0)
-    {
-        const auto area = waveformArea.reduced (2, 3);
-        {
-            juce::Graphics::ScopedSaveState s (g);
-            g.reduceClipRegion (area.withRight ((int) px));
-            g.setColour (accent().withAlpha (0.35f));
-            thumb.drawChannel (g, area, 0.0, thumb.getTotalLength(), 0, 1.0f);   // una sola onda (no una por canal)
-        }
-        juce::Graphics::ScopedSaveState s (g);
-        g.reduceClipRegion (area.withLeft ((int) px));
-        g.setColour (accent());
-        thumb.drawChannel (g, area, 0.0, thumb.getTotalLength(), 0, 1.0f);
     }
 
     // Punto CUE: linea y triangulo naranjas arriba.

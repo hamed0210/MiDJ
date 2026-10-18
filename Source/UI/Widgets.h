@@ -43,6 +43,7 @@ public:
 private:
     int numSegments;
     float level = 0.0f;
+    int litSegments = 0;
 };
 
 // Mando con su nombre y su valor debajo (EQ, filtro, master, efectos).

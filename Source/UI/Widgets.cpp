@@ -56,9 +56,12 @@ void CentredSlider::paint (juce::Graphics& g)
 void LevelMeter::setPeak (float peak)
 {
     const float next = juce::jmax (peak, level * 0.86f);   // cae unos 20 dB por segundo a 30 Hz
-    if (std::abs (next - level) > 0.002f)
+    level = next < 0.003f ? 0.0f : next;
+    // Solo se repinta si cambia algun segmento encendido (la mayor parte del tiempo, no).
+    const int lit = (int) std::ceil (juce::jlimit (0.0f, (float) numSegments, (float) numSegments + juce::Decibels::gainToDecibels (level, -100.0f) / 3.0f));
+    if (lit != litSegments)
     {
-        level = next < 0.003f ? 0.0f : next;
+        litSegments = lit;
         repaint();
     }
 }

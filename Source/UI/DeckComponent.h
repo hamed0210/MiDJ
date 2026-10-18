@@ -77,7 +77,7 @@ private:
     void setDragHighlight (bool on) { dragHighlight = on; repaint(); }
     void updateLabels();
     void paintWaveform (juce::Graphics& g);
-    void paintBeatGrid (juce::Graphics& g);
+    void renderWaveCache (float scale);
     void paintPoster (juce::Graphics& g);
     float timeToX (double seconds) const;
     juce::Colour accent() const;
@@ -100,6 +100,10 @@ private:
     juce::File describedFile;
     juce::File posterFile;
     juce::Image poster;
+    juce::Image waveBright, waveDim;   // la onda ya dibujada (ver renderWaveCache)
+    bool waveDirty = true;
+    int waveCacheSize = 0;
+    float waveCacheScale = 0.0f;
     juce::Rectangle<int> headerArea, posterArea, infoArea, waveformArea, pitchLabelArea, pitchScaleArea,
                          loopLabelArea, stemsLabelArea, effectsLabelArea;
     std::unique_ptr<juce::FileChooser> chooser;
