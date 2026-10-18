@@ -412,7 +412,9 @@ void MixerComponent::resized()
 
     // Franja de abajo: una linea si cabe todo; si no, el crossfader arriba y la transicion debajo.
     const int stripInnerW = area.getWidth() - 24;
-    const bool oneLine = stripInnerW >= 2 * 18 + crossMinW + 25 + transitionsW;
+    const bool oneLine = ! showTransitions || stripInnerW >= 2 * 18 + crossMinW + 25 + transitionsW;
+    if (! showTransitions)
+        transitionsW = 0;
     cardArea = area.removeFromBottom (oneLine ? 46 : 82);
     area.removeFromBottom (gap);
     pageArea = area;
@@ -421,7 +423,9 @@ void MixerComponent::resized()
         auto strip = cardArea.reduced (12, 6);
         juce::Rectangle<int> cross, row;
         separatorArea = {};
-        if (oneLine)
+        if (! showTransitions)
+            cross = strip;
+        else if (oneLine)
         {
             row = strip.removeFromRight (transitionsW);
             separatorArea = strip.removeFromRight (25).withSizeKeepingCentre (1, 22);
@@ -441,6 +445,7 @@ void MixerComponent::resized()
         // La duracion a la derecha; los botones y "+" desde la izquierda.
         row = row.withSizeKeepingCentre (row.getWidth(), buttonH);
         transitionMs.setBounds (row.removeFromRight (msButtonW));
+        transitionMs.setVisible (showTransitions && stage != nullptr);
         row.removeFromRight (8);
         int x = row.getX();
         for (size_t i = 0; i <= transitionButtons.size(); ++i)
@@ -450,7 +455,7 @@ void MixerComponent::resized()
             auto* remove = isAdd ? nullptr : removeButtons[i].get();
             const int w = isAdd ? 28 : widths[i];
             const int total = w + (remove != nullptr ? 22 : 0);
-            const bool fits = x + total <= row.getRight();
+            const bool fits = showTransitions && x + total <= row.getRight();
             b->setBounds (x, row.getY(), w, buttonH);
             b->setVisible (fits);
             if (remove != nullptr)

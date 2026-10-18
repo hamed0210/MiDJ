@@ -126,15 +126,18 @@ void LabelledKnob::paint (juce::Graphics& g)
 
 // --- ResizeHandle ------------------------------------------------------------------------------
 
-ResizeHandle::ResizeHandle()
+ResizeHandle::ResizeHandle (bool v) : vertical (v)
 {
-    setMouseCursor (juce::MouseCursor::LeftRightResizeCursor);
-    setTooltip ("Arrastra para cambiar el ancho (doble clic: ancho original)");
+    setMouseCursor (vertical ? juce::MouseCursor::UpDownResizeCursor : juce::MouseCursor::LeftRightResizeCursor);
+    setTooltip (vertical ? "Arrastra para cambiar el alto (doble clic: alto original)"
+                         : "Arrastra para cambiar el ancho (doble clic: ancho original)");
 }
 
 void ResizeHandle::paint (juce::Graphics& g)
 {
-    const auto grip = getLocalBounds().toFloat().withSizeKeepingCentre (4.0f, juce::jmin (48.0f, (float) getHeight()));
+    const auto r = getLocalBounds().toFloat();
+    const auto grip = vertical ? r.withSizeKeepingCentre (juce::jmin (48.0f, r.getWidth()), 4.0f)
+                               : r.withSizeKeepingCentre (4.0f, juce::jmin (48.0f, r.getHeight()));
     g.setColour (dragging ? DarkLookAndFeel::accentA : isMouseOver() ? DarkLookAndFeel::textQuiet : DarkLookAndFeel::line.brighter (0.15f));
     g.fillRoundedRectangle (grip, 2.0f);
 }
@@ -150,6 +153,6 @@ void ResizeHandle::mouseDown (const juce::MouseEvent&)
 void ResizeHandle::mouseDrag (const juce::MouseEvent& e)
 {
     if (onDrag)
-        onDrag (e.getDistanceFromDragStartX());
+        onDrag (vertical ? e.getDistanceFromDragStartY() : e.getDistanceFromDragStartX());
 }
 }

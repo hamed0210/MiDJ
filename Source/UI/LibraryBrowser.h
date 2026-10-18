@@ -65,7 +65,7 @@ public:
     void startSync (const Library::SyncOptions& options);
 
 private:
-    enum Columns { typeCol = 1, titleCol, artistCol, bpmCol, durationCol, loadCol };
+    enum Columns { typeCol = 1, titleCol, artistCol, bpmCol, durationCol, loadCol, favCol };
     class Node;
     class RowButtons;
     class SyncJob;
@@ -80,6 +80,7 @@ private:
     void chooseFolder();
     static Automix::Item itemFor (const TrackInfo& t) { return { t.getFile(), t.title, t.artist, t.bpm }; }
     void showTrackMenu (int row);
+    void toggleFavorite (const TrackInfo& track);
     juce::String selectionName() const;
 
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
@@ -106,7 +107,7 @@ private:
     std::unique_ptr<Node> rootNode;
     juce::String treeSignature;           // para no rehacer el arbol si no cambio nada
     juce::File filterFolder;              // lo elegido en el arbol
-    int filterKind = 0;                   // 0 todo, 1 solo audio, 2 solo video
+    int filterKind = 0;                   // 0 todo, 1 solo audio, 2 solo video, 3 favoritos, 4 mas reproducidos
     juce::String filterLabel { "Musica local" };
     IconButton syncButton { Icons::Glyph::sync, "Sincronizar: buscar musica y videos en todo el PC y anadirlos" },
                addFolderButton { Icons::Glyph::folderPlus, "Anadir una carpeta" };

@@ -73,7 +73,7 @@ namespace
             path  TEXT PRIMARY KEY);
     )sql";
 
-    constexpr const char* trackColumns = "id, path, title, artist, album, genre, duration, bpm, first_beat, analysed";
+    constexpr const char* trackColumns = "id, path, title, artist, album, genre, duration, bpm, first_beat, analysed, favorite, plays";
 
     TrackInfo readTrack (const Statement& s)
     {
@@ -88,6 +88,8 @@ namespace
         t.bpm = s.real (7);
         t.firstBeat = s.real (8);
         t.analysed = s.integer (9) == 1;
+        t.favorite = s.integer (10) != 0;
+        t.plays = (int) s.integer (11);
         return t;
     }
 
@@ -171,11 +173,17 @@ bool Library::open (const juce::File& file)
     sqlite3_busy_timeout (db, 2000);
     if (! exec (schema))
         return false;
-    // Bases de versiones anteriores: columna para las canciones ocultas (carpetas quitadas).
+    // Bases de versiones anteriores: columnas que se anadieron despues (canciones ocultas por
+    // carpetas quitadas, favoritos y reproducciones).
+    for (auto [name, definition] : { std::pair<const char*, const char*> { "hidden", "hidden INTEGER DEFAULT 0" },
+                                     std::pair<const char*, const char*> { "favorite", "favorite INTEGER DEFAULT 0" },
+                                     std::pair<const char*, const char*> { "plays", "plays INTEGER DEFAULT 0" },
+                                     std::pair<const char*, const char*> { "last_played", "last_played INTEGER DEFAULT 0" } })
     {
-        const bool hasHidden = Statement (db, "SELECT 1 FROM pragma_table_info ('tracks') WHERE name = 'hidden'").next();
-        if (! hasHidden)
-            exec ("ALTER TABLE tracks ADD COLUMN hidden INTEGER DEFAULT 0");
+        Statement check (db, "SELECT 1 FROM pragma_table_info ('tracks') WHERE name = ?");
+        check.bind (1, juce::String (name));
+        if (! check.next())
+            exec ((juce::String ("ALTER TABLE tracks ADD COLUMN ") + definition).toRawUTF8());
     }
     return true;
 }
@@ -632,5 +640,62 @@ void Library::setAnalysis (const juce::File& file, const TempoAnalysis& analysis
             .bind (1, analysis.bpm).bind (2, analysis.firstBeat).bind (3, file.getFullPathName()).run();
     }
     sendChangeMessage();
+}
+
+void Library::setFavorite (const juce::File& file, bool favorite)
+{
+    {
+        const juce::ScopedLock sl (lock);
+        Statement (db, "UPDATE tracks SET favorite = ? WHERE path = ?")
+            .bind (1, (juce::int64) (favorite ? 1 : 0)).bind (2, file.getFullPathName()).run();
+    }
+    sendChangeMessage();
+}
+
+void Library::addPlay (const juce::File& file)
+{
+    {
+        const juce::ScopedLock sl (lock);
+        Statement (db, "UPDATE tracks SET plays = plays + 1, last_played = ? WHERE path = ?")
+            .bind (1, (juce::int64) juce::Time::currentTimeMillis()).bind (2, file.getFullPathName()).run();
+    }
+    sendChangeMessage();
+}
+
+std::vector<TrackInfo> Library::getFavorites() const
+{
+    std::vector<TrackInfo> result;
+    const juce::ScopedLock sl (lock);
+    Statement s (db, (juce::String ("SELECT ") + trackColumns
+                      + " FROM tracks WHERE hidden = 0 AND favorite = 1 ORDER BY artist COLLATE NOCASE, title COLLATE NOCASE").toRawUTF8());
+    while (s.next())
+        result.push_back (readTrack (s));
+    return result;
+}
+
+std::vector<TrackInfo> Library::getMostPlayed (int limit) const
+{
+    std::vector<TrackInfo> result;
+    const juce::ScopedLock sl (lock);
+    Statement s (db, (juce::String ("SELECT ") + trackColumns
+                      + " FROM tracks WHERE hidden = 0 AND plays > 0 ORDER BY plays DESC, last_played DESC LIMIT ?").toRawUTF8());
+    s.bind (1, (juce::int64) limit);
+    while (s.next())
+        result.push_back (readTrack (s));
+    return result;
+}
+
+int Library::countFavorites() const
+{
+    const juce::ScopedLock sl (lock);
+    Statement s (db, "SELECT COUNT(*) FROM tracks WHERE hidden = 0 AND favorite = 1");
+    return s.next() ? (int) s.integer (0) : 0;
+}
+
+int Library::countPlayed() const
+{
+    const juce::ScopedLock sl (lock);
+    Statement s (db, "SELECT COUNT(*) FROM tracks WHERE hidden = 0 AND plays > 0");
+    return s.next() ? juce::jmin (50, (int) s.integer (0)) : 0;
 }
 }

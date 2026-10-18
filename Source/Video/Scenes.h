@@ -90,11 +90,16 @@ struct SceneItem
     void resetSourceSettings();
 };
 
+// Cambio automatico de escena: la ventana pasa a esta escena cuando lo que mas se oye de los
+// decks pasa a ser una cancion de solo audio (audio) o un video (video).
+enum class SceneAuto { none, audio, video };
+
 struct Scene
 {
     int id = 0;
     juce::String name;
     std::vector<SceneItem> items;   // el primero es el de abajo
+    SceneAuto autoWhen = SceneAuto::none;
 };
 
 enum class TransitionType { cut, fade, fadeToBlack, slide, swipe };

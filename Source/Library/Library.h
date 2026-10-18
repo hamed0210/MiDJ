@@ -20,6 +20,8 @@ struct TrackInfo
     double duration = 0.0;
     double bpm = 0.0, firstBeat = 0.0;   // bpm 0 = aun sin analizar
     bool analysed = false;
+    bool favorite = false;
+    int plays = 0;                       // veces que sono (al menos 30 s seguidos en un deck)
 
     juce::File getFile() const { return juce::File (path); }
 };
@@ -97,6 +99,14 @@ public:
 
     // Guarda el analisis hecho fuera (por ejemplo al cargar un archivo en un deck).
     void setAnalysis (const juce::File& file, const TempoAnalysis& analysis);
+
+    // Favoritos y mas reproducidos (audio y video juntos).
+    void setFavorite (const juce::File& file, bool favorite);
+    void addPlay (const juce::File& file);
+    std::vector<TrackInfo> getFavorites() const;                    // por artista y titulo
+    std::vector<TrackInfo> getMostPlayed (int limit = 50) const;    // las que mas sonaron primero
+    int countFavorites() const;
+    int countPlayed() const;
 
     // Minusculas y sin acentos: "María Ñandú" -> "maria nandu".
     static juce::String normalise (const juce::String& text);

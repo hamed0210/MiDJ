@@ -66,14 +66,14 @@ private:
     void sliderValueChanged (juce::Slider*) override { repaint(); }   // el texto del valor
 };
 
-// Barrita para cambiar el ancho de un panel arrastrando (o con las flechas si tiene el foco).
-// onDrag recibe los pixeles movidos desde que se pulso; onReset, al hacer doble clic.
+// Barrita para cambiar el ancho de un panel arrastrando (o el alto, si es horizontal: vertical
+// = true). onDrag recibe los pixeles movidos desde que se pulso; onReset, al hacer doble clic.
 class ResizeHandle : public juce::Component, public juce::SettableTooltipClient
 {
 public:
-    ResizeHandle();
+    explicit ResizeHandle (bool vertical = false);
     std::function<void()> onStart, onReset;
-    std::function<void (int deltaX)> onDrag;
+    std::function<void (int delta)> onDrag;
 
     void paint (juce::Graphics& g) override;
     void mouseEnter (const juce::MouseEvent&) override { repaint(); }
@@ -84,6 +84,7 @@ public:
     void mouseDoubleClick (const juce::MouseEvent&) override { if (onReset) onReset(); }
 
 private:
+    const bool vertical;
     bool dragging = false;
 };
 }

@@ -162,13 +162,21 @@ void ScenesPanel::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bo
     g.fillEllipse (juce::Rectangle<float> (8.0f, 8.0f).withCentre ({ 14.0f, h * 0.5f }));
     g.setColour (onAir ? juce::Colours::white : DarkLookAndFeel::text.withAlpha (0.85f));
     g.setFont (DarkLookAndFeel::sans (14.0f, onAir));
-    g.drawText (scene.name, 26, 0, w - 60, h, juce::Justification::centredLeft, true);
-    // Atajo de teclado (F1-F9).
+    const int autoW = scene.autoWhen != SceneAuto::none ? 22 : 0;
+    g.drawText (scene.name, 26, 0, w - 74 - autoW, h, juce::Justification::centredLeft, true);
+    // Cambio automatico: nota (audio) o pelicula (video).
+    if (autoW > 0)
+    {
+        const bool video = scene.autoWhen == SceneAuto::video;
+        Icons::draw (g, juce::Rectangle<float> ((float) (w - 70), 0.0f, 16.0f, (float) h).withSizeKeepingCentre (13.0f, 13.0f),
+                     video ? Icons::Glyph::film : Icons::Glyph::note, video ? juce::Colour (0xffd58cf5) : DarkLookAndFeel::accentA);
+    }
+    // Atajo de teclado (Ctrl+1-9; tambien F1-F9).
     if (row < 9)
     {
         g.setColour (onAir ? juce::Colours::white.withAlpha (0.6f) : DarkLookAndFeel::textQuiet.withAlpha (0.7f));
         g.setFont (juce::FontOptions (11.0f));
-        g.drawText ("F" + juce::String (row + 1), w - 30, 0, 24, h, juce::Justification::centredRight, false);
+        g.drawText ("Ctrl+" + juce::String (row + 1), w - 50, 0, 44, h, juce::Justification::centredRight, false);
     }
 }
 
@@ -199,6 +207,23 @@ void ScenesPanel::listBoxItemClicked (int row, const juce::MouseEvent& e)
             stage.switchToScene (newId);
         });
         menu.addItem ("Borrar", stage.getScenes().scenes.size() > 1, false, [this] { removeCurrent(); });
+        // Cambio automatico: una sola escena por tipo (al elegirla se quita de la que la tenia).
+        juce::PopupMenu autoMenu;
+        const auto current = stage.getScenes().findScene (id)->autoWhen;
+        auto setAuto = [this, id] (SceneAuto when)
+        {
+            for (auto& sc : stage.getScenes().scenes)
+                if (sc.id == id)
+                    sc.autoWhen = when;
+                else if (when != SceneAuto::none && sc.autoWhen == when)
+                    sc.autoWhen = SceneAuto::none;
+            stage.scenesChanged();
+        };
+        autoMenu.addItem ("Nunca", true, current == SceneAuto::none, [setAuto] { setAuto (SceneAuto::none); });
+        autoMenu.addItem ("Cuando suena una cancion de audio", true, current == SceneAuto::audio, [setAuto] { setAuto (SceneAuto::audio); });
+        autoMenu.addItem ("Cuando suena un video", true, current == SceneAuto::video, [setAuto] { setAuto (SceneAuto::video); });
+        menu.addSeparator();
+        menu.addSubMenu ("Pasar a esta escena automaticamente", autoMenu);
         menu.showMenuAsync (juce::PopupMenu::Options().withMousePosition());
     }
 }

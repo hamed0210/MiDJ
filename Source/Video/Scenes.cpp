@@ -202,6 +202,8 @@ std::unique_ptr<juce::XmlElement> SceneCollection::toXml() const
         auto* se = xml->createNewChildElement ("SCENE");
         se->setAttribute ("id", s.id);
         se->setAttribute ("name", s.name);
+        if (s.autoWhen != SceneAuto::none)
+            se->setAttribute ("auto", s.autoWhen == SceneAuto::audio ? "audio" : "video");
         for (const auto& i : s.items)
         {
             auto* e = se->createNewChildElement ("ITEM");
@@ -295,6 +297,8 @@ SceneCollection SceneCollection::fromXml (const juce::XmlElement& xml, int w, in
         Scene s;
         s.id = se->getIntAttribute ("id");
         s.name = se->getStringAttribute ("name", "Escena");
+        const auto when = se->getStringAttribute ("auto");
+        s.autoWhen = when == "audio" ? SceneAuto::audio : when == "video" ? SceneAuto::video : SceneAuto::none;
         c.lastId = juce::jmax (c.lastId, s.id);
         for (auto* e : se->getChildWithTagNameIterator ("ITEM"))
         {

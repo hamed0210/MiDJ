@@ -33,6 +33,8 @@ public:
     void showVideoTab (bool program);
     bool isVideoTabShowing() const { return videoTab; }
     std::function<void (bool program)> onTabChanged;   // para marcar la pestana de la barra de arriba
+    // Ajustes: sin las transiciones, la franja de abajo solo tiene el crossfader.
+    void setShowTransitions (bool show) { showTransitions = show; resized(); repaint(); }
     // Las transiciones cambiaron (p. ej. se anadio una personalizada): rehacer los botones.
     void refreshTransitions();
     void addCustomTransition();   // boton "+ Personalizada": abre la ventana para crearla
@@ -64,7 +66,7 @@ private:
 
     Mixer& mixer;
     VideoStage* stage = nullptr;
-    bool videoTab = false;
+    bool videoTab = false, showTransitions = true;
     std::array<Channel, 2> channels;
     LabelledKnob master { "Master", 0.0, 1.0, Mixer::defaultMasterVolume };
     LevelMeter masterLeft, masterRight;

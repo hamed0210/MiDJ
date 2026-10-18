@@ -28,7 +28,7 @@ namespace
 class LibraryBrowser::Node : public juce::TreeViewItem
 {
 public:
-    enum class Kind { root, all, audio, video, mine, myFolder, disks, drive, folder };
+    enum class Kind { root, all, audio, video, favorites, mostPlayed, mine, myFolder, disks, drive, folder };
 
     Node (LibraryBrowser& o, Kind k, const juce::String& l, const juce::File& f, int c)
         : owner (o), kind (k), label (l), file (f), count (c) {}
@@ -63,7 +63,9 @@ public:
             case Kind::all: case Kind::disks: Icons::draw (g, icon, Icons::Glyph::computer, DarkLookAndFeel::textQuiet); break;
             case Kind::audio:   Icons::draw (g, icon, Icons::Glyph::note, DarkLookAndFeel::accentA); break;
             case Kind::video:   Icons::draw (g, icon, Icons::Glyph::film, juce::Colour (0xffd58cf5)); break;
-            case Kind::mine:    Icons::draw (g, icon, Icons::Glyph::star, DarkLookAndFeel::accentB); break;
+            case Kind::favorites:  Icons::draw (g, icon, Icons::Glyph::star, DarkLookAndFeel::accentB); break;
+            case Kind::mostPlayed: Icons::draw (g, icon, Icons::Glyph::play, DarkLookAndFeel::good); break;
+            case Kind::mine:    Icons::draw (g, icon, Icons::Glyph::folderPlus, DarkLookAndFeel::textQuiet); break;
             case Kind::drive:   Icons::draw (g, icon, Icons::Glyph::drive, DarkLookAndFeel::textQuiet); break;
             case Kind::myFolder: case Kind::folder: Icons::draw (g, icon, Icons::Glyph::folder, juce::Colour (0xffc9c9cf)); break;
             case Kind::root: break;
@@ -258,6 +260,7 @@ LibraryBrowser::LibraryBrowser (Library& l) : library (l)
     auto& header = table.getHeader();
     const int columnFlags = juce::TableHeaderComponent::defaultFlags;
     header.addColumn ({}, typeCol, 40, 40, 40, juce::TableHeaderComponent::notResizableOrSortable);
+    header.addColumn ({}, favCol, 30, 30, 30, juce::TableHeaderComponent::notResizableOrSortable);
     header.addColumn ("TITULO", titleCol, 280, 100, -1, columnFlags);
     header.addColumn ("ARTISTA", artistCol, 190, 70, -1, columnFlags);
     header.addColumn ("BPM", bpmCol, 64, 50, 90, columnFlags);
@@ -314,7 +317,8 @@ void LibraryBrowser::rebuildTree (bool force)
     juce::int64 hash = 0;
     for (const auto& p : paths)
         hash += p.hashCode64();
-    juce::String signature = juce::String (paths.size()) + "|" + juce::String (hash);
+    const int favorites = library.countFavorites(), played = library.countPlayed();
+    juce::String signature = juce::String (paths.size()) + "|" + juce::String (hash) + "|" + juce::String (favorites) + "|" + juce::String (played);
     for (const auto& f : folders)
         signature << "|" << f.getFullPathName();
     if (! force && signature == treeSignature)
@@ -333,6 +337,8 @@ void LibraryBrowser::rebuildTree (bool force)
     local->addSubItem (new Node (*this, Node::Kind::audio, "Musica", {}, audio));
     local->addSubItem (new Node (*this, Node::Kind::video, "Videos", {}, video));
     rootNode->addSubItem (local);
+    rootNode->addSubItem (new Node (*this, Node::Kind::favorites, "Favoritos", {}, favorites));
+    rootNode->addSubItem (new Node (*this, Node::Kind::mostPlayed, "Mas reproducidos", {}, played));
 
     auto countUnder = [&paths] (const juce::File& folder)
     {
@@ -411,6 +417,8 @@ void LibraryBrowser::rebuildTree (bool force)
             const bool match = c->kind == Node::Kind::all ? filterFolder == juce::File() && filterKind == 0 && filterLabel == c->label
                              : c->kind == Node::Kind::audio ? filterKind == 1
                              : c->kind == Node::Kind::video ? filterKind == 2
+                             : c->kind == Node::Kind::favorites ? filterKind == 3
+                             : c->kind == Node::Kind::mostPlayed ? filterKind == 4
                              : (c->kind == Node::Kind::myFolder || c->kind == Node::Kind::drive || c->kind == Node::Kind::folder)
                                    && filterFolder != juce::File() && c->file == filterFolder;
             if (match)
@@ -435,6 +443,8 @@ void LibraryBrowser::selectNode (Node* node)
     {
         case Node::Kind::audio: filterKind = 1; break;
         case Node::Kind::video: filterKind = 2; break;
+        case Node::Kind::favorites: filterKind = 3; break;
+        case Node::Kind::mostPlayed: filterKind = 4; break;
         case Node::Kind::myFolder: case Node::Kind::drive: case Node::Kind::folder: filterFolder = node->file; break;
         default: break;
     }
@@ -618,8 +628,25 @@ void LibraryBrowser::refresh()
     const int row = table.getSelectedRow();
     const auto selectedId = row >= 0 && row < (int) tracks.size() ? tracks[(size_t) row].id : 0;
 
-    tracks = library.search (searchBox.getText(), filterFolder, sort, ascending);
-    if (filterKind != 0)
+    if (filterKind == 3 || filterKind == 4)
+    {
+        // Favoritos o mas reproducidos (en su orden), con el texto del buscador si hay.
+        tracks = filterKind == 3 ? library.getFavorites() : library.getMostPlayed();
+        juce::StringArray words;
+        words.addTokens (Library::normalise (searchBox.getText()), " \t", "\"");
+        words.removeEmptyStrings();
+        std::erase_if (tracks, [&words] (const TrackInfo& t)
+        {
+            const auto text = Library::normalise (t.title + " " + t.artist + " " + t.album + " " + t.genre + " " + t.getFile().getFileName());
+            for (const auto& w : words)
+                if (! text.contains (w))
+                    return true;
+            return false;
+        });
+    }
+    else
+        tracks = library.search (searchBox.getText(), filterFolder, sort, ascending);
+    if (filterKind == 1 || filterKind == 2)
         tracks.erase (std::remove_if (tracks.begin(), tracks.end(),
                                       [this] (const TrackInfo& t) { return Library::isVideoFile (t.getFile()) != (filterKind == 2); }),
                       tracks.end());
@@ -717,6 +744,13 @@ void LibraryBrowser::paintCell (juce::Graphics& g, int row, int column, int widt
                      video ? juce::Colour (0xffd58cf5) : DarkLookAndFeel::textQuiet);
         return;
     }
+    if (column == favCol)
+    {
+        // Estrella: encendida si es favorita (clic: cambiar).
+        Icons::draw (g, juce::Rectangle<float> ((float) width, (float) height).withSizeKeepingCentre (15.0f, 15.0f), Icons::Glyph::star,
+                     t.favorite ? DarkLookAndFeel::accentB : DarkLookAndFeel::textFaint.withAlpha (0.5f));
+        return;
+    }
     juce::String text;
     auto justification = juce::Justification::centredLeft;
     g.setColour (DarkLookAndFeel::textQuiet);
@@ -787,19 +821,32 @@ void LibraryBrowser::cellDoubleClicked (int row, int, const juce::MouseEvent&)
         onLoadRequest (tracks[(size_t) row]);
 }
 
-void LibraryBrowser::cellClicked (int row, int, const juce::MouseEvent& e)
+void LibraryBrowser::cellClicked (int row, int column, const juce::MouseEvent& e)
 {
-    if (e.mods.isPopupMenu() && row >= 0 && row < (int) tracks.size())
+    if (row < 0 || row >= (int) tracks.size())
+        return;
+    if (e.mods.isPopupMenu())
     {
         table.selectRow (row);
         showTrackMenu (row);
     }
+    else if (column == favCol)
+        toggleFavorite (tracks[(size_t) row]);
+}
+
+void LibraryBrowser::toggleFavorite (const TrackInfo& track)
+{
+    library.setFavorite (track.getFile(), ! track.favorite);
+    rebuildTree (false);   // el numero de Favoritos
+    refresh();
 }
 
 void LibraryBrowser::showTrackMenu (int row)
 {
-    enum { addToAutomix = 1, playNext, loadA, loadB, prepareStems };
+    enum { addToAutomix = 1, playNext, loadA, loadB, prepareStems, favorite };
     juce::PopupMenu menu;
+    menu.addItem (favorite, tracks[(size_t) row].favorite ? "Quitar de favoritos" : "Agregar a favoritos");
+    menu.addSeparator();
     if (automix != nullptr)
     {
         menu.addItem (addToAutomix, "Agregar a automix");
@@ -820,6 +867,7 @@ void LibraryBrowser::showTrackMenu (int row)
         else if (r == playNext && automix != nullptr)         automix->insertNext (itemFor (track));
         else if ((r == loadA || r == loadB) && onLoadToDeck)  onLoadToDeck (track, r == loadA ? 0 : 1);
         else if (r == prepareStems && onPrepareStems)          onPrepareStems (track);
+        else if (r == favorite)                                toggleFavorite (track);
     });
 }
 

@@ -114,6 +114,16 @@ MainComponent::MainComponent()
     scenesHandle.onReset = [this] { panels.scenesWidth = PanelSettings::defaultScenesWidth; resized(); };
     addAndMakeVisible (automixHandle);
     addAndMakeVisible (scenesHandle);
+    // Barrita entre Escenas y Fuentes: reparte el alto de la columna.
+    scenesSplitHandle.onStart = [this] { dragStartShare = panels.scenesShare; };
+    scenesSplitHandle.onDrag = [this] (int dy)
+    {
+        if (scenesColumn.getHeight() > 0)
+            panels.scenesShare = juce::jlimit (0.15f, 0.85f, dragStartShare + (float) dy / (float) scenesColumn.getHeight());
+        resized();
+    };
+    scenesSplitHandle.onReset = [this] { panels.scenesShare = PanelSettings::defaultScenesShare; resized(); };
+    addAndMakeVisible (scenesSplitHandle);
 
     // Barra de arriba: proyector (menu de monitores), MIDI, atajos y ajustes.
     projectorButton.setTooltip ("Proyectar la salida de video a pantalla completa en un monitor");
@@ -210,7 +220,8 @@ void MainComponent::keepFocusForShortcuts (juce::Component& root)
 
 juce::String MainComponent::shortcutsHelp()
 {
-    return "Espacio\tPlay / Pausa del deck activo\n"
+    return "Espacio\tPausa el deck (o los decks) que suena; otra vez: vuelve a poner ese mismo\n"
+           "\t(si no sonaba ninguno: Play del deck activo)\n"
            "Tab\tCambiar de deck activo (el del borde de color; tambien con un clic en el deck)\n"
            "C / S / K\tCUE / SYNC / Keylock del deck activo\n"
            "Intro\tCargar la cancion elegida en el deck activo\n"
@@ -218,10 +229,38 @@ juce::String MainComponent::shortcutsHelp()
            "Flechas izquierda / derecha\tCrossfader (con Mayus: del todo)\n"
            "A\tAgregar la cancion elegida al automix\n"
            "1 - 8\tPads del sampler\n"
-           "F1 - F9\tPasar a la escena 1 - 9\n"
+           "Ctrl+1 - 9 (o F1 - F9)\tPasar a la escena 1 - 9 (en portatiles HP las F necesitan la tecla Fn)\n"
            "V\tPestana AUDIO / VIDEO del mezclador\n"
            "Ctrl+F\tBuscar en la biblioteca (Esc o Intro: salir del buscador)\n"
            "Supr\tQuitar la fuente elegida (vista previa o panel Fuentes)";
+}
+
+void MainComponent::spacePressed()
+{
+    // Lo que suena se pausa (y se recuerda); si no suena nada, vuelve lo que se pauso con el
+    // espacio; si no hay nada recordado, el deck activo.
+    std::array<DeckComponent*, 2> views { &deckViewA, &deckViewB };
+    const std::array<bool, 2> playing { deckA.isPlaying(), deckB.isPlaying() };
+    if (playing[0] || playing[1])
+    {
+        for (size_t d = 0; d < 2; ++d)
+        {
+            pausedBySpace[d] = playing[d];
+            if (playing[d])
+                views[d]->togglePlay();
+        }
+        return;
+    }
+    bool resumed = false;
+    for (size_t d = 0; d < 2; ++d)
+        if (pausedBySpace[d] && (d == 0 ? deckA : deckB).hasTrack())
+        {
+            views[d]->togglePlay();
+            resumed = true;
+        }
+    pausedBySpace = {};
+    if (! resumed)
+        activeView().togglePlay();
 }
 
 void MainComponent::setActiveDeck (int deckIndex)
@@ -242,12 +281,20 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
             browser->focusSearch();
             return true;
         }
+        // Ctrl+1-9: escena 1-9 (como F1-F9, pero sin la tecla Fn de los portatiles).
+        if (code >= '1' && code <= '9')
+        {
+            const auto& scenes = videoStage->getScenes().scenes;
+            if (const int index = code - '1'; index < (int) scenes.size())
+                videoStage->switchToScene (scenes[(size_t) index].id);
+            return true;
+        }
         return false;
     }
     if (mods.isAltDown())
         return false;
 
-    if (code == juce::KeyPress::spaceKey)                 { activeView().togglePlay(); return true; }
+    if (code == juce::KeyPress::spaceKey)                 { spacePressed(); return true; }
     if (code == juce::KeyPress::tabKey)                   { setActiveDeck (1 - activeDeck); return true; }
     if (code == juce::KeyPress::upKey)                    { browser->moveSelection (-1); return true; }
     if (code == juce::KeyPress::downKey)                  { browser->moveSelection (+1); return true; }
@@ -362,6 +409,55 @@ void MainComponent::toggleMidiLearn()
     midiButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffffa726).withAlpha (0.8f));
 }
 
+void MainComponent::updateAutoScene()
+{
+    // Lo que mas se oye: de los decks que suenan, el de mas volumen tras el crossfader.
+    if (videoStage == nullptr)
+        return;
+    const float cross = mixer.getCrossfader();
+    int kind = 0;
+    float loudest = 0.0f;
+    for (int d = 0; d < 2; ++d)
+    {
+        const auto& deck = d == 0 ? deckA : deckB;
+        if (! deck.isPlaying())
+            continue;
+        const float level = mixer.getStrip (d).getVolume() * juce::jmin (1.0f, 2.0f * (d == 0 ? 1.0f - cross : cross));
+        if (level > loudest)
+        {
+            loudest = level;
+            kind = DeckVideo::isVideoFile (deck.getLoadedFile()) ? 2 : 1;
+        }
+    }
+    // Sin nada sonando no se cambia nada. El cambio tiene que durar 0,6 s (un crossfader que
+    // pasa por el centro no hace saltar la escena) y solo actua al cambiar: si despues se elige
+    // otra escena a mano, se respeta hasta el proximo cambio de audio a video o al reves.
+    const auto now = juce::Time::getMillisecondCounter();
+    if (kind == 0 || kind == autoKind)
+    {
+        pendingAutoKind = 0;
+        return;
+    }
+    if (kind != pendingAutoKind)
+    {
+        pendingAutoKind = kind;
+        pendingAutoSince = now;
+        return;
+    }
+    if (now - pendingAutoSince < 600)
+        return;
+    autoKind = kind;
+    pendingAutoKind = 0;
+    const auto wanted = kind == 2 ? SceneAuto::video : SceneAuto::audio;
+    for (const auto& scene : videoStage->getScenes().scenes)
+        if (scene.autoWhen == wanted)
+        {
+            if (scene.id != videoStage->getScenes().currentScene)
+                videoStage->switchToScene (scene.id);
+            break;
+        }
+}
+
 void MainComponent::saveSamplerBank()
 {
     mixer.getSampler().saveBank (getDataFolder().getChildFile ("sampler.xml"), getDataFolder().getChildFile ("Grabaciones"));
@@ -378,13 +474,27 @@ void MainComponent::timerCallback()
         if (file != lastLoaded[(size_t) d] && ! deck.isLoading())
         {
             lastLoaded[(size_t) d] = file;
+            playedSeconds[(size_t) d] = 0.0;
+            playCounted[(size_t) d] = false;
             requestPoster (d, file);
             if (file != juce::File() && stems.isCached (file))
                 stems.request (file, true);
         }
         // El video del deck sigue a su cancion (mientras carga otra, no se ve la anterior).
         (d == 0 ? videoA : videoB).setFile (deck.isLoading() ? juce::File() : file);
+        // Mas reproducidos: cuenta una vez por carga, a los 30 s sonando.
+        if (deck.isPlaying() && ! playCounted[(size_t) d] && file != juce::File())
+        {
+            playedSeconds[(size_t) d] += 1.0 / 30.0;
+            if (playedSeconds[(size_t) d] >= 30.0)
+            {
+                playCounted[(size_t) d] = true;
+                library.addPlay (file);
+            }
+        }
     }
+    if (timerTicks % 6 == 0)
+        updateAutoScene();
     if (++timerTicks % 8 == 0)
         automixPanel.updateStatus();
 }
@@ -468,6 +578,7 @@ void MainComponent::panelsChanged()
 {
     deckViewA.setSections (panels.deck);
     deckViewB.setSections (panels.deck);
+    mixerView.setShowTransitions (panels.transitions);
     resized();
     repaint();
 }
@@ -503,7 +614,7 @@ void MainComponent::resized()
 
     // Arriba los decks y el centro, con el alto que piden los decks (al ocultar partes de los
     // decks crece lo de abajo); abajo los paneles (si hay alguno a la vista).
-    const bool anyBottom = panels.library || panels.automix || panels.scenes;
+    const bool anyBottom = panels.library || panels.automix || panels.scenes || panels.sources;
     const int deckH = juce::jmax (300, deckViewA.getPreferredHeight());
     auto top = anyBottom ? area.removeFromTop (juce::jlimit (240, juce::jmax (240, area.getHeight() - 160), deckH)) : area;
     if (anyBottom)
@@ -516,22 +627,32 @@ void MainComponent::resized()
     mixerView.setBounds (top);
 
     // Abajo: biblioteca | automix | escenas y fuentes. La biblioteca se queda con lo que sobra.
+    const bool column = panels.scenes || panels.sources;
     browser->setVisible (anyBottom && panels.library);
     automixPanel.setVisible (anyBottom && panels.automix);
     scenesPanel->setVisible (anyBottom && panels.scenes);
-    sourcesPanel->setVisible (anyBottom && panels.scenes);
+    sourcesPanel->setVisible (anyBottom && panels.sources);
     automixHandle.setVisible (anyBottom && panels.automix && panels.library);
-    scenesHandle.setVisible (anyBottom && panels.scenes && (panels.library || panels.automix));
+    scenesHandle.setVisible (anyBottom && column && (panels.library || panels.automix));
+    scenesSplitHandle.setVisible (anyBottom && panels.scenes && panels.sources);
     if (anyBottom)
     {
         auto bottom = area;
         constexpr int handle = 14;
-        if (panels.scenes)
+        if (column)
         {
-            auto column = (panels.library || panels.automix) ? bottom.removeFromRight (panels.scenesWidth) : bottom;
-            scenesPanel->setBounds (column.removeFromTop (column.getHeight() * 45 / 100));
-            column.removeFromTop (gap);
-            sourcesPanel->setBounds (column);
+            // Escenas arriba y Fuentes abajo, con una barrita para repartir el alto; si solo se ve
+            // una, ocupa la columna entera.
+            scenesColumn = (panels.library || panels.automix) ? bottom.removeFromRight (panels.scenesWidth) : bottom;
+            auto c = scenesColumn;
+            if (panels.scenes && panels.sources)
+            {
+                scenesPanel->setBounds (c.removeFromTop (juce::roundToInt ((float) c.getHeight() * panels.scenesShare) - handle / 2));
+                scenesSplitHandle.setBounds (c.removeFromTop (handle));
+                sourcesPanel->setBounds (c);
+            }
+            else
+                (panels.scenes ? static_cast<juce::Component&> (*scenesPanel) : *sourcesPanel).setBounds (c);
             if (panels.library || panels.automix)
                 scenesHandle.setBounds (bottom.removeFromRight (handle));
         }
@@ -558,7 +679,8 @@ void MainComponent::showSettings()
         {
             auto& p = owner.getPanels();
             const std::array<std::pair<bool*, const char*>, numToggles> items { {
-                { &p.library, "Biblioteca" }, { &p.automix, "Automix" }, { &p.scenes, "Escenas y fuentes" }, { &p.sampler, "Sampler (barra de arriba)" },
+                { &p.library, "Biblioteca" }, { &p.automix, "Automix" }, { &p.scenes, "Escenas" }, { &p.sources, "Fuentes" },
+                { &p.sampler, "Sampler (barra de arriba)" }, { &p.transitions, "Transiciones (junto al crossfader)" },
                 { &p.deck.waveform, "Forma de onda" }, { &p.deck.pitch, "Pitch y KEY" }, { &p.deck.loops, "Loops" },
                 { &p.deck.stems, "Stems" }, { &p.deck.effects, "Efectos (FX)" } } };
             for (size_t i = 0; i < items.size(); ++i)
@@ -578,7 +700,7 @@ void MainComponent::showSettings()
                 repaint();
             };
             addAndMakeVisible (reset);
-            setSize (320, 512);
+            setSize (320, widthsY + 58 + 34 + 14);
         }
 
         void paint (juce::Graphics& g) override
@@ -611,7 +733,7 @@ void MainComponent::showSettings()
         }
 
     private:
-        enum { numPanels = 4, numToggles = 9, step = 34, widthsY = 64 + numToggles * step + 28 + 8 };
+        enum { numPanels = 6, numToggles = 11, step = 30, widthsY = 64 + numToggles * step + 28 + 8 };
         MainComponent& owner;
         std::array<juce::ToggleButton, numToggles> toggles;
         juce::TextButton reset { "Mostrar todo y restablecer anchos" };
@@ -655,6 +777,9 @@ void MainComponent::saveLayout()
     xml.setAttribute ("showLibrary", panels.library);
     xml.setAttribute ("showAutomix", panels.automix);
     xml.setAttribute ("showScenes", panels.scenes);
+    xml.setAttribute ("showSources", panels.sources);
+    xml.setAttribute ("showTransitions", panels.transitions);
+    xml.setAttribute ("scenesShare", (double) panels.scenesShare);
     xml.setAttribute ("showSampler", panels.sampler);
     xml.setAttribute ("deckWaveform", panels.deck.waveform);
     xml.setAttribute ("deckPitch", panels.deck.pitch);
@@ -679,6 +804,10 @@ void MainComponent::loadLayout()
     panels.library = xml->getBoolAttribute ("showLibrary", true);
     panels.automix = xml->getBoolAttribute ("showAutomix", true);
     panels.scenes = xml->getBoolAttribute ("showScenes", true);
+    panels.sources = xml->getBoolAttribute ("showSources", panels.scenes);   // antes iban juntas
+    panels.transitions = xml->getBoolAttribute ("showTransitions", true);
+    panels.scenesShare = juce::jlimit (0.15f, 0.85f, (float) xml->getDoubleAttribute ("scenesShare", PanelSettings::defaultScenesShare));
+    mixerView.setShowTransitions (panels.transitions);
     panels.sampler = xml->getBoolAttribute ("showSampler", true);
     panels.deck.waveform = xml->getBoolAttribute ("deckWaveform", true);
     panels.deck.pitch = xml->getBoolAttribute ("deckPitch", true);

@@ -46,13 +46,16 @@ public:
 
     static juce::String shortcutsHelp();
 
-    // Paneles y partes de los decks que se pueden ocultar desde Ajustes, y los anchos de abajo.
+    // Paneles y partes de los decks que se pueden ocultar desde Ajustes, los anchos de abajo y el
+    // reparto de alto entre Escenas y Fuentes.
     struct PanelSettings
     {
-        bool library = true, automix = true, scenes = true, sampler = true;
+        bool library = true, automix = true, scenes = true, sources = true, sampler = true, transitions = true;
         DeckComponent::Sections deck;
         int automixWidth = defaultAutomixWidth, scenesWidth = defaultScenesWidth;
+        float scenesShare = defaultScenesShare;   // parte del alto de la columna para Escenas
         static constexpr int defaultAutomixWidth = 300, defaultScenesWidth = 280, minWidth = 220, maxWidth = 640;
+        static constexpr float defaultScenesShare = 0.45f;
     };
     PanelSettings& getPanels() { return panels; }
     void panelsChanged();
@@ -105,6 +108,16 @@ private:
     juce::TooltipWindow tooltips { this };
     int activeDeck = 0;
     std::array<bool, Sampler::numPads> padKeyDown {};
+    // Espacio: pausa los decks que suenan y, la vez siguiente, vuelve a poner esos mismos.
+    std::array<bool, 2> pausedBySpace {};
+    void spacePressed();
+    // Mas reproducidos: segundos que lleva sonando la cancion de cada deck (a los 30 cuenta una vez).
+    std::array<double, 2> playedSeconds {};
+    std::array<bool, 2> playCounted {};
+    // Cambio automatico de escena (audio / video) segun lo que mas se oye.
+    void updateAutoScene();
+    int autoKind = 0, pendingAutoKind = 0;   // 0 nada, 1 audio, 2 video
+    juce::uint32 pendingAutoSince = 0;
 
     // Barra de arriba.
     juce::TextButton projectorButton { "Proyector" }, midiButton { "MIDI" }, helpButton { "Atajos" };
@@ -115,8 +128,10 @@ private:
 
     // Abajo: biblioteca | automix | escenas y fuentes, con barritas para cambiar el ancho.
     PanelSettings panels;
-    ResizeHandle automixHandle, scenesHandle;
+    ResizeHandle automixHandle, scenesHandle, scenesSplitHandle { true };
     int dragStartWidth = 0;
+    float dragStartShare = 0.0f;
+    juce::Rectangle<int> scenesColumn;   // para pasar los pixeles arrastrados a una parte del alto
 
     // Video: un decodificador por deck y el escenario (compositor, escenas, vista previa).
     // %APPDATA%MiDJvideo.xml: <VIDEO device="cpu" width="1280" height="720" fps="30"/>

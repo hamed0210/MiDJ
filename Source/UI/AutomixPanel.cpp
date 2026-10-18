@@ -34,7 +34,9 @@ AutomixPanel::AutomixPanel (Automix& a, Library& l) : automix (a), library (l)
     fadeBox.setTooltip ("Duracion de las transiciones con fundido (las de a tempo duran 16 pulsos)");
     fadeBox.setSelectedId ((int) automix.getFadeSeconds(), juce::dontSendNotification);
     fadeBox.onChange = [this] { automix.setFadeSeconds (fadeBox.getSelectedId()); };
-    for (auto* c : std::initializer_list<juce::Component*> { &onButton, &mixNowButton, &skipButton, &clearButton, &fadeBox })
+    listsButton.setTooltip ("Reproducir o anadir los Favoritos o los Mas reproducidos");
+    listsButton.onClick = [this] { showListsMenu(); };
+    for (auto* c : std::initializer_list<juce::Component*> { &onButton, &listsButton, &mixNowButton, &skipButton, &clearButton, &fadeBox })
         addAndMakeVisible (c);
 
     automix.addChangeListener (this);
@@ -52,6 +54,37 @@ void AutomixPanel::addLearnTargets (std::vector<LearnTarget>& out)
     out.push_back ({ &onButton, "automix.toggle" });
     out.push_back ({ &mixNowButton, "automix.mixnow" });
     out.push_back ({ &skipButton, "automix.skip" });
+}
+
+void AutomixPanel::showListsMenu()
+{
+    // Reproducir = la lista pasa a ser esa y el automix se enciende; Anadir = al final.
+    enum { playFavorites = 1, addFavorites, playMostPlayed, addMostPlayed };
+    const int favorites = library.countFavorites(), played = library.countPlayed();
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("Favoritos (" + juce::String (favorites) + ")");
+    menu.addItem (playFavorites, "Reproducir Favoritos", favorites > 0);
+    menu.addItem (addFavorites, "Anadir Favoritos al final", favorites > 0);
+    menu.addSectionHeader ("Mas reproducidos (" + juce::String (played) + ")");
+    menu.addItem (playMostPlayed, "Reproducir Mas reproducidos", played > 0);
+    menu.addItem (addMostPlayed, "Anadir Mas reproducidos al final", played > 0);
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&listsButton),
+                        [safe = juce::Component::SafePointer<AutomixPanel> (this)] (int r)
+                        {
+                            if (safe == nullptr || r <= 0)
+                                return;
+                            auto& panel = *safe;
+                            const bool favs = r == playFavorites || r == addFavorites;
+                            const bool replace = r == playFavorites || r == playMostPlayed;
+                            const auto tracks = favs ? panel.library.getFavorites() : panel.library.getMostPlayed();
+                            if (replace)
+                                panel.automix.clearQueue();
+                            for (const auto& t : tracks)
+                                panel.automix.add ({ t.getFile(), t.title, t.artist, t.bpm });
+                            if (replace && ! panel.automix.isEnabled())
+                                panel.automix.setEnabled (true);
+                            panel.updateStatus();
+                        });
 }
 
 void AutomixPanel::updateStatus()
@@ -187,6 +220,8 @@ void AutomixPanel::resized()
     auto r = getLocalBounds().reduced (12, 10);
     auto header = r.removeFromTop (30);
     onButton.setBounds (header.removeFromRight (96).reduced (0, 1));
+    header.removeFromRight (6);
+    listsButton.setBounds (header.removeFromRight (64).reduced (0, 1));
     title.setBounds (header);
     r.removeFromTop (8);
     status.setBounds (r.removeFromBottom (30));

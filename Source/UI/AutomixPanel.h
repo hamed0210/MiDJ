@@ -11,7 +11,8 @@ namespace midj
 {
 // Lista de reproduccion del automix en su propio panel: las canciones en orden, encender /
 // apagar, mezclar ya, saltar, quitar, vaciar y la duracion del fundido. Se anaden arrastrando
-// canciones desde la lista (o con el menu de una cancion > Agregar a automix).
+// canciones desde la lista (o con el menu de una cancion > Agregar a automix), o con "Listas":
+// reproducir o anadir los Favoritos o los Mas reproducidos de la biblioteca.
 class AutomixPanel : public juce::Component,
                      public juce::DragAndDropTarget,
                      private juce::ChangeListener,
@@ -39,13 +40,14 @@ private:
     void paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool selected) override;
     void listBoxItemClicked (int row, const juce::MouseEvent& e) override;
     void deleteKeyPressed (int row) override;
+    void showListsMenu();
 
     Automix& automix;
     Library& library;
     bool dragOver = false;
     juce::Label title { {}, "AUTOMIX" }, status;
     juce::ListBox list;
-    juce::TextButton onButton { "Apagado" };
+    juce::TextButton onButton { "Apagado" }, listsButton { "Listas" };
     IconButton mixNowButton { Icons::Glyph::mix, "Mezclar ya con la siguiente" }, skipButton { Icons::Glyph::skip, "Saltar la siguiente cancion" },
                clearButton { Icons::Glyph::trash, "Vaciar la lista" };
     juce::ComboBox fadeBox;
