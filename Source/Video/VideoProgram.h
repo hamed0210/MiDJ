@@ -7,6 +7,7 @@
 #include "Video/Visualizer.h"
 
 #include <map>
+#include <optional>
 #include <mutex>
 #include <set>
 
@@ -40,6 +41,11 @@ public:
     // transicion, otra la termina de golpe y empieza la nueva.
     void switchTo (int sceneId);
     bool isInTransition() const;
+    int getCurrentScene() const { const std::lock_guard<std::mutex> sl (lock); return current; }
+    // Hilo de interfaz: probar una transicion propia sin cambiar de escena (de la escena al aire a ella misma).
+    void previewTransition (const CustomTransition& transition);
+    // El video de los stingers (lo reproduce el escenario); nullptr = sin video.
+    void setStinger (std::shared_ptr<FrameSource> source);
 
     // Tamano natural de la fuente de un elemento (lo que mide sin escalar ni recortar).
     juce::Point<int> naturalSize (const SceneItem& item) const;
@@ -76,6 +82,14 @@ private:
 
     Prepared prepare (const SceneItem& item);
     void republish();
+    // Con el cerrojo: empezar una transicion (custom: la propia, o nullptr para la de la coleccion).
+    void beginTransition (int from, int to, const CustomTransition* custom);
+    // Hilo de interfaz: la imagen en grises de un barrido (sin archivo o si no se lee, una diagonal).
+    juce::Image maskFor (const CustomTransition& transition);
+    // Hilo del compositor: las capas de una transicion propia.
+    void customLayers (const CustomTransition& custom, float t, const PreparedScene& outgoing, const PreparedScene& incoming,
+                       const juce::Image& maskImage, juce::uint64 maskImageVersion, const std::shared_ptr<FrameSource>& stingerSource,
+                       Compositor::Frame& frame);
     void sceneLayers (const PreparedScene& scene, std::vector<Compositor::Layer>& layers);
 
     VideoMix& mix;
@@ -97,6 +111,13 @@ private:
     double transitionStart = 0.0;
     Transition transition;
     bool transitioning = false;
+    std::optional<CustomTransition> custom;   // la propia en curso (si es una propia)
+    juce::Image mask;                         // su imagen de barrido
+    juce::uint64 maskVersion = 0;
+    std::shared_ptr<FrameSource> stinger;
+
+    // Hilo de interfaz: imagenes de barrido ya leidas (por ruta).
+    std::map<juce::String, juce::Image> maskCache;
 
     // Hilo del compositor: el estado de cada visualizador (sus barras bajan poco a poco...).
     std::map<int, std::unique_ptr<Visualizer>> visualizers;

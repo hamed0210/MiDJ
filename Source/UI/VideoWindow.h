@@ -83,6 +83,10 @@ public:
     const VideoProgram& getProgram() const { return program; }
     VideoMix& getMix() { return mix; }
     void switchToScene (int sceneId);
+    // Transiciones propias: anadir (devuelve su id y queda elegida), quitar y probar sin cambiar de escena.
+    int addCustomTransition (CustomTransition transition);
+    void removeCustomTransition (int id);
+    void previewTransition (const CustomTransition& transition);
     void scenesChanged();   // tras editar la coleccion: se publica, se refresca y se guarda
 
     // El elemento elegido de la escena al aire (0 = ninguno).
@@ -115,6 +119,9 @@ private:
     juce::String statusText() const;
     NowPlaying nowPlaying() const;
     void attachEditing (ProjectorView& view);
+    // Stinger: su video (se abre al elegir la transicion, para que empiece sin esperas) y arrancarlo.
+    void prepareStinger (const CustomTransition* transition);
+    void startStinger();
 
     // Edicion en la vista previa (como OBS: clic para elegir, arrastrar para mover, esquinas para escalar).
     void updateOverlay();
@@ -136,6 +143,13 @@ private:
     bool dirty = false, running = false, previewShowing = false;
     juce::uint32 lastChange = 0;
     std::set<int> pendingFit;
+
+    juce::AudioFormatManager& formatManager;
+    AuxBus& auxBus;
+    juce::TimeSliceThread stingerReadAhead { "MiDJ stinger" };
+    std::shared_ptr<MediaFileSource> stinger;   // despues del hilo: se destruye antes
+    juce::File stingerFile;
+    bool stingerPlaying = false;
 
     enum class Drag { none, move, scale };
     Drag drag = Drag::none;

@@ -122,6 +122,7 @@ target_sources(MiDJ PRIVATE
     Source/UI/AutomixPanel.cpp
     Source/UI/Icons.cpp
     Source/UI/Widgets.cpp
+    Source/UI/TransitionDialog.cpp
     Source/UI/DarkLookAndFeel.cpp)
 target_link_libraries(MiDJ PRIVATE MiDJEngine)
 midj_copy_runtime(MiDJ)

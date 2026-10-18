@@ -5,6 +5,7 @@ namespace midj
 MainComponent::MainComponent()
 {
     setLookAndFeel (&lookAndFeel);
+    juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);   // tambien las ventanas sueltas (dialogos, menus, ajustes)
     formatManager.registerBasicFormats();   // WAV, AIFF, FLAC, Ogg y MP3
     formatManager.registerFormat (new MediaFoundationAudioFormat(), false);   // el sonido de MP4/MOV/WMV y M4A
 
@@ -167,6 +168,7 @@ MainComponent::~MainComponent()
     browser.reset();
     library.close();
     setLookAndFeel (nullptr);
+    juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
 }
 
 void MainComponent::parentHierarchyChanged()

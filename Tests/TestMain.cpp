@@ -2470,6 +2470,34 @@ void testScenes()
     compositor.renderOnce (frame);
     check (compositor.readProgram().getPixelAt (640, 360).getBrightness() < 0.02f, "escenas: fundido a negro pasa por negro", 0.0, 0.0);
 
+    // Barrido con imagen: con una mascara de negro (izquierda) a blanco (derecha) a la mitad, la
+    // escena nueva (azul) ya cubre la izquierda y la vieja (roja) sigue a la derecha.
+    {
+        juce::Image gradient (juce::Image::ARGB, 64, 8, false);
+        for (int x = 0; x < 64; ++x)
+            for (int y = 0; y < 8; ++y)
+            {
+                const auto v = (juce::uint8) (x * 4);
+                gradient.setPixelAt (x, y, juce::Colour (v, v, v));
+            }
+        frame.layers.clear();
+        Compositor::Layer out, in;
+        out.source = 0;
+        in.source = 1;
+        out.area = in.area = { 0.0f, 0.0f, 1280.0f, 720.0f };
+        in.mask = gradient;
+        in.maskVersion = 1;
+        in.maskSlot = 901;
+        in.maskProgress = 0.5f;
+        in.maskSoftness = 0.05f;
+        frame.layers = { out, in };
+        compositor.renderOnce (frame);
+        img = compositor.readProgram();
+        check (img.getPixelAt (160, 360).getBlue() > 250 && img.getPixelAt (160, 360).getRed() < 5
+                   && img.getPixelAt (1120, 360).getRed() > 250 && img.getPixelAt (1120, 360).getBlue() < 5,
+               "transiciones: barrido con imagen a la mitad", img.getPixelAt (160, 360).getBlue(), 255.0);
+    }
+
     // El programa: escena con un color, cambio de escena con transicion y despues sin ella.
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
@@ -2503,6 +2531,73 @@ void testScenes()
     const auto g = compositor.readProgram().getPixelAt (100, 100);
     check (! videoProgram.isInTransition() && ! f.useScene[1] && g.getGreen() > 250 && g.getRed() < 5,
            "escenas: acabada la transicion, la escena verde", g.getGreen(), 255.0);
+
+    // Transicion propia "a color": a la mitad, la pantalla es del color (blanco); al acabar, la escena nueva.
+    {
+        CustomTransition white;
+        white.id = col.newId();
+        white.name = "Blanco";
+        white.kind = CustomTransitionKind::colour;
+        white.colour = juce::Colours::white;
+        white.milliseconds = 600;
+        col.customTransitions.push_back (white);
+        col.transition.custom = white.id;
+        videoProgram.setScenes (col);
+        const int mezcla = col.scenes.front().id;
+        videoProgram.switchTo (mezcla);
+        juce::Thread::sleep (280);   // cerca de la mitad
+        f.clear();
+        videoProgram.buildFrame (f);
+        compositor.renderOnce (f);
+        const auto w = compositor.readProgram().getPixelAt (100, 100);
+        check (videoProgram.isInTransition() && w.getRed() > 230 && w.getBlue() > 230, "transiciones: a color pasa por el color",
+               w.getRed(), 255.0);
+        juce::Thread::sleep (400);
+        f.clear();
+        videoProgram.buildFrame (f);
+        check (! videoProgram.isInTransition() && videoProgram.getCurrentScene() == mezcla, "transiciones: a color termina en la escena nueva", 0.0, 0.0);
+        // Guardar y leer: la transicion propia y que esta elegida.
+        const auto saved = SceneCollection::fromXml (*col.toXml(), 1280, 720);
+        const auto* restored = saved.currentCustom();
+        check (restored != nullptr && restored->kind == CustomTransitionKind::colour && restored->colour == juce::Colours::white
+                   && restored->milliseconds == 600,
+               "transiciones: la propia se guarda en el XML", restored != nullptr ? restored->milliseconds : 0, 600.0);
+        // Stinger: su video encima; debajo la escena vieja hasta el punto de cambio y luego la nueva.
+        struct FakeStinger : FrameSource
+        {
+            void show (const juce::Image& image) { publish (image); }
+            juce::String getStatus() const override { return {}; }
+            void update (const SceneItem&) override {}
+            void setOnAir (bool) override {}
+            void setViewing (bool) override {}
+        };
+        auto fake = std::make_shared<FakeStinger>();
+        fake->show (solidImage (16, 9, juce::Colours::orange));
+        videoProgram.setStinger (fake);
+        CustomTransition sting;
+        sting.id = col.newId();
+        sting.kind = CustomTransitionKind::stinger;
+        sting.milliseconds = 600;
+        sting.cutMilliseconds = 300;
+        col.customTransitions.push_back (sting);
+        col.transition.custom = sting.id;
+        videoProgram.setScenes (col);
+        videoProgram.switchTo (green.id);
+        juce::Thread::sleep (100);
+        f.clear();
+        videoProgram.buildFrame (f);
+        const bool topIsStinger = ! f.layers.empty() && f.layers.back().slot == 902;
+        const bool underIsOld = f.layers.size() >= 2 && f.layers.front().slot != 1000 + fill.id;
+        juce::Thread::sleep (300);
+        f.clear();
+        videoProgram.buildFrame (f);
+        const bool underIsNew = f.layers.size() >= 2 && f.layers.front().slot == 1000 + fill.id;
+        check (topIsStinger && underIsOld && underIsNew, "transiciones: stinger encima y cambio de escena en su punto", 0.0, 0.0);
+        juce::Thread::sleep (300);
+        videoProgram.setStinger (nullptr);
+        col.transition.custom = 0;
+        videoProgram.setScenes (col);
+    }
 
     // Fuente de imagen: un PNG de 200x100 en el centro, a su tamano.
     const auto png = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("MiDJTestsLogo.png");

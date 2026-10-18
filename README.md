@@ -95,17 +95,34 @@ Tests/
 
 ## Interfaz y atajos de teclado
 
-Como VirtualDJ: arriba los dos decks (una sola forma de onda por deck) con el mezclador en el centro, que
-tiene las pestañas **AUDIO** (GAIN, HIGH, MID, LOW, FILTER y volumen de cada deck) y **VIDEO** (vista previa,
-nivel de video de cada deck y transición) y, abajo de las dos, el crossfader (línea roja a la izquierda y
-azul a la derecha, marca del centro, doble clic para centrarlo). En medio, el sampler. Abajo, de izquierda a
-derecha: carpetas, canciones, automix y escenas/fuentes; los divisores entre ellos se arrastran a lo ancho y
-los anchos (y la pestaña elegida) se guardan en `%APPDATA%\MiDJ\layout.xml`. En la lista de canciones, un
-icono distingue los videos (fotograma azul) del audio (nota gris). El automix tiene su propio panel: se le
-arrastran canciones (o menú de la canción > Agregar a automix, o tecla A).
+Diseño "Escenario" (oscuro, deck A en azul y B en ámbar):
+- **Arriba**, una barra con el formato de la salida de video, **Proyector** (pantalla completa en un monitor),
+  **MIDI**, **Atajos** y **Ajustes** (paneles visibles: Biblioteca, Automix, Escenas y fuentes y Sampler;
+  restablecer anchos).
+- **Decks** a los lados: portada (un fotograma si es un video), título, artista, BPM y tiempo, la forma de
+  onda (lo ya sonado más apagado), el **pitch** ±16 % con el centro marcado (raya y 0 en verde cuando está en
+  0; se engancha al pasar cerca; doble clic: 0) y **KEY**, bucles 1-2-4-8, stems (Voz / Instrumental o
+  "Separar stems"), tres efectos (el nombre enciende, la flecha elige otro, el mando es la cantidad) y Play,
+  Cue y Sync.
+- **Centro**: pestañas **AUDIO** (High, Mid, Low, Gain y Filter de cada deck con su vúmetro, y el **master**
+  con su volumen y vúmetro estéreo) y **PROGRAMA** (la salida de video y el nivel de video de cada deck).
+  Debajo, el **crossfader** con su centro marcado (CENTRO en verde o "40 % hacia B"; se engancha y doble clic
+  lo centra) y a cada lado el **volumen** del deck con su vúmetro; y los botones de transición (las de
+  siempre, las propias y **+ Personalizada**) con su duración. Debajo, el **sampler** (8 pads en fila).
+- **Abajo**: biblioteca, automix y escenas/fuentes; las barritas entre ellos (y entre el árbol y la lista)
+  cambian el ancho (doble clic: el original). Anchos, paneles visibles y pestaña se guardan en
+  `%APPDATA%\MiDJ\layout.xml`.
+- **Biblioteca**: árbol con **Música local** (Música = solo audio, Videos = solo video), **Mis carpetas**
+  (las añadidas) y **Discos** (cada disco y las carpetas donde hay canciones). La **x** de una carpeta o un
+  disco lo quita de la biblioteca sin borrar archivos (las canciones quedan ocultas con su análisis y no
+  vuelven al re-escanear) y sale un aviso con **Deshacer**. **Sincronizar** (flechas en círculo) busca
+  música y/o video en los discos elegidos (sin Windows, Archivos de programa ni AppData) y añade las
+  carpetas nuevas, que se analizan en segundo plano. Cada canción tiene **A** / **B** (cargar en ese deck)
+  y **+** (al automix); doble clic la carga en el deck libre.
+- **Automix** en su propio panel: Mezclar ya, Saltar y Vaciar como iconos, la x de cada canción la quita.
 
-El **deck activo** (borde fino del color del deck) es el de los atajos: se elige con un clic en el deck, con
-Tab o cargando una canción en él. Botón **Atajos** junto a MIDI:
+El **deck activo** (marco del color del deck) es el de los atajos: se elige con un clic en el deck, con
+Tab o cargando una canción en él. Botón **Atajos**:
 
 | Tecla | Acción |
 |---|---|
@@ -118,7 +135,7 @@ Tab o cargando una canción en él. Botón **Atajos** junto a MIDI:
 | A | Agregar la canción elegida al automix |
 | 1 - 8 | Pads del sampler (al soltar, se suelta el pad) |
 | F1 - F9 | Pasar a la escena 1 - 9 |
-| V | Pestaña AUDIO / VIDEO del mezclador |
+| V | Pestaña AUDIO / PROGRAMA del centro |
 | Ctrl+F | Buscar (Esc o Intro: salir del buscador) |
 | Supr | Quitar la fuente elegida (vista previa o panel Fuentes) |
 
@@ -171,8 +188,8 @@ de un núcleo con la vista previa y ~5 % más con un proyector; componer, ~1,2 m
 
 Abajo a la derecha están los paneles **Escenas** y **Fuentes**, como los de OBS (se guarda en
 `%APPDATA%\MiDJ\scenes.xml`; por defecto, una escena "Mezcla" con la mezcla de los decks):
-- **Escenas**: clic para ponerla al aire con la transición elegida en la pestaña VIDEO (Corte, Fundido,
-  Fundido a negro, Deslizar o Barrido, de 0 a 3 s); F1-F9 pasan a las nueve primeras. Botones para crear,
+- **Escenas**: clic para ponerla al aire con la transición elegida bajo el crossfader (Corte, Fundido,
+  A negro, Deslizar o Barrido, de 0,1 a 3 s, o una propia); F1-F9 pasan a las nueve primeras. Botones para crear,
   borrar, renombrar y ordenar; clic derecho para duplicar.
 - **Fuentes** de la escena (la de arriba se ve encima), con su ojo (mostrar u ocultar) y su candado (no se
   mueve en la vista previa). Botones: **+** abre **Añadir fuente** (a la izquierda los tipos: Mezcla de decks,
@@ -186,6 +203,15 @@ Abajo a la derecha están los paneles **Escenas** y **Fuentes**, como los de OBS
 - En la vista previa: clic para elegir una fuente (recuadro rojo), arrastrar para moverla (se pega a los
   bordes y al centro; Mayús para no pegarse), arrastrar una esquina para escalarla sin deformar (Mayús para
   deformar), flechas para mover de 1 en 1 (Mayús: de 10 en 10) y Supr para quitarla.
+- **Transiciones propias** (**+ Personalizada**, bajo el crossfader): nombre y tipo, con **Probar en el
+  programa** (se hace sin cambiar de escena) y **Añadir transición** (queda elegida; su **x** la quita):
+  - **Stinger**: un video tapa el cambio; la escena cambia debajo en el **punto de cambio** y su sonido va al
+    master. Al elegir el video se toma su duración y el punto de cambio a la mitad. Media Foundation no da
+    transparencia: el video se ve entero.
+  - **Barrido**: la escena nueva entra por donde una imagen en grises es más oscura, con el borde suavizado
+    (en la GPU); sin imagen, un barrido en diagonal.
+  - **A color**: funde al color elegido y del color a la escena nueva.
+  Se guardan en `scenes.xml` con las escenas.
 
 ### Captura de pantalla y de ventana
 
@@ -295,3 +321,5 @@ los pesos de Spleeter son de Deezer con licencia MIT (exportados a ONNX por el p
 - Captura de pantalla (duplicación de DXGI, con el puntero del ratón y sin el borde amarillo de Windows 10) y de ventana (Windows Graphics Capture, solo el contenido o con bordes) como fuentes de escena, sin salir de la GPU; la ventana se vuelve a encontrar al reabrir MiDJ o al reabrirla.
 - Fuentes **Multimedia** (archivo de video o audio con bucle, reiniciar al activarse, no mostrar nada al terminar, cerrar si está inactiva, velocidad y su sonido al master) y **Dispositivo de captura de video** (capturadoras USB/HDMI y webcams con Media Foundation: resolución, FPS y formato, volteo, decodificación por hardware y el audio HDMI de su entrada de Windows, remuestreado con corrección de reloj), como en OBS.
 - Interfaz como VirtualDJ + OBS: video integrado en la pestaña VIDEO del mezclador (vista previa, nivel de video por deck, transición), crossfader dentro del mezclador, sampler en la fila del medio, paneles inferiores ajustables a lo ancho (carpetas, canciones, automix en su propio panel, escenas y fuentes), diálogos Añadir fuente y Propiedades como los de OBS, ojo y candado por fuente, icono de audio o video en la lista, una sola forma de onda por deck y atajos de teclado (Espacio, Tab, C/S/K, Intro, flechas, A, 1-8, F1-F9, V, Ctrl+F).
+- Interfaz "Escenario": estilo oscuro nuevo; decks con portada del video, pitch con el centro marcado y enganche, loops, stems, efectos y transporte; centro con pestañas AUDIO (EQ, filtro, vúmetros y volumen del master) y PROGRAMA, crossfader con centro marcado y volúmenes a los lados, sampler en fila; paneles de abajo con barritas de ancho y Ajustes para ocultarlos; biblioteca con árbol Música local / Mis carpetas / Discos, quitar con Deshacer y sincronizar con el PC; automix con iconos.
+- Transiciones propias: stinger (video con punto de cambio y su sonido), barrido con imagen en grises (máscara en la GPU) y a color, con probar en el programa; guardadas en `scenes.xml`.

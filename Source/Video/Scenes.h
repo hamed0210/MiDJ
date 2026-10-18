@@ -99,10 +99,31 @@ struct Scene
 
 enum class TransitionType { cut, fade, fadeToBlack, slide, swipe };
 
+// Transicion propia (la crea el usuario):
+//  - stinger: un video que tapa el cambio (suena por el master); la escena cambia debajo en el
+//    punto de cambio. Media Foundation no da transparencia: el video se ve entero.
+//  - luma: la escena nueva entra por donde una imagen en grises es mas oscura (barrido con forma);
+//    sin imagen, un barrido en diagonal.
+//  - colour: funde al color y del color a la escena nueva.
+enum class CustomTransitionKind { stinger, luma, colour };
+
+struct CustomTransition
+{
+    int id = 0;
+    juce::String name;
+    CustomTransitionKind kind = CustomTransitionKind::stinger;
+    juce::File file;                  // stinger: el video; luma: la imagen en grises
+    int milliseconds = 1200;          // duracion total
+    int cutMilliseconds = 600;        // stinger: cuando cambia la escena debajo
+    float softness = 0.2f;            // luma: suavidad del borde (0..1)
+    juce::Colour colour { juce::Colours::black };   // a color
+};
+
 struct Transition
 {
     TransitionType type = TransitionType::fade;
     int milliseconds = 600;
+    int custom = 0;                   // id de una transicion propia (0 = la de 'type')
 };
 
 // La cancion que suena (la del deck que mas se ve), para los textos con {titulo} etc.
@@ -121,6 +142,11 @@ public:
     std::vector<Scene> scenes;
     int currentScene = 0;   // id
     Transition transition;
+    std::vector<CustomTransition> customTransitions;
+    const CustomTransition* findCustom (int id) const;
+    // La propia elegida ahora (nullptr si es una de las de siempre).
+    const CustomTransition* currentCustom() const { return transition.custom != 0 ? findCustom (transition.custom) : nullptr; }
+    static juce::String customKindName (CustomTransitionKind kind);
 
     // Una escena "Mezcla" con la mezcla de los decks a pantalla completa (lo de siempre).
     static SceneCollection createDefault (int programWidth, int programHeight);

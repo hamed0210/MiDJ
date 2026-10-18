@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine/Mixer.h"
+#include "UI/Icons.h"
 #include "UI/MidiLearnOverlay.h"
 #include "UI/Widgets.h"
 
@@ -31,7 +32,7 @@ public:
     bool isVideoTabShowing() const { return videoTab; }
     // Las transiciones cambiaron (p. ej. se anadio una personalizada): rehacer los botones.
     void refreshTransitions();
-    std::function<void()> onAddCustomTransition;   // boton "+ Personalizada"
+    void addCustomTransition();   // boton "+ Personalizada": abre la ventana para crearla
 
     void paint (juce::Graphics& g) override;
     void resized() override;
@@ -56,6 +57,7 @@ private:
 
     void setUpChannel (int index);
     void selectTransition (int index);
+    void selectCustom (int id);
     juce::String centreText() const;
 
     Mixer& mixer;
@@ -68,6 +70,8 @@ private:
     juce::Label noVideoLabel;
     CentredSlider crossfader { 0.0, 1.0, 0.02 };
     std::vector<std::unique_ptr<juce::TextButton>> transitionButtons;
+    std::vector<int> transitionCustomIds;                       // 0 = una de las de siempre
+    std::vector<std::unique_ptr<IconButton>> removeButtons;     // la x de cada propia (nullptr en las de siempre)
     juce::TextButton addTransitionButton { "+ Personalizada" };
     juce::Slider transitionMs;
 

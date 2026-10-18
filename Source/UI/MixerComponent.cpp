@@ -1,5 +1,6 @@
 #include "UI/MixerComponent.h"
 #include "UI/DarkLookAndFeel.h"
+#include "UI/TransitionDialog.h"
 #include "UI/VideoWindow.h"
 
 namespace midj
@@ -64,7 +65,7 @@ MixerComponent::MixerComponent (Mixer& m) : mixer (m)
 
     addTransitionButton.setColour (juce::TextButton::textColourOffId, DarkLookAndFeel::custom.brighter (0.3f));
     addTransitionButton.setTooltip ("Crear una transicion propia: stinger (video), barrido con imagen o fundido a un color");
-    addTransitionButton.onClick = [this] { if (onAddCustomTransition) onAddCustomTransition(); };
+    addTransitionButton.onClick = [this] { addCustomTransition(); };
     addAndMakeVisible (addTransitionButton);
     transitionMs.setSliderStyle (juce::Slider::LinearHorizontal);
     transitionMs.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
@@ -166,30 +167,67 @@ void MixerComponent::refreshTransitions()
 {
     for (auto& b : transitionButtons)
         removeChildComponent (b.get());
+    for (auto& b : removeButtons)
+        if (b != nullptr)
+            removeChildComponent (b.get());
     transitionButtons.clear();
-    for (int t = 0; t <= (int) TransitionType::swipe; ++t)
+    transitionCustomIds.clear();
+    removeButtons.clear();
+
+    auto addButton = [this] (const juce::String& text, int customId, std::function<void()> onClick)
     {
-        auto b = std::make_unique<juce::TextButton> (t == (int) TransitionType::fadeToBlack ? juce::String ("A negro")
-                                                                                          : SceneCollection::transitionName ((TransitionType) t));
-        b->onClick = [this, t] { selectTransition (t); };
+        auto b = std::make_unique<juce::TextButton> (text);
+        b->onClick = std::move (onClick);
+        b->setColour (juce::ComboBox::outlineColourId, juce::Colours::transparentBlack);
         addAndMakeVisible (*b);
         transitionButtons.push_back (std::move (b));
-    }
+        transitionCustomIds.push_back (customId);
+        std::unique_ptr<IconButton> remove;
+        if (customId != 0)
+        {
+            remove = std::make_unique<IconButton> (Icons::Glyph::close, "Quitar esta transicion");
+            remove->onClick = [this, customId]
+            {
+                if (stage != nullptr)
+                    stage->removeCustomTransition (customId);
+                juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<MixerComponent> (this)]
+                {
+                    if (safe != nullptr)
+                        safe->refreshTransitions();
+                });
+            };
+            addAndMakeVisible (*remove);
+        }
+        removeButtons.push_back (std::move (remove));
+    };
+    for (int t = 0; t <= (int) TransitionType::swipe; ++t)
+        addButton (t == (int) TransitionType::fadeToBlack ? juce::String ("A negro") : SceneCollection::transitionName ((TransitionType) t), 0,
+                   [this, t] { selectTransition (t); });
+    if (stage != nullptr)
+        for (const auto& c : stage->getScenes().customTransitions)
+            addButton (c.name, c.id, [this, id = c.id] { selectCustom (id); });
+
     if (stage != nullptr)
     {
         const auto& tr = stage->getScenes().transition;
+        const auto* own = stage->getScenes().currentCustom();
         transitionMs.setValue (tr.milliseconds, juce::dontSendNotification);
-        transitionMs.setEnabled (tr.type != TransitionType::cut);
+        transitionMs.setEnabled (own == nullptr && tr.type != TransitionType::cut);
         for (size_t i = 0; i < transitionButtons.size(); ++i)
         {
-            const bool on = (int) i == (int) tr.type;
-            transitionButtons[i]->setColour (juce::TextButton::buttonColourId, on ? DarkLookAndFeel::selection : juce::Colours::transparentBlack);
-            transitionButtons[i]->setColour (juce::TextButton::textColourOffId, on ? DarkLookAndFeel::text : DarkLookAndFeel::textQuiet);
-            transitionButtons[i]->setColour (juce::ComboBox::outlineColourId, juce::Colours::transparentBlack);
+            const bool isCustom = transitionCustomIds[i] != 0;
+            const bool on = own != nullptr ? transitionCustomIds[i] == own->id : (! isCustom && (int) i == (int) tr.type);
+            auto& b = *transitionButtons[i];
+            b.setColour (juce::TextButton::buttonColourId, on ? DarkLookAndFeel::selection : juce::Colours::transparentBlack);
+            b.setColour (juce::TextButton::textColourOffId, on ? DarkLookAndFeel::text
+                                                               : isCustom ? DarkLookAndFeel::custom.brighter (0.3f) : DarkLookAndFeel::textQuiet);
+            if (isCustom)
+                b.setTooltip (SceneCollection::customKindName (stage->getScenes().findCustom (transitionCustomIds[i])->kind) + " (transicion propia)");
         }
     }
     for (auto& b : transitionButtons)
         b->setEnabled (stage != nullptr);
+    addTransitionButton.setEnabled (stage != nullptr && stage->isReady());
     transitionMs.setVisible (stage != nullptr);
     resized();
     repaint();
@@ -200,8 +238,43 @@ void MixerComponent::selectTransition (int index)
     if (stage == nullptr)
         return;
     stage->getScenes().transition.type = (TransitionType) index;
+    stage->getScenes().transition.custom = 0;
     stage->scenesChanged();
     refreshTransitions();
+}
+
+void MixerComponent::selectCustom (int id)
+{
+    if (stage == nullptr)
+        return;
+    stage->getScenes().transition.custom = id;
+    stage->scenesChanged();
+    refreshTransitions();
+}
+
+void MixerComponent::addCustomTransition()
+{
+    if (stage == nullptr)
+        return;
+    juce::Component::SafePointer<MixerComponent> safe (this);
+    TransitionDialog::show (getTopLevelComponent(),
+        [safe] (const CustomTransition& t)
+        {
+            // Probar: se ve en la pestana PROGRAMA, sin cambiar de escena.
+            if (safe != nullptr && safe->stage != nullptr)
+            {
+                safe->showVideoTab (true);
+                safe->stage->previewTransition (t);
+            }
+        },
+        [safe] (const CustomTransition& t)
+        {
+            if (safe != nullptr && safe->stage != nullptr)
+            {
+                safe->stage->addCustomTransition (t);
+                safe->refreshTransitions();
+            }
+        });
 }
 
 void MixerComponent::showVideoTab (bool video)
@@ -405,20 +478,27 @@ void MixerComponent::resized()
         juce::Font font (DarkLookAndFeel::sans (12.0f, true));
         int x = card.getX(), y = card.getY();
         const int rowH = 28;
-        std::vector<juce::Button*> all;
-        for (auto& b : transitionButtons) all.push_back (b.get());
-        all.push_back (&addTransitionButton);
-        for (auto* b : all)
+        // Cada boton (las propias con su x detras) y al final "+ Personalizada".
+        for (size_t i = 0; i <= transitionButtons.size(); ++i)
         {
+            auto* b = i < transitionButtons.size() ? static_cast<juce::Button*> (transitionButtons[i].get()) : &addTransitionButton;
+            auto* remove = i < removeButtons.size() ? removeButtons[i].get() : nullptr;
             const int w = juce::GlyphArrangement::getStringWidthInt (font, b->getButtonText()) + 22;
-            if (x + w > card.getRight() && x > card.getX())
+            const int total = w + (remove != nullptr ? 22 : 0);
+            if (x + total > card.getRight() && x > card.getX())
             {
                 x = card.getX();
                 y += rowH + 4;
             }
+            const bool fits = y + rowH <= card.getBottom() + 2;
             b->setBounds (x, y, w, rowH);
-            b->setVisible (y + rowH <= card.getBottom() + 2);
-            x += w + 4;
+            b->setVisible (fits);
+            if (remove != nullptr)
+            {
+                remove->setBounds (x + w, y + 4, 20, rowH - 8);
+                remove->setVisible (fits);
+            }
+            x += total + 4;
         }
     }
 

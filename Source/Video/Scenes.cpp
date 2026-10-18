@@ -7,6 +7,7 @@ namespace
     const char* typeIds[] = { "decks", "deckA", "deckB", "image", "text", "colour", "screen", "window", "visualizer", "media", "captureDevice" };
     const char* visualizerIds[] = { "spectrum", "wave", "pulse" };
     const char* transitionIds[] = { "cut", "fade", "fadeToBlack", "slide", "swipe" };
+    const char* customKindIds[] = { "stinger", "luma", "colour" };
 
     template <typename Enum, size_t N>
     Enum parseId (const juce::String& s, const char* (&ids)[N], Enum fallback)
@@ -182,6 +183,20 @@ std::unique_ptr<juce::XmlElement> SceneCollection::toXml() const
     xml->setAttribute ("current", currentScene);
     xml->setAttribute ("transition", transitionIds[(int) transition.type]);
     xml->setAttribute ("ms", transition.milliseconds);
+    if (transition.custom != 0)
+        xml->setAttribute ("customTransition", transition.custom);
+    for (const auto& t : customTransitions)
+    {
+        auto* e = xml->createNewChildElement ("CUSTOM_TRANSITION");
+        e->setAttribute ("id", t.id);
+        e->setAttribute ("name", t.name);
+        e->setAttribute ("kind", customKindIds[(int) t.kind]);
+        e->setAttribute ("file", t.file.getFullPathName());
+        e->setAttribute ("ms", t.milliseconds);
+        e->setAttribute ("cut", t.cutMilliseconds);
+        e->setAttribute ("softness", t.softness);
+        e->setAttribute ("colour", t.colour.toString());
+    }
     for (const auto& s : scenes)
     {
         auto* se = xml->createNewChildElement ("SCENE");
@@ -346,7 +361,46 @@ SceneCollection SceneCollection::fromXml (const juce::XmlElement& xml, int w, in
         c.currentScene = c.scenes.front().id;
     c.transition.type = parseId (xml.getStringAttribute ("transition"), transitionIds, TransitionType::fade);
     c.transition.milliseconds = juce::jlimit (0, 10000, xml.getIntAttribute ("ms", 600));
+    for (auto* e : xml.getChildWithTagNameIterator ("CUSTOM_TRANSITION"))
+    {
+        CustomTransition t;
+        t.id = e->getIntAttribute ("id");
+        if (t.id <= 0)
+            continue;
+        t.name = e->getStringAttribute ("name", "Personalizada");
+        t.kind = parseId (e->getStringAttribute ("kind"), customKindIds, CustomTransitionKind::stinger);
+        if (const auto path = e->getStringAttribute ("file"); juce::File::isAbsolutePath (path))
+            t.file = juce::File (path);
+        t.milliseconds = juce::jlimit (100, 20000, e->getIntAttribute ("ms", 1200));
+        t.cutMilliseconds = juce::jlimit (0, t.milliseconds, e->getIntAttribute ("cut", t.milliseconds / 2));
+        t.softness = juce::jlimit (0.0f, 1.0f, (float) e->getDoubleAttribute ("softness", 0.2));
+        t.colour = juce::Colour::fromString (e->getStringAttribute ("colour", "ff000000"));
+        c.lastId = juce::jmax (c.lastId, t.id);
+        c.customTransitions.push_back (t);
+    }
+    c.transition.custom = xml.getIntAttribute ("customTransition");
+    if (c.findCustom (c.transition.custom) == nullptr)
+        c.transition.custom = 0;
     return c;
+}
+
+const CustomTransition* SceneCollection::findCustom (int id) const
+{
+    for (const auto& t : customTransitions)
+        if (t.id == id)
+            return &t;
+    return nullptr;
+}
+
+juce::String SceneCollection::customKindName (CustomTransitionKind kind)
+{
+    switch (kind)
+    {
+        case CustomTransitionKind::stinger: return "Stinger";
+        case CustomTransitionKind::luma:    return "Barrido con imagen";
+        case CustomTransitionKind::colour:  return "A color";
+    }
+    return {};
 }
 
 // --- Geometria -------------------------------------------------------------------------------

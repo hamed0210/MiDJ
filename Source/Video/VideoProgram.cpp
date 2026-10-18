@@ -157,20 +157,150 @@ void VideoProgram::setNowPlaying (const NowPlaying& n)
 
 void VideoProgram::switchTo (int sceneId)
 {
+    // La imagen del barrido se lee aqui (hilo de interfaz), no con el cerrojo.
+    const auto* chosen = collection.currentCustom();
+    const auto image = chosen != nullptr && chosen->kind == CustomTransitionKind::luma ? maskFor (*chosen) : juce::Image();
     const std::lock_guard<std::mutex> sl (lock);
     if (sceneId == current && ! transitioning)
         return;
-    transition = collection.transition;
-    if (transition.type == TransitionType::cut || transition.milliseconds <= 0 || current == 0)
+    if (image.isValid() && ! image.isNull() && (! mask.isValid() || mask != image))
     {
-        current = sceneId;
+        mask = image;
+        ++maskVersion;
+    }
+    beginTransition (current, sceneId, chosen);
+}
+
+void VideoProgram::previewTransition (const CustomTransition& t)
+{
+    const auto image = t.kind == CustomTransitionKind::luma ? maskFor (t) : juce::Image();
+    const std::lock_guard<std::mutex> sl (lock);
+    if (image.isValid() && mask != image)
+    {
+        mask = image;
+        ++maskVersion;
+    }
+    beginTransition (current, current, &t);
+}
+
+void VideoProgram::setStinger (std::shared_ptr<FrameSource> source)
+{
+    const std::lock_guard<std::mutex> sl (lock);
+    stinger = std::move (source);
+}
+
+void VideoProgram::beginTransition (int from, int to, const CustomTransition* chosen)
+{
+    transition = collection.transition;
+    custom.reset();
+    if (chosen != nullptr)
+        custom = *chosen;
+    const int ms = custom ? custom->milliseconds : transition.milliseconds;
+    if ((! custom && transition.type == TransitionType::cut) || ms <= 0 || from == 0)
+    {
+        current = to;
         transitioning = false;
         return;
     }
-    previous = current;
-    current = sceneId;
+    previous = from;
+    current = to;
     transitionStart = juce::Time::getMillisecondCounterHiRes();
     transitioning = true;
+}
+
+juce::Image VideoProgram::maskFor (const CustomTransition& t)
+{
+    const auto key = t.file.getFullPathName() + "|" + juce::String (t.file.getLastModificationTime().toMilliseconds());
+    if (auto it = maskCache.find (key); it != maskCache.end())
+        return it->second;
+    juce::Image image;
+    if (t.file.existsAsFile())
+        image = juce::ImageFileFormat::loadFrom (t.file);
+    if (image.isValid())
+    {
+        // Pequena basta (el borde se suaviza en la GPU) y en ARGB, que es lo que sube el compositor.
+        const int w = juce::jmin (image.getWidth(), 640), h = juce::jmax (1, image.getHeight() * w / juce::jmax (1, image.getWidth()));
+        image = image.rescaled (w, h, juce::Graphics::mediumResamplingQuality).convertedToFormat (juce::Image::ARGB);
+    }
+    else
+    {
+        // Sin imagen: un barrido en diagonal (de arriba a la izquierda a abajo a la derecha).
+        image = juce::Image (juce::Image::ARGB, 256, 144, false);
+        for (int y = 0; y < image.getHeight(); ++y)
+            for (int x = 0; x < image.getWidth(); ++x)
+            {
+                const auto v = (juce::uint8) juce::jlimit (0, 255, (x * 255 / 256 + y * 255 / 144) / 2);
+                image.setPixelAt (x, y, juce::Colour (v, v, v));
+            }
+    }
+    maskCache[key] = image;
+    return image;
+}
+
+void VideoProgram::customLayers (const CustomTransition& c, float t, const PreparedScene& outgoing, const PreparedScene& incoming,
+                                 const juce::Image& maskImage, juce::uint64 maskImageVersion,
+                                 const std::shared_ptr<FrameSource>& stingerSource, Compositor::Frame& frame)
+{
+    constexpr int colourSlot = 900, maskSlot = 901, stingerSlot = 902;
+    const juce::Rectangle<float> full { 0.0f, 0.0f, (float) width, (float) height };
+    switch (c.kind)
+    {
+        case CustomTransitionKind::colour:
+        {
+            // Primera mitad: la escena vieja se tapa con el color; segunda: el color se va y queda la nueva.
+            const bool first = t < 0.5f;
+            sceneLayers (first ? outgoing : incoming, frame.layers);
+            Compositor::Layer colour;
+            colour.slot = colourSlot;
+            colour.image = juce::Image (juce::Image::ARGB, 2, 2, false);
+            colour.image.clear (colour.image.getBounds(), c.colour.withAlpha (1.0f));
+            colour.version = ((juce::uint64) 1 << 40) | c.colour.getARGB();
+            colour.area = full;
+            colour.opacity = first ? 2.0f * t : 2.0f - 2.0f * t;
+            frame.layers.push_back (colour);
+            break;
+        }
+        case CustomTransitionKind::luma:
+        {
+            // La nueva entra por encima de la vieja por donde la imagen es mas oscura.
+            sceneLayers (outgoing, frame.scenes[0]);
+            sceneLayers (incoming, frame.scenes[1]);
+            frame.useScene = { true, true };
+            Compositor::Layer out, in;
+            out.source = 0;
+            in.source = 1;
+            out.area = in.area = full;
+            in.mask = maskImage;
+            in.maskVersion = maskImageVersion;
+            in.maskSlot = maskSlot;
+            in.maskProgress = t;
+            in.maskSoftness = juce::jlimit (0.005f, 0.5f, c.softness * 0.5f);
+            frame.layers.push_back (out);
+            frame.layers.push_back (in);
+            break;
+        }
+        case CustomTransitionKind::stinger:
+        {
+            // Debajo, la escena vieja hasta el punto de cambio y luego la nueva; encima, el video.
+            const float cut = (float) c.cutMilliseconds / (float) juce::jmax (1, c.milliseconds);
+            sceneLayers (t < cut ? outgoing : incoming, frame.layers);
+            if (stingerSource != nullptr)
+            {
+                Compositor::Layer layer;
+                layer.slot = stingerSlot;
+                if (stingerSource->getGpu()->hasPicture())
+                    layer.gpu = stingerSource->getGpu();
+                else
+                {
+                    layer.image = stingerSource->getFrame();
+                    layer.version = ((juce::uint64) 1 << 60) + stingerSource->getFrameNumber();
+                }
+                if (VideoMix::hasPicture (layer))
+                    frame.layers.push_back (layer);
+            }
+            break;
+        }
+    }
 }
 
 std::set<int> VideoProgram::liveItems() const
@@ -362,13 +492,18 @@ void VideoProgram::buildFrame (Compositor::Frame& frame)
     bool inTransition = false;
     float t = 1.0f;
     TransitionType type = TransitionType::cut;
+    std::optional<CustomTransition> own;
+    juce::Image ownMask;
+    juce::uint64 ownMaskVersion = 0;
+    std::shared_ptr<FrameSource> ownStinger;
     {
         const std::lock_guard<std::mutex> sl (lock);
         scenes = published;
         if (transitioning)
         {
             // Como OBS: el progreso es el tiempo pasado sobre la duracion.
-            t = (float) ((juce::Time::getMillisecondCounterHiRes() - transitionStart) / juce::jmax (1, transition.milliseconds));
+            const int ms = custom ? custom->milliseconds : transition.milliseconds;
+            t = (float) ((juce::Time::getMillisecondCounterHiRes() - transitionStart) / juce::jmax (1, ms));
             if (t >= 1.0f)
                 transitioning = false;
         }
@@ -376,6 +511,13 @@ void VideoProgram::buildFrame (Compositor::Frame& frame)
         prev = previous;
         inTransition = transitioning;
         type = transition.type;
+        if (inTransition && custom)
+        {
+            own = custom;
+            ownMask = mask;
+            ownMaskVersion = maskVersion;
+            ownStinger = stinger;
+        }
     }
     if (scenes == nullptr)
         return;
@@ -394,6 +536,10 @@ void VideoProgram::buildFrame (Compositor::Frame& frame)
     if (outgoing == nullptr)
     {
         sceneLayers (*incoming, frame.layers);
+    }
+    else if (own)
+    {
+        customLayers (*own, juce::jlimit (0.0f, 1.0f, t), *outgoing, *incoming, ownMask, ownMaskVersion, ownStinger, frame);
     }
     else
     {

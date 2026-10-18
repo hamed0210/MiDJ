@@ -236,7 +236,7 @@ VideoStage::VideoStage (std::array<DeckVideo*, 2> v, std::array<const Deck*, 2> 
     : compositor (settings), captures (compositor.getDevice()),
       media (mixer.getAuxBus(), formats, compositor.getWidth()),
       mix (v, d, mixer), program (mix, compositor.getWidth(), compositor.getHeight()),
-      videos (v), decks (d), scenesFile (std::move (file))
+      videos (v), decks (d), scenesFile (std::move (file)), formatManager (formats), auxBus (mixer.getAuxBus())
 {
     // Los decodificadores usan el dispositivo del compositor: sus fotogramas no salen de la GPU.
     if (compositor.isReady() && compositor.hasVideoSupport())
@@ -264,6 +264,9 @@ VideoStage::~VideoStage()
         save();
     closeDialogs();
     compositor.stop();
+    program.setStinger (nullptr);
+    stinger.reset();
+    stingerReadAhead.stopThread (2000);
     projectors.clear();
     MediaFoundation::shareDevice (nullptr);
     bigPreview.reset();
@@ -293,6 +296,7 @@ void VideoStage::save()
 void VideoStage::scenesChanged()
 {
     program.setScenes (scenes);
+    prepareStinger (scenes.currentCustom());
     media.setOnAir (program.liveItems());
     dirty = true;
     lastChange = juce::Time::getMillisecondCounter();
@@ -308,6 +312,12 @@ void VideoStage::switchToScene (int sceneId)
         return;
     scenes.currentScene = sceneId;
     program.setScenes (scenes);
+    // Stinger: su video empieza a la vez que la transicion.
+    if (const auto* own = scenes.currentCustom(); own != nullptr && own->kind == CustomTransitionKind::stinger && sceneId != program.getCurrentScene())
+    {
+        prepareStinger (own);
+        startStinger();
+    }
     program.switchTo (sceneId);
     media.setOnAir (program.liveItems());
     dirty = true;
@@ -315,6 +325,68 @@ void VideoStage::switchToScene (int sceneId)
     selected = 0;
     updateOverlay();
     sendChangeMessage();
+}
+
+int VideoStage::addCustomTransition (CustomTransition t)
+{
+    t.id = scenes.newId();
+    scenes.customTransitions.push_back (t);
+    scenes.transition.custom = t.id;
+    scenesChanged();
+    return t.id;
+}
+
+void VideoStage::removeCustomTransition (int id)
+{
+    auto& list = scenes.customTransitions;
+    list.erase (std::remove_if (list.begin(), list.end(), [id] (const CustomTransition& t) { return t.id == id; }), list.end());
+    if (scenes.transition.custom == id)
+        scenes.transition.custom = 0;   // vuelve a la de siempre que estaba elegida
+    scenesChanged();
+}
+
+void VideoStage::previewTransition (const CustomTransition& t)
+{
+    if (t.kind == CustomTransitionKind::stinger)
+    {
+        prepareStinger (&t);
+        startStinger();
+    }
+    program.previewTransition (t);
+}
+
+void VideoStage::prepareStinger (const CustomTransition* t)
+{
+    if (t == nullptr || t->kind != CustomTransitionKind::stinger || ! t->file.existsAsFile())
+        return;
+    if (stinger != nullptr && stingerFile == t->file)
+        return;
+    // Como una fuente Multimedia: sin bucle, empieza de cero al activarse, se oculta al acabar.
+    SceneItem item;
+    item.type = SourceType::media;
+    item.file = t->file;
+    item.loop = false;
+    item.restartOnActivate = true;
+    item.clearOnEnd = true;
+    item.closeWhenInactive = false;
+    item.hardwareDecode = true;
+    if (! stingerReadAhead.isThreadRunning())
+        stingerReadAhead.startThread (juce::Thread::Priority::high);
+    program.setStinger (nullptr);
+    stinger = std::make_shared<MediaFileSource> (item, auxBus, formatManager, stingerReadAhead, compositor.getWidth());
+    stingerFile = t->file;
+    stingerPlaying = false;
+    program.setStinger (stinger);
+}
+
+void VideoStage::startStinger()
+{
+    if (stinger == nullptr)
+        return;
+    stinger->setOnAir (false);
+    stinger->setOnAir (true);   // de cero
+    stinger->setViewing (true);
+    stingerPlaying = true;
 }
 
 SceneItem* VideoStage::selectedItem()
@@ -618,6 +690,16 @@ void VideoStage::updateRunning()
 void VideoStage::timerCallback()
 {
     media.tick();                           // fin de los videos multimedia
+    // El video del stinger se para al acabar la transicion.
+    if (stinger != nullptr)
+    {
+        stinger->tick();
+        if (stingerPlaying && ! program.isInTransition())
+        {
+            stinger->setOnAir (false);
+            stingerPlaying = false;
+        }
+    }
     // Un video o una capturadora recien elegidos se encajan cuando llega su primer fotograma.
     for (auto it = pendingFit.begin(); it != pendingFit.end();)
     {

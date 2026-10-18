@@ -38,9 +38,11 @@ cbuffer Placement : register(b0)
     float4 p01;      // esquinas arriba izquierda y arriba derecha en coordenadas de pantalla (-1..1)
     float4 p23;      // abajo izquierda y abajo derecha
     float4 uv;       // zona de la textura (izquierda, arriba, derecha, abajo)
-    float4 params;   // x = opacidad, y = 1 si la imagen no tiene alfa (capturas del escritorio)
+    float4 params;   // x = opacidad, y = 1 si la imagen no tiene alfa (capturas del escritorio),
+                     // z = avance del barrido con mascara (< 0: sin mascara), w = suavidad del borde
 };
 Texture2D image : register(t0);
+Texture2D maskImage : register(t1);
 SamplerState linearClamp : register(s0);
 
 struct VsOut { float4 pos : SV_Position; float2 uv : TEXCOORD0; };
@@ -66,6 +68,15 @@ float4 psLayer (VsOut i) : SV_Target
     if (params.y > 0.5) c.a = 1;
     float3 straight = c.a > 0 ? c.rgb / c.a : 0;
     float a = c.a * params.x;
+    if (params.z >= 0)
+    {
+        // Barrido con forma: entra primero lo oscuro de la mascara. El borde va de -s a 1+s para
+        // que al principio no se vea nada y al final todo.
+        float m = dot (maskImage.Sample (linearClamp, i.uv).rgb, float3 (0.299, 0.587, 0.114));
+        float s = max (params.w, 0.002);
+        float edge = params.z * (1 + 2 * s) - s;
+        a *= saturate ((edge - m) / s + 0.5);
+    }
     return float4 (srgbToLinear (saturate (straight)) * a, a);
 }
 
@@ -305,7 +316,8 @@ struct Compositor::Impl
 
     // Un cuadrilatero (esquinas en pixeles del destino, en el orden de Quad) con una zona de la textura.
     void draw (ID3D11ShaderResourceView* view, ID3D11PixelShader* shader, const Quad& q,
-               float targetW, float targetH, juce::Rectangle<float> uv, float opacity, bool opaque = false)
+               float targetW, float targetH, juce::Rectangle<float> uv, float opacity, bool opaque = false,
+               float maskProgress = -1.0f, float maskSoftness = 0.1f)
     {
         Placement p {};
         auto put = [&] (int i, juce::Point<float> pt)
@@ -320,6 +332,8 @@ struct Compositor::Impl
         p.uv[0] = uv.getX(); p.uv[1] = uv.getY(); p.uv[2] = uv.getRight(); p.uv[3] = uv.getBottom();
         p.params[0] = opacity;
         p.params[1] = opaque ? 1.0f : 0.0f;
+        p.params[2] = maskProgress;
+        p.params[3] = maskSoftness;
         context->UpdateSubresource (constants.Get(), 0, nullptr, &p, 0, 0);
         context->PSSetShader (shader, nullptr, 0);
         context->PSSetShaderResources (0, 1, &view);
@@ -468,7 +482,28 @@ struct Compositor::Impl
             if (! layer.transform.isIdentity())
                 for (auto& p : quad)
                     p.applyTransform (layer.transform);
-            draw (view, layerShader.Get(), quad, w, h, layer.uv, juce::jlimit (0.0f, 1.0f, layer.opacity), gpu.opaque && gpu.view != nullptr);
+            // Mascara del barrido con forma (si la hay): su textura en el registro t1.
+            float maskProgress = -1.0f;
+            if (layer.maskProgress >= 0.0f && layer.mask.isValid() && layer.mask.getFormat() == juce::Image::ARGB)
+            {
+                Layer maskLayer;
+                maskLayer.slot = layer.maskSlot;
+                maskLayer.image = layer.mask;
+                maskLayer.version = layer.maskVersion;
+                if (auto* maskSlot = upload (maskLayer))
+                {
+                    ID3D11ShaderResourceView* maskView = maskSlot->view.Get();
+                    context->PSSetShaderResources (1, 1, &maskView);
+                    maskProgress = juce::jlimit (0.0f, 1.0f, layer.maskProgress);
+                }
+            }
+            draw (view, layerShader.Get(), quad, w, h, layer.uv, juce::jlimit (0.0f, 1.0f, layer.opacity), gpu.opaque && gpu.view != nullptr,
+                  maskProgress, layer.maskSoftness);
+            if (maskProgress >= 0.0f)
+            {
+                ID3D11ShaderResourceView* noMask = nullptr;
+                context->PSSetShaderResources (1, 1, &noMask);
+            }
             if (gpu.cursorView != nullptr)
                 drawCursor (layer, area, gpu, sw, sh, w, h);
         }

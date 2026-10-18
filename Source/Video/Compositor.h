@@ -58,6 +58,12 @@ public:
         float rotation = 0.0f;         // grados en el sentido del reloj, alrededor del centro del area
         juce::AffineTransform transform;   // se aplica despues (p. ej. el giro de un elemento de escena)
         float opacity = 1.0f;
+        // Barrido con forma: la capa se ve donde la imagen en grises "mask" es mas oscura que el
+        // avance (0 = nada, 1 = toda), con el borde suavizado. Avance negativo = sin mascara.
+        juce::Image mask;
+        juce::uint64 maskVersion = 0;
+        int maskSlot = 0;
+        float maskProgress = -1.0f, maskSoftness = 0.1f;
     };
 
     // Lo que se dibuja en un fotograma.
