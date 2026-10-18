@@ -11,7 +11,8 @@ namespace midj
 namespace Icons
 {
     enum class Glyph { plus, minus, trash, gear, up, down, pencil, eye, eyeOff, lock, unlock,
-                       play, pause, stop, restart, film, note };
+                       play, pause, stop, restart, film, note,
+                       mix, skip, folder, folderPlus, sync, drive, computer, star, chevron, close, monitor, sliders };
 
     void draw (juce::Graphics& g, juce::Rectangle<float> area, Glyph glyph, juce::Colour colour);
     // El icono de un tipo de fuente (como los del dialogo Anadir fuente de OBS).
@@ -26,9 +27,13 @@ class IconButton : public juce::Button
 public:
     IconButton (Icons::Glyph glyph, const juce::String& tooltip);
     void setGlyph (Icons::Glyph g) { glyph = g; repaint(); }
+    // Con borde (botones de barra) y, si se da, lleno de un color con el icono oscuro (Mezclar ya).
+    void setBordered (bool b, juce::Colour fillColour = {}) { bordered = b; fill = fillColour; repaint(); }
     void paintButton (juce::Graphics& g, bool highlighted, bool down) override;
 
 private:
     Icons::Glyph glyph;
+    bool bordered = false;
+    juce::Colour fill;
 };
 }

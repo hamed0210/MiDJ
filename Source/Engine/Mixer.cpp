@@ -4,6 +4,13 @@ namespace midj
 {
 Mixer::Mixer (Deck& left, Deck& right) : deckA (left), deckB (right) {}
 
+void Mixer::raisePeak (std::atomic<float>& peak, float value)
+{
+    // Sube el pico guardado si este es mayor (la interfaz lo lee y lo pone a cero).
+    float current = peak.load();
+    while (value > current && ! peak.compare_exchange_weak (current, value)) {}
+}
+
 float Mixer::leftGain (float x)
 {
     // VirtualDJ "smooth": curva 0.333 -> ganancia = min(1, (1 - x) / 0.667)
@@ -69,6 +76,8 @@ void Mixer::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
     sampler.capture (1, scratch.getReadPointer (0), scratch.getReadPointer (1), n, tempoB);
     stripA.process (*info.buffer, info.startSample, n);
     stripB.process (scratch, 0, n);
+    raisePeak (peakA, info.buffer->getMagnitude (info.startSample, n));
+    raisePeak (peakB, scratch.getMagnitude (0, n));
 
     const float x = crossfader.load();
     const float gainA = leftGain (x), gainB = rightGain (x);
@@ -102,6 +111,14 @@ void Mixer::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
     sampler.process (out.getWritePointer (0, info.startSample), out.getWritePointer (juce::jmin (1, out.getNumChannels() - 1), info.startSample), n, ref);
 
     aux.addTo (out.getWritePointer (0, info.startSample), out.getNumChannels() > 1 ? out.getWritePointer (1, info.startSample) : nullptr, n);
+
+    // Volumen del master (con rampa) y su vumetro.
+    const float masterGain = masterGainFromKnob (masterKnob.load());
+    for (int ch = 0; ch < out.getNumChannels(); ++ch)
+        out.applyGainRamp (ch, info.startSample, n, lastMasterGain, masterGain);
+    lastMasterGain = masterGain;
+    raisePeak (peakL, out.getMagnitude (0, info.startSample, n));
+    raisePeak (peakR, out.getMagnitude (juce::jmin (1, out.getNumChannels() - 1), info.startSample, n));
 
     tap.push (out.getReadPointer (0, info.startSample), out.getNumChannels() > 1 ? out.getReadPointer (1, info.startSample) : nullptr, n);
     tap.setBeat (ref.valid, ref.valid ? ref.beatAtStart + n / ref.samplesPerBeat : 0.0, ref.bpm);

@@ -5,6 +5,7 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_events/juce_events.h>
 
+#include <functional>
 #include <optional>
 #include <vector>
 
@@ -48,6 +49,36 @@ public:
     void removeFolder (const juce::File& folder);
     juce::Array<juce::File> getFolders() const;
 
+    // Quitar de la biblioteca una carpeta del arbol (un disco, una carpeta dentro de otra de la
+    // biblioteca...). No borra archivos ni pierde el analisis: sus canciones quedan ocultas y no
+    // vuelven al re-escanear. Devuelve lo necesario para deshacerlo.
+    struct Removal
+    {
+        juce::File folder;
+        juce::Array<juce::File> roots;   // carpetas de la biblioteca que estaban dentro (o era ella)
+    };
+    Removal removeFromLibrary (const juce::File& folder);
+    void undoRemoval (const Removal& removal);
+    // Rutas de todas las canciones (para el arbol de carpetas).
+    juce::StringArray getTrackPaths() const;
+
+    // Sincronizar con el PC: recorre las carpetas (sin las del sistema) y devuelve las que tienen
+    // musica o video, sin repetir las que ya estan dentro de otra encontrada. progress recibe la
+    // carpeta que se mira y los archivos encontrados; shouldStop corta la busqueda.
+    struct SyncOptions
+    {
+        juce::Array<juce::File> roots;   // discos o carpetas donde buscar
+        bool audio = true, video = true;
+    };
+    static juce::Array<juce::File> findMediaFolders (const SyncOptions& options,
+                                                     const std::function<void (const juce::File&, int)>& progress,
+                                                     const std::function<bool()>& shouldStop, int& filesFound);
+    // Discos fijos del equipo (C:, D:...).
+    static juce::Array<juce::File> localDrives();
+    // Nombre de un disco como en el Explorador: "Datos (D:)" o "Disco local (C:)".
+    static juce::String driveName (const juce::File& drive);
+    static bool isVideoFile (const juce::File& file);
+
     // Trabajo de fondo: escanear todas las carpetas y analizar lo pendiente.
     void startBackgroundWork();
     bool isBusy() const;
@@ -75,6 +106,7 @@ public:
 private:
     class Worker;
     bool exec (const char* sql) const;
+    juce::StringArray getExclusions() const;   // carpetas quitadas (con la barra final)
     void scanFolder (const juce::File& folder, juce::Thread* thread);   // thread: para poder parar
     bool analyseOne (juce::Thread* thread);                              // false = no quedaba nada
     void startPendingCount();

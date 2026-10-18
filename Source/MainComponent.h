@@ -15,14 +15,16 @@
 #include "UI/SamplerPanel.h"
 #include "UI/ScenePanel.h"
 #include "UI/VideoWindow.h"
+#include "UI/Widgets.h"
 #include "Video/DeckVideo.h"
 
 namespace midj
 {
-// Ventana principal, como VirtualDJ: arriba los dos decks con el mezclador en el centro (con
-// sus pestanas AUDIO y VIDEO y el crossfader), en medio el sampler y abajo, ajustables a lo
-// ancho, la biblioteca, el automix y las escenas y fuentes del video. Atajos de teclado (ver
-// shortcutsHelp()).
+// Ventana principal (diseno "Escenario"): arriba una barra con el nombre, el formato del video,
+// Proyector, MIDI, Atajos y Ajustes; debajo los dos decks a los lados y en el centro las
+// pestanas AUDIO / PROGRAMA, la tarjeta del crossfader y el sampler; abajo, con el ancho que se
+// quiera (barritas para arrastrar), la biblioteca, el automix y las escenas y fuentes. Ajustes
+// permite ocultar paneles. Atajos de teclado: ver shortcutsHelp().
 class MainComponent : public juce::AudioAppComponent,
                       public juce::DragAndDropContainer,
                       private juce::KeyListener,
@@ -42,17 +44,30 @@ public:
 
     static juce::String shortcutsHelp();
 
+    // Paneles que se pueden ocultar desde Ajustes y sus anchos (los de abajo).
+    struct PanelSettings
+    {
+        bool library = true, automix = true, scenes = true, sampler = true;
+        int automixWidth = defaultAutomixWidth, scenesWidth = defaultScenesWidth;
+        static constexpr int defaultAutomixWidth = 300, defaultScenesWidth = 280, minWidth = 220, maxWidth = 640;
+    };
+    PanelSettings& getPanels() { return panels; }
+    void panelsChanged() { resized(); repaint(); }
+
 private:
     // Carga usando el analisis guardado en la biblioteca si lo hay (carga mucho mas rapida).
     bool loadIntoDeck (Deck& deck, const juce::File& file);
     // Doble clic en el navegador: al primer deck que no este sonando, empezando por A.
     void loadIntoFreeDeck (const juce::File& file);
     void toggleMidiLearn();
+    void showSettings();
     void saveSamplerBank();
     static juce::File getDataFolder() { return Library::getDefaultFile().getParentDirectory(); }
     void timerCallback() override;
     // Modo de prueba sin controladora: --simular-midi archivo (ver README).
     void startMidiSimulation (const juce::File& script);
+    // Portada de un deck: un fotograma del video, leido en segundo plano.
+    void requestPoster (int deckIndex, const juce::File& file);
 
     // Atajos de teclado (llegan aqui si el control con el foco no los usa).
     bool keyPressed (const juce::KeyPress& key, juce::Component* origin) override;
@@ -85,14 +100,18 @@ private:
     AutomixPanel automixPanel { automix, library };
     SamplerPanel samplerPanel { mixer.getSampler(), formatManager };
     juce::TooltipWindow tooltips { this };
-    juce::TextButton midiButton { "MIDI" }, helpButton { "Atajos" };
     int activeDeck = 0;
     std::array<bool, Sampler::numPads> padKeyDown {};
 
-    // Abajo: biblioteca | automix | escenas y fuentes, con divisores que se arrastran.
-    juce::StretchableLayoutManager bottomLayout;
-    juce::StretchableLayoutResizerBar bottomBar1 { &bottomLayout, 1, true }, bottomBar2 { &bottomLayout, 3, true };
-    juce::Component videoColumn;   // solo para colocar las escenas y fuentes
+    // Barra de arriba.
+    juce::TextButton projectorButton { "Proyector" }, midiButton { "MIDI" }, helpButton { "Atajos" };
+    IconButton settingsButton { Icons::Glyph::sliders, "Ajustes: paneles visibles y anchos" };
+    juce::Rectangle<int> headerArea;
+
+    // Abajo: biblioteca | automix | escenas y fuentes, con barritas para cambiar el ancho.
+    PanelSettings panels;
+    ResizeHandle automixHandle, scenesHandle;
+    int dragStartWidth = 0;
 
     // Video: un decodificador por deck y el escenario (compositor, escenas, vista previa).
     // %APPDATA%MiDJvideo.xml: <VIDEO device="cpu" width="1280" height="720" fps="30"/>

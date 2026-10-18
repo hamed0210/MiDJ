@@ -5,11 +5,6 @@ namespace midj
 {
 EffectsRow::EffectsRow (EffectRack& r, juce::Colour c) : rack (r), accent (c)
 {
-    label.setText ("FX", juce::dontSendNotification);
-    label.setJustificationType (juce::Justification::centredRight);
-    label.setColour (juce::Label::textColourId, DarkLookAndFeel::textQuiet);
-    addAndMakeVisible (label);
-
     for (int i = 0; i < EffectRack::numSlots; ++i)
     {
         auto& s = slots[(size_t) i];
@@ -18,9 +13,9 @@ EffectsRow::EffectsRow (EffectRack& r, juce::Colour c) : rack (r), accent (c)
             rack.setOn (i, ! rack.isOn (i));
             updateSlot (i);
         };
-        s.nameButton.setTooltip ("Encender / apagar el efecto");
+        s.nameButton.setTooltip ("Encender / apagar el efecto (la flecha elige otro)");
+        s.nameButton.getProperties().set (DarkLookAndFeel::filledProperty, true);
         s.menuButton.onClick = [this, i] { showMenu (i); };
-        s.menuButton.setTooltip ("Elegir efecto");
 
         s.knob.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
         s.knob.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
@@ -29,7 +24,7 @@ EffectsRow::EffectsRow (EffectRack& r, juce::Colour c) : rack (r), accent (c)
         s.knob.setDoubleClickReturnValue (true, 0.5);
         s.knob.setColour (juce::Slider::rotarySliderFillColourId, accent);
         s.knob.onValueChange = [this, i] { rack.setAmount (i, (float) slots[(size_t) i].knob.getValue()); };
-        s.knob.setTooltip ("Intensidad del efecto");
+        s.knob.setTooltip ("Cantidad del efecto (doble clic: al centro)");
 
         for (auto* comp : std::initializer_list<juce::Component*> { &s.nameButton, &s.menuButton, &s.knob })
             addAndMakeVisible (comp);
@@ -64,8 +59,12 @@ void EffectsRow::updateSlot (int index)
     auto& s = slots[(size_t) index];
     s.nameButton.setButtonText (EffectRack::getEffectNames()[rack.getEffect (index)]);
     const bool on = rack.isOn (index);
-    s.nameButton.setColour (juce::TextButton::buttonColourId, on ? accent.withAlpha (0.75f) : DarkLookAndFeel::panel.brighter (0.15f));
-    s.nameButton.setColour (juce::TextButton::textColourOffId, on ? juce::Colours::white : DarkLookAndFeel::text);
+    if (lastOn[(size_t) index] == (int) on)
+        return;
+    lastOn[(size_t) index] = (int) on;
+    s.nameButton.setColour (juce::TextButton::buttonColourId, on ? accent : DarkLookAndFeel::background);
+    s.nameButton.setColour (juce::TextButton::textColourOffId, on ? DarkLookAndFeel::background : DarkLookAndFeel::text);
+    repaint();
 }
 
 void EffectsRow::showMenu (int index)
@@ -74,7 +73,7 @@ void EffectsRow::showMenu (int index)
     const auto names = EffectRack::getEffectNames();
     for (int e = 0; e < names.size(); ++e)
         menu.addItem (e + 1, names[e], true, rack.getEffect (index) == e);
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&slots[(size_t) index].menuButton),
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&slots[(size_t) index].nameButton),
                         [this, index] (int result)
                         {
                             if (result > 0)
@@ -85,18 +84,37 @@ void EffectsRow::showMenu (int index)
                         });
 }
 
+void EffectsRow::paint (juce::Graphics& g)
+{
+    for (int i = 0; i < EffectRack::numSlots; ++i)
+    {
+        const auto r = slots[(size_t) i].area.toFloat();
+        g.setColour (DarkLookAndFeel::raised);
+        g.fillRoundedRectangle (r, 10.0f);
+        if (rack.isOn (i))
+        {
+            g.setColour (accent);
+            g.drawRoundedRectangle (r.reduced (0.5f), 10.0f, 1.0f);
+        }
+    }
+}
+
 void EffectsRow::resized()
 {
     auto area = getLocalBounds();
-    label.setBounds (area.removeFromLeft (44));
-    area.removeFromLeft (6);
-    const int slotWidth = area.getWidth() / EffectRack::numSlots;
+    const int gap = 6;
+    const int slotWidth = (area.getWidth() - gap * (EffectRack::numSlots - 1)) / EffectRack::numSlots;
     for (auto& s : slots)
     {
-        auto slot = area.removeFromLeft (slotWidth).withTrimmedRight (8);
-        s.knob.setBounds (slot.removeFromRight (slot.getHeight() + 4));
-        s.menuButton.setBounds (slot.removeFromRight (18).reduced (2, 9));
-        s.nameButton.setBounds (slot.reduced (0, 2).withTrimmedRight (1));
+        s.area = area.removeFromLeft (slotWidth);
+        area.removeFromLeft (gap);
+        auto r = s.area.reduced (5);
+        const int knob = juce::jmin (r.getHeight(), 30);
+        s.knob.setBounds (r.removeFromRight (knob).withSizeKeepingCentre (knob, knob));
+        r.removeFromRight (2);
+        s.menuButton.setBounds (r.removeFromRight (16));
+        r.removeFromRight (2);
+        s.nameButton.setBounds (r.withSizeKeepingCentre (r.getWidth(), juce::jmin (r.getHeight(), 28)));
     }
 }
 }

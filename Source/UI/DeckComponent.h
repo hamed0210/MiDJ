@@ -2,6 +2,8 @@
 
 #include "Engine/Deck.h"
 #include "UI/EffectsRow.h"
+#include "UI/Icons.h"
+#include "UI/Widgets.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -9,8 +11,14 @@
 
 namespace midj
 {
-// Panel de un deck: titulo, BPM, tiempo, forma de onda con rejilla de pulsos,
-// botones CUE / Play / SYNC, efectos, bucles de 1-2-4-8 pulsos, cargar, fader de tempo y KEY.
+// Tarjeta de un deck (diseno "Escenario"), de arriba abajo:
+//  - DECK A / B, su estado (sonando, en pausa...) y el boton de abrir un archivo;
+//  - la portada (un fotograma si es un video) con titulo, artista, BPM y tiempo;
+//  - la forma de onda (lo ya sonado mas apagado) con la rejilla de pulsos, el CUE y el bucle;
+//  - el pitch +-16 % con su centro marcado (verde en 0, se engancha al pasar) y KEY;
+//  - bucles de 1-2-4-8 pulsos y stems (voz / instrumental);
+//  - tres efectos;
+//  - Play / Pausa, CUE y SYNC.
 class DeckComponent : public juce::Component,
                       public juce::DragAndDropTarget,
                       public juce::FileDragAndDropTarget,
@@ -31,13 +39,18 @@ public:
     std::function<std::pair<StemsState, double>()> getStemsState;
     std::function<void()> onStemsRequested;
 
+    // Titulo y artista de un archivo (de la biblioteca); sin esto, el nombre que da el deck.
+    std::function<std::pair<juce::String, juce::String> (const juce::File&)> describe;
+    // Portada: un fotograma del video cargado (o nada si es solo audio).
+    void setPoster (const juce::File& forFile, const juce::Image& image);
+
     // Controles asignables por MIDI. prefix: "deck1." o "deck2.".
     void addLearnTargets (std::vector<LearnTarget>& out, const juce::String& prefix);
 
-    // Cargar un archivo: lo usan el boton Cargar y el arrastre. Si no se asigna, deck.load().
+    // Cargar un archivo: lo usan el boton de abrir y el arrastre. Si no se asigna, deck.load().
     std::function<void (const juce::File&)> onLoadFile;
 
-    // Deck activo: el de los atajos de teclado (Espacio, C, S...). Se marca con un borde fino.
+    // Deck activo: el de los atajos de teclado (Espacio, C, S...). Se marca con su color.
     std::function<void()> onActivated;
     void setActive (bool isActive);
     // Atajos: los mismos botones de la pantalla.
@@ -63,29 +76,34 @@ private:
     void loadFile (const juce::File& file);
     void setDragHighlight (bool on) { dragHighlight = on; repaint(); }
     void updateLabels();
+    void paintWaveform (juce::Graphics& g);
     void paintBeatGrid (juce::Graphics& g);
+    void paintPoster (juce::Graphics& g);
     float timeToX (double seconds) const;
     juce::Colour accent() const;
+    void styleToggle (juce::TextButton& b, bool on, bool filled = true);
 
     Deck& deck;
     Deck& otherDeck;
     juce::String deckName;
 
-    juce::TextButton loadButton { "Cargar" };
-    juce::TextButton cueButton { "CUE" };
-    juce::TextButton playButton { "Play" };
-    juce::TextButton syncButton { "SYNC" };
-    juce::TextButton keyButton { "KEY" };
-    juce::TextButton stemsButton { "STEMS" }, vocalButton { "VOZ" }, instrumentalButton { "INSTR" };   // keylock: tempo sin cambiar el tono
+    IconButton loadButton { Icons::Glyph::folder, "Abrir un archivo en este deck" };
+    juce::TextButton cueButton { "Cue" }, playButton { "Play" }, syncButton { "Sync" }, keyButton { "KEY" };
+    juce::TextButton stemsButton { "Separar stems" }, vocalButton { "Voz" }, instrumentalButton { "Instrumental" };
     static constexpr std::array<int, 4> loopSizes { 1, 2, 4, 8 };
     std::array<juce::TextButton, 4> loopButtons;
-    juce::Label loopLabel;
-    juce::Slider tempoSlider;
-    juce::Label titleLabel, bpmLabel, timeLabel, tempoLabel;
-    juce::Rectangle<int> waveformArea;
+    CentredSlider tempoSlider { -16.0, 16.0, 0.35 };
+    EffectsRow effectsRow;
+
+    // Textos que se pintan (no son Labels: asi no roban clics ni el foco).
+    juce::String title, artist, stateText, bpmText, timeText, pitchText;
+    juce::File describedFile;
+    juce::File posterFile;
+    juce::Image poster;
+    juce::Rectangle<int> headerArea, posterArea, infoArea, waveformArea, pitchLabelArea, pitchScaleArea,
+                         loopLabelArea, stemsLabelArea, effectsLabelArea;
     std::unique_ptr<juce::FileChooser> chooser;
     bool dragHighlight = false, active = false;
-    EffectsRow effectsRow;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (DeckComponent)
 };

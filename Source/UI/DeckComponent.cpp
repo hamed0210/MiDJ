@@ -1,6 +1,7 @@
 #include "UI/DeckComponent.h"
 #include "UI/DarkLookAndFeel.h"
 #include "UI/LibraryBrowser.h"
+#include "Video/DeckVideo.h"
 
 #include <cmath>
 
@@ -8,7 +9,6 @@ namespace midj
 {
 namespace
 {
-    constexpr double tempoRangePercent = 16.0;
     const juce::Colour cueColour { 0xffffa726 };   // naranja, como en las mesas de DJ
 
     juce::String formatTime (double seconds)
@@ -29,25 +29,28 @@ DeckComponent::DeckComponent (Deck& d, Deck& other, EffectRack& effects, const j
 
     loadButton.onClick = [this] { chooseFile(); };
     cueButton.onClick = [this] { deck.cue(); };
+    cueButton.setTooltip ("CUE: vuelve al punto de inicio (tecla C en el deck activo)");
     playButton.onClick = [this]
     {
         deck.isPlaying() ? deck.pause() : deck.play();
         updateLabels();
     };
+    playButton.setTooltip ("Play / Pausa (Espacio en el deck activo)");
     syncButton.onClick = [this]
     {
         if (! deck.syncTo (otherDeck))
             juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "MiDJ",
                                                     "SYNC necesita una cancion con BPM en los dos decks.");
     };
+    syncButton.setTooltip ("Igualar el tempo y el pulso con el otro deck (tecla S)");
     keyButton.onClick = [this]
     {
         deck.setKeyLock (! deck.isKeyLocked());
         updateLabels();
     };
-    keyButton.setTooltip ("Keylock: cambia el tempo sin cambiar el tono");
+    keyButton.setTooltip ("Keylock: cambia el tempo sin cambiar el tono (tecla K)");
 
-    // Stems: STEMS pide la separacion; cuando esta lista, VOZ e INSTR encienden / apagan cada parte.
+    // Stems: "Separar stems" pide la separacion; cuando esta lista, Voz e Instrumental encienden / apagan cada parte.
     stemsButton.setTooltip ("Separar voz e instrumental con IA (en segundo plano; en este equipo tarda algo mas que la cancion)");
     stemsButton.onClick = [this] { if (onStemsRequested) onStemsRequested(); };
     vocalButton.setTooltip ("Voz encendida / apagada (apagada = instrumental)");
@@ -56,16 +59,17 @@ DeckComponent::DeckComponent (Deck& d, Deck& other, EffectRack& effects, const j
     instrumentalButton.onClick = [this] { deck.setInstrumentalOn (! deck.isInstrumentalOn()); updateLabels(); };
     for (auto* b : { &stemsButton, &vocalButton, &instrumentalButton })
         addChildComponent (b);
-    for (auto* b : { &loadButton, &cueButton, &playButton, &syncButton, &keyButton })
+    for (auto* b : { &cueButton, &playButton, &syncButton, &keyButton })
         addAndMakeVisible (b);
-    cueButton.setColour (juce::TextButton::textColourOffId, cueColour);
+    addAndMakeVisible (loadButton);
+    playButton.getProperties().set (DarkLookAndFeel::filledProperty, true);
 
     // Bucles: pulsar un tamano activa ese bucle; pulsar el activo lo quita.
     for (size_t i = 0; i < loopButtons.size(); ++i)
     {
         auto& b = loopButtons[i];
         b.setButtonText (juce::String (loopSizes[i]));
-        b.setClickingTogglesState (false);
+        b.setTooltip ("Bucle de " + juce::String (loopSizes[i]) + (loopSizes[i] == 1 ? " pulso" : " pulsos") + " (otra vez: salir)");
         b.onClick = [this, beats = loopSizes[i]]
         {
             if (deck.getLoopBeats() == beats) deck.exitLoop();
@@ -73,33 +77,17 @@ DeckComponent::DeckComponent (Deck& d, Deck& other, EffectRack& effects, const j
         };
         addAndMakeVisible (b);
     }
-    loopLabel.setText ("LOOP", juce::dontSendNotification);
-    loopLabel.setJustificationType (juce::Justification::centredRight);
-    loopLabel.setColour (juce::Label::textColourId, DarkLookAndFeel::textQuiet);
-    addAndMakeVisible (loopLabel);
 
-    // Tempo +-16 %, como el fader de pitch de un plato con rango ampliado.
-    tempoSlider.setSliderStyle (juce::Slider::LinearVertical);
-    tempoSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-    tempoSlider.setRange (-tempoRangePercent, tempoRangePercent, 0.01);
-    tempoSlider.setValue (0.0, juce::dontSendNotification);
-    tempoSlider.setDoubleClickReturnValue (true, 0.0);
+    // Pitch +-16 %, con el centro marcado y enganche cerca del 0.
+    tempoSlider.setThumbColour (accent());
+    tempoSlider.setFillColour (accent().withAlpha (0.7f));
+    tempoSlider.setTooltip ("Pitch (tempo) +-16 %. Doble clic: 0 %");
     tempoSlider.onValueChange = [this]
     {
         deck.setSpeed (1.0 + tempoSlider.getValue() / 100.0);
         updateLabels();
     };
     addAndMakeVisible (tempoSlider);
-
-    for (auto* label : { &titleLabel, &bpmLabel, &timeLabel, &tempoLabel })
-        addAndMakeVisible (label);
-    titleLabel.setFont (juce::FontOptions (20.0f, juce::Font::bold));
-    bpmLabel.setFont (juce::FontOptions (28.0f, juce::Font::bold));
-    bpmLabel.setJustificationType (juce::Justification::centredRight);
-    timeLabel.setJustificationType (juce::Justification::centredRight);
-    timeLabel.setColour (juce::Label::textColourId, DarkLookAndFeel::textQuiet);
-    tempoLabel.setJustificationType (juce::Justification::centred);
-    tempoLabel.setColour (juce::Label::textColourId, DarkLookAndFeel::textQuiet);
 
     updateLabels();
     startTimerHz (30);   // refresco de posicion y forma de onda
@@ -154,6 +142,13 @@ void DeckComponent::loadFile (const juce::File& file)
         juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "MiDJ", "No se pudo abrir el archivo.");
 }
 
+void DeckComponent::setPoster (const juce::File& forFile, const juce::Image& image)
+{
+    posterFile = forFile;
+    poster = image;
+    repaint (posterArea);
+}
+
 bool DeckComponent::isInterestedInDragSource (const SourceDetails& details)
 {
     return details.description.toString().startsWith (LibraryBrowser::dragPrefix);
@@ -177,49 +172,87 @@ void DeckComponent::filesDropped (const juce::StringArray& files, int, int)
         loadFile (juce::File (files[0]));
 }
 
+void DeckComponent::styleToggle (juce::TextButton& b, bool on, bool filled)
+{
+    b.getProperties().set (DarkLookAndFeel::filledProperty, on && filled);
+    b.setColour (juce::TextButton::buttonColourId, on ? (filled ? accent() : accent().withAlpha (0.18f)) : juce::Colours::transparentBlack);
+    b.setColour (juce::TextButton::textColourOffId, on ? (filled ? DarkLookAndFeel::background : DarkLookAndFeel::text) : DarkLookAndFeel::textQuiet);
+    b.setColour (juce::ComboBox::outlineColourId, on ? accent() : DarkLookAndFeel::line);
+}
+
 void DeckComponent::updateLabels()
 {
     const bool hasTrack = deck.hasTrack();
-    titleLabel.setText (deckName + "   " + (deck.isLoading() ? juce::String ("Cargando...")
-                                           : hasTrack ? deck.getTrackName() : juce::String ("Sin cancion")),
-                        juce::dontSendNotification);
+    const auto file = deck.getLoadedFile();
 
+    // Titulo y artista: se piden una vez por archivo (la biblioteca va a disco).
+    if (file != describedFile || deck.isLoading())
+    {
+        describedFile = deck.isLoading() ? juce::File() : file;
+        title = deck.getTrackName();
+        artist = {};
+        if (describe && hasTrack)
+        {
+            const auto [t, a] = describe (file);
+            if (t.isNotEmpty())
+            {
+                title = t;
+                artist = a;
+            }
+        }
+    }
+    juce::String newState = deck.isLoading() ? "cargando..." : ! hasTrack ? "vacio" : deck.isPlaying() ? "sonando" : "en pausa";
     const double bpm = deck.getCurrentBpm();
-    bpmLabel.setText (bpm > 0.0 ? juce::String (bpm, 2) + " BPM" : juce::String ("--- BPM"), juce::dontSendNotification);
-
-    timeLabel.setText (formatTime (deck.getPositionSeconds()) + " / " + formatTime (deck.getLengthSeconds()),
-                       juce::dontSendNotification);
+    juce::String newBpm = hasTrack && bpm > 0.0 ? juce::String (bpm, 1) : juce::String ("---");
+    juce::String newTime = formatTime (deck.getPositionSeconds()) + " / " + formatTime (deck.getLengthSeconds());
 
     // El fader sigue a la velocidad real (SYNC la cambia), salvo mientras se arrastra.
     const double percent = (deck.getSpeed() - 1.0) * 100.0;
     if (! tempoSlider.isMouseButtonDown())
-        tempoSlider.setValue (percent, juce::dontSendNotification);
-    tempoLabel.setText ((percent >= 0.0 ? "+" : "") + juce::String (percent, 2) + " %", juce::dontSendNotification);
+        tempoSlider.setValue (std::abs (percent) < 0.005 ? 0.0 : percent, juce::dontSendNotification);
+    const double shown = tempoSlider.getValue();
+    juce::String newPitch = (shown >= 0.0 ? "+" : "") + juce::String (shown, 2) + " %";
 
-    playButton.setButtonText (deck.isPlaying() ? "Pausa" : "Play");
+    if (newState != stateText || newBpm != bpmText || newTime != timeText)
+    {
+        stateText = newState;
+        bpmText = newBpm;
+        timeText = newTime;
+        repaint (headerArea);
+        repaint (infoArea);
+    }
+    if (newPitch != pitchText)
+    {
+        pitchText = newPitch;
+        repaint (pitchLabelArea);
+        repaint (pitchScaleArea);
+    }
 
-    // Stems: botones VOZ / INSTR si ya estan; si no, STEMS con el estado de la separacion.
+    const bool playing = deck.isPlaying();
+    playButton.setButtonText (playing ? "Pausa" : "Play");
+    playButton.getProperties().set (DarkLookAndFeel::filledProperty, playing);
+    playButton.setColour (juce::TextButton::buttonColourId, playing ? accent() : juce::Colours::transparentBlack);
+    playButton.setColour (juce::TextButton::textColourOffId, playing ? DarkLookAndFeel::background : accent());
+    playButton.setColour (juce::ComboBox::outlineColourId, accent());
+
+    // Stems: Voz / Instrumental si ya estan; si no, "Separar stems" con el estado de la separacion.
     const bool stems = deck.hasStems();
     vocalButton.setVisible (stems);
     instrumentalButton.setVisible (stems);
-    stemsButton.setVisible (! stems && hasTrack);
-    for (auto [button, on] : { std::pair<juce::TextButton*, bool> { &vocalButton, deck.isVocalsOn() },
-                               std::pair<juce::TextButton*, bool> { &instrumentalButton, deck.isInstrumentalOn() } })
-        button->setColour (juce::TextButton::buttonColourId, on ? accent().withAlpha (0.6f) : DarkLookAndFeel::panel.brighter (0.15f));
-    if (! stems && getStemsState)
+    stemsButton.setVisible (! stems);
+    styleToggle (vocalButton, deck.isVocalsOn(), false);
+    styleToggle (instrumentalButton, deck.isInstrumentalOn(), false);
+    if (! stems)
     {
-        const auto [state, progress] = getStemsState();
-        stemsButton.setEnabled (state == StemsState::none || state == StemsState::failed);
-        stemsButton.setButtonText (state == StemsState::working ? "STEMS " + juce::String (juce::roundToInt (progress * 100.0)) + " %"
-                                   : state == StemsState::queued ? juce::String ("STEMS...")
-                                   : state == StemsState::failed ? juce::String ("STEMS (error)") : juce::String ("STEMS"));
+        auto [state, progress] = getStemsState ? getStemsState() : std::pair<StemsState, double> { StemsState::none, 0.0 };
+        stemsButton.setEnabled (hasTrack && (state == StemsState::none || state == StemsState::failed));
+        stemsButton.setButtonText (state == StemsState::working ? "Separando " + juce::String (juce::roundToInt (progress * 100.0)) + " %"
+                                   : state == StemsState::queued ? juce::String ("En cola...")
+                                   : state == StemsState::failed ? juce::String ("Error: reintentar") : juce::String ("Separar stems"));
     }
-    keyButton.setColour (juce::TextButton::buttonColourId,
-                         deck.isKeyLocked() ? accent().withAlpha (0.6f) : DarkLookAndFeel::panel.brighter (0.15f));
+    styleToggle (keyButton, deck.isKeyLocked());
     for (size_t i = 0; i < loopButtons.size(); ++i)
-        loopButtons[i].setColour (juce::TextButton::buttonColourId,
-                                  deck.getLoopBeats() == loopSizes[i] ? accent().withAlpha (0.6f)
-                                                                      : DarkLookAndFeel::panel.brighter (0.15f));
+        styleToggle (loopButtons[i], deck.getLoopBeats() == loopSizes[i]);
 }
 
 void DeckComponent::changeListenerCallback (juce::ChangeBroadcaster*)
@@ -259,31 +292,17 @@ void DeckComponent::paintBeatGrid (juce::Graphics& g)
         if (t > length)
             break;
         const bool barStart = beat % 4 == 0;
-        g.setColour (DarkLookAndFeel::text.withAlpha (barStart ? 0.35f : 0.12f));
+        g.setColour (DarkLookAndFeel::text.withAlpha (barStart ? 0.22f : 0.08f));
         g.drawVerticalLine ((int) timeToX (t), top, bottom);
     }
 }
 
-void DeckComponent::paint (juce::Graphics& g)
+void DeckComponent::paintWaveform (juce::Graphics& g)
 {
-    g.setColour (DarkLookAndFeel::panel);
-    g.fillRoundedRectangle (getLocalBounds().toFloat(), 8.0f);
-    if (active && ! dragHighlight)   // el deck activo (el de los atajos de teclado): marco fino
-    {
-        g.setColour (accent().withAlpha (0.7f));
-        g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (1.0f), 8.0f, 1.5f);
-    }
-    if (dragHighlight)   // se esta arrastrando una cancion encima: marco del color del deck
-    {
-        g.setColour (accent());
-        g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (1.5f), 8.0f, 3.0f);
-    }
-
     g.setColour (DarkLookAndFeel::background);
-    g.fillRect (waveformArea);
+    g.fillRoundedRectangle (waveformArea.toFloat(), 6.0f);
     if (! deck.hasTrack())
         return;
-
     const auto top = (float) waveformArea.getY(), bottom = (float) waveformArea.getBottom();
 
     // Zona del bucle, detras de la forma de onda.
@@ -293,14 +312,24 @@ void DeckComponent::paint (juce::Graphics& g)
         g.setColour (accent().withAlpha (0.18f));
         g.fillRect (juce::Rectangle<float> (x0, top, juce::jmax (2.0f, x1 - x0), bottom - top));
     }
-
     paintBeatGrid (g);
 
+    // Lo ya sonado, apagado; lo que falta, del color del deck.
+    const float px = timeToX (deck.getPositionSeconds());
     auto& thumb = deck.getThumbnail();
     if (thumb.getTotalLength() > 0.0)
     {
-        g.setColour (accent().withAlpha (0.85f));
-        thumb.drawChannel (g, waveformArea.reduced (2), 0.0, thumb.getTotalLength(), 0, 1.0f);   // una sola onda (no una por canal)
+        const auto area = waveformArea.reduced (2, 3);
+        {
+            juce::Graphics::ScopedSaveState s (g);
+            g.reduceClipRegion (area.withRight ((int) px));
+            g.setColour (accent().withAlpha (0.35f));
+            thumb.drawChannel (g, area, 0.0, thumb.getTotalLength(), 0, 1.0f);   // una sola onda (no una por canal)
+        }
+        juce::Graphics::ScopedSaveState s (g);
+        g.reduceClipRegion (area.withLeft ((int) px));
+        g.setColour (accent());
+        thumb.drawChannel (g, area, 0.0, thumb.getTotalLength(), 0, 1.0f);
     }
 
     // Punto CUE: linea y triangulo naranjas arriba.
@@ -308,60 +337,185 @@ void DeckComponent::paint (juce::Graphics& g)
     g.setColour (cueColour);
     g.drawVerticalLine ((int) cx, top, bottom);
     juce::Path tri;
-    tri.addTriangle (cx - 6.0f, top, cx + 6.0f, top, cx, top + 9.0f);
+    tri.addTriangle (cx - 5.0f, top, cx + 5.0f, top, cx, top + 7.0f);
     g.fillPath (tri);
 
     // Cabezal de reproduccion.
-    const float px = timeToX (deck.getPositionSeconds());
     g.setColour (DarkLookAndFeel::text);
-    g.drawLine (px, top, px, bottom, 2.0f);
+    g.fillRect (juce::Rectangle<float> (px - 1.0f, top - 2.0f, 2.0f, bottom - top + 4.0f));
+}
+
+void DeckComponent::paintPoster (juce::Graphics& g)
+{
+    const auto r = posterArea.toFloat();
+    juce::Path shape;
+    shape.addRoundedRectangle (r, 8.0f);
+    const bool video = deck.hasTrack() && DeckVideo::isVideoFile (deck.getLoadedFile());
+    const bool hasPoster = poster.isValid() && posterFile == deck.getLoadedFile();
+    {
+        juce::Graphics::ScopedSaveState s (g);
+        g.reduceClipRegion (shape);
+        g.setColour (video ? accent().withAlpha (0.12f).overlaidWith (DarkLookAndFeel::raised.withAlpha (0.6f)) : DarkLookAndFeel::raised);
+        g.fillRect (r);
+        if (hasPoster)
+            g.drawImage (poster, r, juce::RectanglePlacement::centred | juce::RectanglePlacement::fillDestination);
+        else
+        {
+            g.setColour (DarkLookAndFeel::textQuiet);
+            g.setFont (DarkLookAndFeel::sans (12.0f));
+            g.drawFittedText (! deck.hasTrack() ? juce::String ("Carga una cancion") : video ? juce::String ("Video") : juce::String ("Solo audio"),
+                              posterArea.reduced (6), juce::Justification::centred, 2);
+        }
+    }
+    if (deck.hasTrack())
+    {
+        // Etiqueta abajo a la izquierda: video o audio.
+        const auto badge = juce::Rectangle<float> (r.getX() + 6.0f, r.getBottom() - 24.0f, video ? 50.0f : 48.0f, 18.0f);
+        g.setColour (DarkLookAndFeel::background.withAlpha (0.85f));
+        g.fillRoundedRectangle (badge, 4.0f);
+        Icons::draw (g, badge.withWidth (18.0f).reduced (3.0f), video ? Icons::Glyph::film : Icons::Glyph::note, DarkLookAndFeel::text);
+        g.setColour (DarkLookAndFeel::text);
+        g.setFont (DarkLookAndFeel::sans (11.0f));
+        g.drawText (video ? "video" : "audio", badge.withTrimmedLeft (18.0f), juce::Justification::centredLeft, false);
+    }
+}
+
+void DeckComponent::paint (juce::Graphics& g)
+{
+    const auto card = getLocalBounds().toFloat();
+    g.setColour (DarkLookAndFeel::panel);
+    g.fillRoundedRectangle (card, 14.0f);
+    if (dragHighlight)   // se esta arrastrando una cancion encima
+    {
+        g.setColour (accent());
+        g.drawRoundedRectangle (card.reduced (1.5f), 14.0f, 3.0f);
+    }
+    else
+    {
+        // Deck activo (el de los atajos) o sonando: marco del color del deck.
+        g.setColour (active || deck.isPlaying() ? accent().withAlpha (active ? 1.0f : 0.5f) : DarkLookAndFeel::line.withAlpha (0.6f));
+        g.drawRoundedRectangle (card.reduced (0.5f), 14.0f, 1.0f);
+    }
+
+    // Cabecera: DECK A y su estado.
+    auto header = headerArea;
+    g.setColour (accent());
+    g.setFont (DarkLookAndFeel::sans (12.0f, true).withKerningFactor (0.08f));
+    g.drawText ("DECK " + deckName, header, juce::Justification::centredLeft, false);
+    g.setColour (DarkLookAndFeel::textQuiet);
+    g.setFont (DarkLookAndFeel::mono (12.0f));
+    g.drawText (stateText, header.withTrimmedRight (loadButton.getWidth() + 8), juce::Justification::centredRight, false);
+
+    paintPoster (g);
+
+    // Titulo, artista, BPM y tiempo.
+    auto info = infoArea;
+    auto bottomRow = info.removeFromBottom (34);
+    g.setColour (DarkLookAndFeel::text);
+    g.setFont (DarkLookAndFeel::sans (16.0f, true));
+    g.drawText (deck.isLoading() ? juce::String ("Cargando...") : deck.hasTrack() ? title : juce::String ("Sin cancion"),
+                info.removeFromTop (22), juce::Justification::centredLeft, true);
+    g.setColour (DarkLookAndFeel::textQuiet);
+    g.setFont (DarkLookAndFeel::sans (13.0f));
+    g.drawText (deck.hasTrack() ? artist : juce::String ("Arrastrala o pulsa ") + deckName + " en la biblioteca",
+                info.removeFromTop (18), juce::Justification::centredLeft, true);
+    g.setColour (DarkLookAndFeel::text);
+    g.setFont (DarkLookAndFeel::mono (28.0f, true));
+    const int bpmWidth = juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), bpmText) + 4;
+    g.drawText (bpmText, bottomRow.removeFromLeft (bpmWidth), juce::Justification::bottomLeft, false);
+    g.setColour (DarkLookAndFeel::textQuiet);
+    g.setFont (DarkLookAndFeel::sans (12.0f));
+    g.drawText ("BPM", bottomRow.removeFromLeft (34).withTrimmedBottom (4), juce::Justification::bottomLeft, false);
+    g.setFont (DarkLookAndFeel::mono (12.0f));
+    g.drawText (timeText, bottomRow.withTrimmedBottom (4), juce::Justification::bottomRight, false);
+
+    paintWaveform (g);
+
+    // Pitch: nombre, valor (verde en 0) y escala con el 0 en el centro del fader.
+    const bool centred = tempoSlider.isAtCentre();
+    g.setFont (DarkLookAndFeel::sans (12.0f));
+    g.setColour (DarkLookAndFeel::textQuiet);
+    g.drawText ("Pitch", pitchLabelArea, juce::Justification::centredLeft, false);
+    g.setFont (DarkLookAndFeel::mono (12.0f, centred));
+    g.setColour (centred ? DarkLookAndFeel::good : DarkLookAndFeel::text);
+    g.drawText (pitchText, pitchLabelArea, juce::Justification::centredRight, false);
+    const auto scale = pitchScaleArea.withTrimmedLeft (CentredSlider::thumbWidth / 2 - 6).withTrimmedRight (CentredSlider::thumbWidth / 2 - 8);
+    g.setFont (DarkLookAndFeel::mono (10.0f));
+    g.setColour (DarkLookAndFeel::textFaint);
+    g.drawText ("-16", scale, juce::Justification::centredLeft, false);
+    g.drawText ("+16", scale, juce::Justification::centredRight, false);
+    g.setColour (centred ? DarkLookAndFeel::good : DarkLookAndFeel::textFaint);
+    g.drawText ("0", scale, juce::Justification::centred, false);
+
+    g.setFont (DarkLookAndFeel::sans (12.0f));
+    g.setColour (DarkLookAndFeel::textQuiet);
+    g.drawText ("Loop", loopLabelArea, juce::Justification::centredLeft, false);
+    g.drawText ("Stems", stemsLabelArea, juce::Justification::centredLeft, false);
 }
 
 void DeckComponent::resized()
 {
-    auto area = getLocalBounds().reduced (12);
-    auto header = area.removeFromTop (36);
-    bpmLabel.setBounds (header.removeFromRight (200));
-    titleLabel.setBounds (header);
-    timeLabel.setBounds (area.removeFromTop (20));
-    area.removeFromTop (4);
+    auto area = getLocalBounds().reduced (14, 12);
+    headerArea = area.removeFromTop (22);
+    loadButton.setBounds (headerArea.withLeft (headerArea.getRight() - 28));
+    area.removeFromTop (10);
 
-    auto right = area.removeFromRight (70);
-    tempoLabel.setBounds (right.removeFromBottom (20));
-    keyButton.setBounds (right.removeFromBottom (30).reduced (6, 2));
-    right.removeFromBottom (4);
-    tempoSlider.setBounds (right);
-
-    // Fila inferior: CUE, Play, SYNC y Cargar a la derecha.
+    // Transporte abajo del todo.
     auto transport = area.removeFromBottom (44);
-    const int bw = 86;
-    cueButton.setBounds (transport.removeFromLeft (bw).reduced (0, 4));
-    transport.removeFromLeft (6);
-    playButton.setBounds (transport.removeFromLeft (bw).reduced (0, 4));
-    transport.removeFromLeft (6);
-    syncButton.setBounds (transport.removeFromLeft (bw).reduced (0, 4));
-    loadButton.setBounds (transport.removeFromRight (bw).reduced (0, 4).withTrimmedRight (8));
+    const int bw = (transport.getWidth() - 16) / 3;
+    playButton.setBounds (transport.removeFromLeft (bw));
+    transport.removeFromLeft (8);
+    cueButton.setBounds (transport.removeFromLeft (bw));
+    transport.removeFromLeft (8);
+    syncButton.setBounds (transport);
+    area.removeFromBottom (10);
 
-    // Fila de bucles y, encima, la de efectos.
-    area.removeFromBottom (4);
-    auto loops = area.removeFromBottom (30);
-    loopLabel.setBounds (loops.removeFromLeft (44));
-    loops.removeFromLeft (6);
+    effectsRow.setBounds (area.removeFromBottom (40));
+    area.removeFromBottom (8);
+
+    // Bucles y stems en una fila.
+    auto row = area.removeFromBottom (32);
+    loopLabelArea = row.removeFromLeft (38);
     for (auto& b : loopButtons)
     {
-        b.setBounds (loops.removeFromLeft (48).reduced (0, 2));
-        loops.removeFromLeft (6);
+        b.setBounds (row.removeFromLeft (34));
+        row.removeFromLeft (4);
     }
-    // A la derecha de los bucles: los stems.
-    auto stemsArea = loops.removeFromRight (juce::jmin (170, loops.getWidth())).withTrimmedRight (8);
-    stemsButton.setBounds (stemsArea.reduced (0, 2));
-    vocalButton.setBounds (stemsArea.removeFromLeft (stemsArea.getWidth() / 2).reduced (0, 2).withTrimmedRight (3));
-    instrumentalButton.setBounds (stemsArea.reduced (0, 2).withTrimmedLeft (3));
-    area.removeFromBottom (2);
-    effectsRow.setBounds (area.removeFromBottom (36));
+    row.removeFromLeft (8);
+    stemsLabelArea = row.removeFromLeft (46);
+    stemsButton.setBounds (row);
+    vocalButton.setBounds (row.removeFromLeft (row.getWidth() * 2 / 5).withTrimmedRight (3));
+    instrumentalButton.setBounds (row.withTrimmedLeft (3));
+    area.removeFromBottom (10);
 
-    area.removeFromBottom (8);
-    waveformArea = area.reduced (0, 4).withTrimmedRight (8);
+    // Pitch: nombre y valor, fader (con KEY a la derecha) y escala.
+    auto pitch = area.removeFromBottom (58);
+    auto key = pitch.removeFromRight (52);
+    keyButton.setBounds (key.withSizeKeepingCentre (48, 30).withY (pitch.getY() + 18));
+    pitch.removeFromRight (10);
+    pitchLabelArea = pitch.removeFromTop (16);
+    pitchScaleArea = pitch.removeFromBottom (12);
+    tempoSlider.setBounds (pitch);
+    area.removeFromBottom (10);
+
+    // Portada e informacion: lado a lado si falta alto; si sobra, la portada a todo lo ancho.
+    const bool bigPoster = area.getHeight() >= 300;
+    if (bigPoster)
+    {
+        const int h = juce::jmin (area.getWidth() * 9 / 16, area.getHeight() - 76 - 10 - 48);
+        posterArea = area.removeFromTop (h).withSizeKeepingCentre (juce::jmin (area.getWidth(), h * 16 / 9), h);
+        area.removeFromTop (10);
+        infoArea = area.removeFromTop (76);
+    }
+    else
+    {
+        auto top = area.removeFromTop (76);
+        posterArea = top.removeFromLeft (76 * 16 / 9);
+        top.removeFromLeft (12);
+        infoArea = top;
+    }
+    area.removeFromTop (10);
+    waveformArea = area.withHeight (juce::jmax (30, area.getHeight()));
 }
 
 void DeckComponent::mouseDown (const juce::MouseEvent& e)

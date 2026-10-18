@@ -6,10 +6,10 @@ namespace midj
 {
 namespace
 {
-    // Un color por pad, como los pads de una controladora.
+    // Un color por pad (los mismos tonos que el resto de la interfaz).
     const std::array<juce::Colour, Sampler::numPads> padColours {
-        juce::Colour (0xff2f9be0), juce::Colour (0xff26a69a), juce::Colour (0xff9ccc65), juce::Colour (0xffffca28),
-        juce::Colour (0xffffa726), juce::Colour (0xffef5350), juce::Colour (0xffab47bc), juce::Colour (0xff5c6bc0) };
+        juce::Colour (0xff3ea6ff), juce::Colour (0xffffb020), juce::Colour (0xff9b8cff), juce::Colour (0xff3ddc97),
+        juce::Colour (0xffff6b8b), juce::Colour (0xff4dd0e1), juce::Colour (0xffe8c547), juce::Colour (0xffc58cf5) };
 
     bool isSampleFile (const juce::File& f)
     {
@@ -31,34 +31,58 @@ public:
         const auto colour = padColours[(size_t) index];
         const bool playing = smp.isPlaying (index);
         const bool recording = smp.getRecordingPad() == index;
-        auto r = getLocalBounds().toFloat().reduced (2.0f);
+        auto r = getLocalBounds().toFloat().reduced (1.0f);
 
-        g.setColour (sample == nullptr ? DarkLookAndFeel::background
-                                       : colour.withAlpha (playing ? 0.85f : 0.28f));
-        g.fillRoundedRectangle (r, 5.0f);
-        g.setColour (dragOver ? juce::Colours::white : colour.withAlpha (sample == nullptr ? 0.35f : 0.9f));
-        g.drawRoundedRectangle (r, 5.0f, dragOver ? 2.5f : 1.2f);
+        // Vacio: borde de rayas; con sonido: borde de su color; sonando: lleno de su color.
+        g.setColour (playing ? colour : DarkLookAndFeel::raised);
+        g.fillRoundedRectangle (r, 10.0f);
+        if (dragOver)
+        {
+            g.setColour (juce::Colours::white);
+            g.drawRoundedRectangle (r, 10.0f, 2.0f);
+        }
+        else if (sample == nullptr && ! recording)
+        {
+            juce::Path outline, dashed;
+            outline.addRoundedRectangle (r.reduced (0.5f), 10.0f);
+            const float dashes[] = { 4.0f, 3.0f };
+            juce::PathStrokeType (1.0f).createDashedStroke (dashed, outline, dashes, 2);
+            g.setColour (DarkLookAndFeel::line.brighter (0.25f));
+            g.fillPath (dashed);
+        }
+        else
+        {
+            g.setColour (colour.withAlpha (0.9f));
+            g.drawRoundedRectangle (r.reduced (0.5f), 10.0f, 1.0f);
+        }
 
         // Barra de avance abajo.
         if (playing)
         {
-            g.setColour (juce::Colours::white.withAlpha (0.8f));
-            g.fillRect (r.removeFromBottom (3.0f).withWidth (r.getWidth() * (float) smp.getProgress (index)));
+            g.setColour (DarkLookAndFeel::background.withAlpha (0.6f));
+            g.fillRect (r.reduced (8.0f, 0.0f).removeFromBottom (3.0f).withWidth ((r.getWidth() - 16.0f) * (float) smp.getProgress (index)));
         }
 
-        auto text = getLocalBounds().reduced (6, 4);
-        g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
-        g.setColour (DarkLookAndFeel::textQuiet);
-        g.drawText (juce::String (index + 1), text.removeFromTop (12), juce::Justification::topLeft);
+        auto text = getLocalBounds().reduced (8, 6);
+        g.setFont (DarkLookAndFeel::mono (11.0f));
+        g.setColour (playing ? DarkLookAndFeel::background : DarkLookAndFeel::textQuiet);
+        // Pads bajos: numero y nombre en una sola linea.
+        const bool oneLine = text.getHeight() < 30;
+        g.drawText (juce::String (index + 1), oneLine ? text.removeFromLeft (14) : text.removeFromTop (12), oneLine ? juce::Justification::centredLeft : juce::Justification::topLeft);
         if (recording)
         {
-            g.setColour (juce::Colour (0xffef5350));
-            g.setFont (juce::FontOptions (14.0f, juce::Font::bold));
-            g.drawText ("REC", text, juce::Justification::centred);
+            g.setColour (DarkLookAndFeel::danger);
+            g.setFont (DarkLookAndFeel::sans (13.0f, true));
+            g.drawText ("REC", text, juce::Justification::centredLeft);
             return;
         }
         if (sample == nullptr)
+        {
+            g.setColour (DarkLookAndFeel::textFaint);
+            g.setFont (DarkLookAndFeel::sans (12.0f, true));
+            g.drawText ("Vacio", text, oneLine ? juce::Justification::centredLeft : juce::Justification::bottomLeft);
             return;
+        }
 
         // Indicadores de modo en una linea pequena.
         juce::StringArray tags;
@@ -75,11 +99,11 @@ public:
             case Sampler::Trigger::stutter: tags.add ("stut"); break;
             default: break;
         }
-        g.setFont (juce::FontOptions (10.0f));
-        g.drawText (tags.joinIntoString (" "), text.removeFromBottom (12), juce::Justification::bottomRight);
-        g.setColour (playing ? juce::Colours::black : DarkLookAndFeel::text);
-        g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
-        g.drawFittedText (sample->name, text, juce::Justification::centred, 2);
+        g.setFont (DarkLookAndFeel::sans (10.0f));
+        g.drawText (tags.joinIntoString (" "), getLocalBounds().reduced (8, 6).removeFromTop (12), juce::Justification::topRight);
+        g.setColour (playing ? DarkLookAndFeel::background : DarkLookAndFeel::text);
+        g.setFont (DarkLookAndFeel::sans (12.0f, true));
+        g.drawFittedText (sample->name, text, oneLine ? juce::Justification::centredLeft : juce::Justification::bottomLeft, oneLine ? 1 : 2);
     }
 
     void mouseDown (const juce::MouseEvent& e) override
@@ -129,10 +153,6 @@ private:
 
 SamplerPanel::SamplerPanel (Sampler& s, juce::AudioFormatManager& f) : sampler (s), formats (f)
 {
-    title.setText ("SAMPLER", juce::dontSendNotification);
-    title.setFont (juce::FontOptions (13.0f, juce::Font::bold));
-    title.setColour (juce::Label::textColourId, DarkLookAndFeel::textQuiet);
-    addAndMakeVisible (title);
 
     volume.setSliderStyle (juce::Slider::LinearHorizontal);
     volume.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
@@ -266,36 +286,31 @@ void SamplerPanel::addLearnTargets (std::vector<LearnTarget>& out)
 void SamplerPanel::paint (juce::Graphics& g)
 {
     g.setColour (DarkLookAndFeel::panel);
-    g.fillRoundedRectangle (getLocalBounds().toFloat(), 8.0f);
+    g.fillRoundedRectangle (getLocalBounds().toFloat(), 14.0f);
+    g.setColour (DarkLookAndFeel::text);
+    g.setFont (DarkLookAndFeel::sans (14.0f, true));
+    g.drawText ("Sampler", titleArea, juce::Justification::centredLeft, false);
+    g.setColour (DarkLookAndFeel::textQuiet);
+    g.setFont (DarkLookAndFeel::sans (12.0f));
+    g.drawText ("Teclas 1-8", titleArea.withTrimmedLeft (70), juce::Justification::centredLeft, false);
+    g.drawText ("Volumen", volumeLabelArea, juce::Justification::centredRight, false);
 }
 
 void SamplerPanel::resized()
 {
-    auto area = getLocalBounds().reduced (8);
-    if (area.getWidth() > area.getHeight() * 4)
-    {
-        // Ancho y bajo (en la fila del medio): nombre, volumen y STOP a la izquierda y los 8 pads en fila.
-        auto side = area.removeFromLeft (120);
-        auto top = side.removeFromTop (side.getHeight() / 2);
-        title.setBounds (top.removeFromLeft (70));
-        stopButton.setBounds (top.reduced (0, 2));
-        volume.setBounds (side);
-        area.removeFromLeft (8);
-        const int w = area.getWidth() / Sampler::numPads;
-        for (int i = 0; i < Sampler::numPads; ++i)
-            pads[(size_t) i]->setBounds (area.getX() + i * w, area.getY(), w, area.getHeight());
-        return;
-    }
+    // Arriba el nombre, el volumen y "Parar todo"; debajo los 8 pads en fila (o en 2 filas si es estrecho).
+    auto area = getLocalBounds().reduced (14, 10);
     auto header = area.removeFromTop (28);
-    title.setBounds (header.removeFromLeft (76));
-    stopButton.setBounds (header.removeFromRight (56).reduced (0, 2));
-    header.removeFromRight (6);
-    volume.setBounds (header);
-    area.removeFromTop (6);
+    stopButton.setBounds (header.removeFromRight (92));
+    header.removeFromRight (10);
+    volume.setBounds (header.removeFromRight (juce::jmin (130, header.getWidth() / 3)));
+    volumeLabelArea = header.removeFromRight (60);
+    titleArea = header;
+    area.removeFromTop (8);
 
-    const int cols = 4, rows = Sampler::numPads / cols;
-    const int w = area.getWidth() / cols, h = area.getHeight() / rows;
+    const int cols = area.getWidth() >= 8 * 56 ? 8 : 4, rows = Sampler::numPads / cols, gap = 8;
+    const int w = (area.getWidth() - gap * (cols - 1)) / cols, h = (area.getHeight() - gap * (rows - 1)) / rows;
     for (int i = 0; i < Sampler::numPads; ++i)
-        pads[(size_t) i]->setBounds (area.getX() + (i % cols) * w, area.getY() + (i / cols) * h, w, h);
+        pads[(size_t) i]->setBounds (area.getX() + (i % cols) * (w + gap), area.getY() + (i / cols) * (h + gap), w, h);
 }
 }

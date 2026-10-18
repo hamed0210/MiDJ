@@ -8,35 +8,33 @@ namespace midj
 {
 AutomixPanel::AutomixPanel (Automix& a, Library& l) : automix (a), library (l)
 {
-    title.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+    title.setFont (DarkLookAndFeel::sans (14.0f, true));
     addAndMakeVisible (title);
     status.setColour (juce::Label::textColourId, DarkLookAndFeel::textQuiet);
-    status.setFont (juce::FontOptions (12.0f));
+    status.setFont (DarkLookAndFeel::sans (12.0f));
     status.setJustificationType (juce::Justification::topLeft);
     status.setMinimumHorizontalScale (1.0f);
     addAndMakeVisible (status);
 
     list.setModel (this);
-    list.setRowHeight (24);
-    list.setColour (juce::ListBox::backgroundColourId, DarkLookAndFeel::background);
+    list.setRowHeight (40);
+    list.setColour (juce::ListBox::backgroundColourId, DarkLookAndFeel::panel);
     addAndMakeVisible (list);
 
     onButton.setTooltip ("Encender / apagar el automix");
     onButton.onClick = [this] { automix.setEnabled (! automix.isEnabled()); updateStatus(); };
-    mixNowButton.setTooltip ("Empezar ya la transicion a la siguiente");
+    mixNowButton.setBordered (true, DarkLookAndFeel::text);
     mixNowButton.onClick = [this] { automix.mixNow(); };
-    skipButton.setTooltip ("Saltar la siguiente cancion");
+    skipButton.setBordered (true);
     skipButton.onClick = [this] { automix.skip(); };
-    removeButton.setTooltip ("Quitar de la lista la cancion elegida (Supr)");
-    removeButton.onClick = [this] { if (list.getSelectedRow() >= 0) automix.remove (list.getSelectedRow()); };
-    clearButton.setTooltip ("Vaciar la lista");
+    clearButton.setBordered (true);
     clearButton.onClick = [this] { automix.clearQueue(); };
     for (int s : { 2, 4, 6, 8, 12, 16 })
         fadeBox.addItem ("Fundido " + juce::String (s) + " s", s);
     fadeBox.setTooltip ("Duracion de las transiciones con fundido (las de a tempo duran 16 pulsos)");
     fadeBox.setSelectedId ((int) automix.getFadeSeconds(), juce::dontSendNotification);
     fadeBox.onChange = [this] { automix.setFadeSeconds (fadeBox.getSelectedId()); };
-    for (auto* c : std::initializer_list<juce::Component*> { &onButton, &mixNowButton, &skipButton, &removeButton, &clearButton, &fadeBox })
+    for (auto* c : std::initializer_list<juce::Component*> { &onButton, &mixNowButton, &skipButton, &clearButton, &fadeBox })
         addAndMakeVisible (c);
 
     automix.addChangeListener (this);
@@ -61,11 +59,14 @@ void AutomixPanel::updateStatus()
     status.setText (automix.getStatusText(), juce::dontSendNotification);
     const bool on = automix.isEnabled();
     onButton.setButtonText (on ? "Encendido" : "Apagado");
-    onButton.setColour (juce::TextButton::buttonColourId, on ? juce::Colour (0xff4caf50).withAlpha (0.8f) : DarkLookAndFeel::panel.brighter (0.15f));
+    onButton.getProperties().set (DarkLookAndFeel::filledProperty, on);
+    onButton.setColour (juce::TextButton::buttonColourId, on ? DarkLookAndFeel::good : juce::Colours::transparentBlack);
+    onButton.setColour (juce::TextButton::textColourOffId, on ? DarkLookAndFeel::background : DarkLookAndFeel::text);
     const bool canMix = on && automix.getState() == Automix::State::playing && automix.getNext() != nullptr;
     mixNowButton.setEnabled (canMix);
     skipButton.setEnabled (canMix);
-    title.setText ("AUTOMIX (" + juce::String ((int) automix.getQueue().size()) + ")", juce::dontSendNotification);
+    clearButton.setEnabled (! automix.getQueue().empty());
+    title.setText ("Automix  " + juce::String ((int) automix.getQueue().size()), juce::dontSendNotification);
 }
 
 void AutomixPanel::changeListenerCallback (juce::ChangeBroadcaster*)
@@ -86,27 +87,44 @@ void AutomixPanel::paintListBoxItem (int row, juce::Graphics& g, int w, int h, b
     if (! juce::isPositiveAndBelow (row, (int) queue.size()))
         return;
     const auto& item = queue[(size_t) row];
-    if (selected)
-        g.fillAll (DarkLookAndFeel::accentA.withAlpha (0.35f));
-    else if (row % 2 == 1)
-        g.fillAll (DarkLookAndFeel::panel.withAlpha (0.6f));
-    auto r = juce::Rectangle<float> (0.0f, 0.0f, (float) w, (float) h);
-    Icons::drawFileType (g, r.removeFromLeft (24.0f).reduced (4.0f), DeckVideo::isVideoFile (item.file));
-    g.setFont (juce::FontOptions (13.0f));
-    if (item.bpm > 0.0)
+    auto r = juce::Rectangle<float> (0.0f, 0.0f, (float) w, (float) h).reduced (0.0f, 2.0f);
+    if (selected || row == 0)
     {
-        g.setColour (DarkLookAndFeel::textQuiet);
-        g.drawText (juce::String (item.bpm, 0), r.removeFromRight (34.0f), juce::Justification::centredRight, false);
+        g.setColour (selected ? DarkLookAndFeel::selection : DarkLookAndFeel::raised);
+        g.fillRoundedRectangle (r, 8.0f);
     }
+    r.reduce (8.0f, 0.0f);
+    g.setColour (DarkLookAndFeel::textQuiet);
+    g.setFont (DarkLookAndFeel::mono (12.0f));
+    g.drawText (juce::String (row + 1), r.removeFromLeft (18.0f), juce::Justification::centredLeft, false);
+    Icons::drawFileType (g, r.removeFromLeft (18.0f).reduced (1.0f, 10.0f), DeckVideo::isVideoFile (item.file));
+    r.removeFromLeft (6.0f);
+    Icons::draw (g, r.removeFromRight (16.0f).withSizeKeepingCentre (12.0f, 12.0f), Icons::Glyph::close, DarkLookAndFeel::textQuiet);   // quitar
+    r.removeFromRight (6.0f);
+
+    const auto name = item.title.isNotEmpty() ? item.title : item.file.getFileNameWithoutExtension();
     g.setColour (DarkLookAndFeel::text);
-    const auto name = item.artist.isNotEmpty() ? item.artist + " - " + item.title
-                    : item.title.isNotEmpty() ? item.title : item.file.getFileNameWithoutExtension();
-    g.drawText (juce::String (row + 1) + ". " + name, r.reduced (4.0f, 0.0f), juce::Justification::centredLeft, true);
+    g.setFont (DarkLookAndFeel::sans (13.0f, true));
+    g.drawText (name, r.removeFromTop (r.getHeight() / 2.0f + 1.0f), juce::Justification::bottomLeft, true);
+    juce::String sub = item.artist;
+    if (item.bpm > 0.0)
+        sub << (sub.isNotEmpty() ? "  " : "") << juce::String (item.bpm, 0) << " BPM";
+    g.setColour (DarkLookAndFeel::textQuiet);
+    g.setFont (DarkLookAndFeel::sans (12.0f));
+    g.drawText (sub, r, juce::Justification::topLeft, true);
 }
 
 void AutomixPanel::listBoxItemClicked (int row, const juce::MouseEvent& e)
 {
-    if (! e.mods.isPopupMenu() || ! juce::isPositiveAndBelow (row, getNumRows()))
+    if (! juce::isPositiveAndBelow (row, getNumRows()))
+        return;
+    // La x de la derecha de cada fila la quita de la lista.
+    if (! e.mods.isPopupMenu() && e.x >= list.getVisibleRowWidth() - 32)
+    {
+        automix.remove (row);
+        return;
+    }
+    if (! e.mods.isPopupMenu())
         return;
     juce::PopupMenu menu;
     menu.addItem ("Quitar de la lista", [this, row] { automix.remove (row); });
@@ -139,43 +157,52 @@ void AutomixPanel::itemDropped (const SourceDetails& details)
 void AutomixPanel::paint (juce::Graphics& g)
 {
     g.setColour (DarkLookAndFeel::panel);
-    g.fillRoundedRectangle (getLocalBounds().toFloat(), 8.0f);
+    g.fillRoundedRectangle (getLocalBounds().toFloat(), 14.0f);
 }
 
 void AutomixPanel::paintOverChildren (juce::Graphics& g)
 {
     if (getNumRows() == 0)
     {
+        const auto r = list.getBounds().toFloat().reduced (2.0f);
+        juce::Path outline, dashed;
+        outline.addRoundedRectangle (r, 10.0f);
+        const float dashes[] = { 4.0f, 3.0f };
+        juce::PathStrokeType (1.0f).createDashedStroke (dashed, outline, dashes, 2);
+        g.setColour (DarkLookAndFeel::line.brighter (0.25f));
+        g.fillPath (dashed);
         g.setColour (DarkLookAndFeel::textQuiet);
-        g.setFont (juce::FontOptions (13.0f));
-        g.drawFittedText ("Arrastra canciones aqui", list.getBounds().reduced (10), juce::Justification::centred, 3);
+        g.setFont (DarkLookAndFeel::sans (13.0f));
+        g.drawFittedText ("Arrastra canciones aqui\no pulsa A sobre una cancion", list.getBounds().reduced (12), juce::Justification::centred, 3);
     }
     if (dragOver)
     {
         g.setColour (DarkLookAndFeel::accentA);
-        g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (1.5f), 8.0f, 3.0f);
+        g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (1.5f), 14.0f, 3.0f);
     }
 }
 
 void AutomixPanel::resized()
 {
-    auto r = getLocalBounds().reduced (6);
-    auto header = r.removeFromTop (24);
-    onButton.setBounds (header.removeFromRight (90).reduced (0, 1));
+    auto r = getLocalBounds().reduced (12, 10);
+    auto header = r.removeFromTop (30);
+    onButton.setBounds (header.removeFromRight (96).reduced (0, 1));
     title.setBounds (header);
-    r.removeFromTop (4);
-    status.setBounds (r.removeFromBottom (32));
-    auto row2 = r.removeFromBottom (26);
+    r.removeFromTop (8);
+    status.setBounds (r.removeFromBottom (30));
     r.removeFromBottom (4);
-    auto row1 = r.removeFromBottom (26);
-    r.removeFromBottom (4);
+    auto buttons = r.removeFromBottom (40);
+    r.removeFromBottom (8);
     list.setBounds (r);
-    const int w1 = row1.getWidth() / 2;
-    mixNowButton.setBounds (row1.removeFromLeft (w1).reduced (1, 0));
-    skipButton.setBounds (row1.reduced (1, 0));
-    const int w2 = row2.getWidth() / 3;
-    removeButton.setBounds (row2.removeFromLeft (w2).reduced (1, 0));
-    clearButton.setBounds (row2.removeFromLeft (w2).reduced (1, 0));
-    fadeBox.setBounds (row2.reduced (1, 0));
+    // Mezclar ya | Saltar | Vaciar como iconos y, a la derecha, la duracion del fundido.
+    auto fade = buttons.removeFromRight (juce::jmin (120, buttons.getWidth() / 3));
+    fadeBox.setBounds (fade.withSizeKeepingCentre (fade.getWidth(), 30));
+    buttons.removeFromRight (8);
+    const int w = (buttons.getWidth() - 12) / 3;
+    mixNowButton.setBounds (buttons.removeFromLeft (w));
+    buttons.removeFromLeft (6);
+    skipButton.setBounds (buttons.removeFromLeft (w));
+    buttons.removeFromLeft (6);
+    clearButton.setBounds (buttons);
 }
 }

@@ -3,6 +3,7 @@
 
 #include <sqlite3.h>
 
+#include <algorithm>
 #include <map>
 #include <set>
 
@@ -68,6 +69,8 @@ namespace
             added      INTEGER,
             search     TEXT);                  -- todo el texto en minusculas y sin acentos
         CREATE INDEX IF NOT EXISTS tracks_pending ON tracks (analysed);
+        CREATE TABLE IF NOT EXISTS excluded (       -- carpetas quitadas del arbol (no se re-escanean)
+            path  TEXT PRIMARY KEY);
     )sql";
 
     constexpr const char* trackColumns = "id, path, title, artist, album, genre, duration, bpm, first_beat, analysed";
@@ -166,7 +169,15 @@ bool Library::open (const juce::File& file)
         return false;
     }
     sqlite3_busy_timeout (db, 2000);
-    return exec (schema);
+    if (! exec (schema))
+        return false;
+    // Bases de versiones anteriores: columna para las canciones ocultas (carpetas quitadas).
+    {
+        const bool hasHidden = Statement (db, "SELECT 1 FROM pragma_table_info ('tracks') WHERE name = 'hidden'").next();
+        if (! hasHidden)
+            exec ("ALTER TABLE tracks ADD COLUMN hidden INTEGER DEFAULT 0");
+    }
+    return true;
 }
 
 void Library::close()
@@ -229,6 +240,10 @@ void Library::addFolder (const juce::File& folder)
     {
         const juce::ScopedLock sl (lock);
         Statement (db, "INSERT OR IGNORE INTO folders (path) VALUES (?)").bind (1, folder.getFullPathName()).run();
+        // Si estaba quitada (entera o en parte), vuelve con su analisis.
+        const auto prefix = folderPrefix (folder);
+        Statement (db, "UPDATE tracks SET hidden = 0 WHERE substr (path, 1, length (?1)) = ?1").bind (1, prefix).run();
+        Statement (db, "DELETE FROM excluded WHERE substr (path, 1, length (?1)) = ?1").bind (1, prefix).run();
     }
     sendChangeMessage();
 }
@@ -238,9 +253,10 @@ void Library::removeFolder (const juce::File& folder)
     {
         const juce::ScopedLock sl (lock);
         Statement (db, "DELETE FROM folders WHERE path = ?").bind (1, folder.getFullPathName()).run();
-        // Quitar sus canciones salvo las que sigan dentro de otra carpeta de la biblioteca.
+        // Ocultar sus canciones (conservan el analisis por si vuelve) salvo las que sigan dentro de
+        // otra carpeta de la biblioteca.
         const auto prefix = folderPrefix (folder);
-        Statement (db, "DELETE FROM tracks WHERE substr (path, 1, length (?1)) = ?1 AND NOT EXISTS "
+        Statement (db, "UPDATE tracks SET hidden = 1 WHERE substr (path, 1, length (?1)) = ?1 AND NOT EXISTS "
                        "(SELECT 1 FROM folders f WHERE substr (tracks.path, 1, length (f.path) + 1) = f.path || ?2)")
             .bind (1, prefix).bind (2, juce::String::charToString (juce::File::getSeparatorChar())).run();
     }
@@ -289,7 +305,7 @@ juce::String Library::getStatusText() const
 void Library::startPendingCount()
 {
     const juce::ScopedLock sl (lock);
-    Statement s (db, "SELECT COUNT(*) FROM tracks WHERE analysed = 0");
+    Statement s (db, "SELECT COUNT(*) FROM tracks WHERE analysed = 0 AND hidden = 0");
     pendingTotal = s.next() ? (int) s.integer (0) : 0;
     pendingDone = 0;
 }
@@ -326,6 +342,7 @@ void Library::scanFolder (const juce::File& folder, juce::Thread* thread)
     }
 
     std::set<juce::String> seen;
+    const auto exclusions = getExclusions();
     int changes = 0;
     for (const auto& entry : juce::RangedDirectoryIterator (folder, true, "*", juce::File::findFiles))
     {
@@ -338,6 +355,9 @@ void Library::scanFolder (const juce::File& folder, juce::Thread* thread)
         const auto size = entry.getFileSize();
         const auto mtime = entry.getModificationTime().toMilliseconds();
         seen.insert (path);
+        // Dentro de una carpeta quitada del arbol: no se anade (lo que ya estaba, sigue oculto).
+        if (std::any_of (exclusions.begin(), exclusions.end(), [&] (const juce::String& e) { return path.startsWith (e); }))
+            continue;
 
         const auto it = known.find (path);
         if (it != known.end() && it->second.first == size && it->second.second == mtime)
@@ -383,7 +403,7 @@ bool Library::analyseOne (juce::Thread* thread)
     juce::String path;
     {
         const juce::ScopedLock sl (lock);
-        Statement s (db, "SELECT id, path FROM tracks WHERE analysed = 0 ORDER BY added LIMIT 1");
+        Statement s (db, "SELECT id, path FROM tracks WHERE analysed = 0 AND hidden = 0 ORDER BY added LIMIT 1");
         if (! s.next())
         {
             pendingDone = pendingTotal.load();   // lo que quedaba lo analizo otro (p. ej. un deck)
@@ -424,7 +444,7 @@ bool Library::analyseOne (juce::Thread* thread)
 std::vector<TrackInfo> Library::search (const juce::String& text, const juce::File& folder,
                                         SortColumn sort, bool ascending) const
 {
-    juce::String sql = juce::String ("SELECT ") + trackColumns + " FROM tracks WHERE 1";
+    juce::String sql = juce::String ("SELECT ") + trackColumns + " FROM tracks WHERE hidden = 0";
     juce::StringArray words;
     words.addTokens (normalise (text), " \t", "\"");
     words.removeEmptyStrings();
@@ -471,8 +491,137 @@ std::optional<TrackInfo> Library::findByFile (const juce::File& file) const
 int Library::getNumTracks() const
 {
     const juce::ScopedLock sl (lock);
-    Statement s (db, "SELECT COUNT(*) FROM tracks");
+    Statement s (db, "SELECT COUNT(*) FROM tracks WHERE hidden = 0");
     return s.next() ? (int) s.integer (0) : 0;
+}
+
+juce::StringArray Library::getExclusions() const
+{
+    juce::StringArray result;
+    const juce::ScopedLock sl (lock);
+    Statement s (db, "SELECT path FROM excluded");
+    while (s.next())
+        result.add (s.text (0));
+    return result;
+}
+
+Library::Removal Library::removeFromLibrary (const juce::File& folder)
+{
+    Removal removal { folder, {} };
+    const auto prefix = folderPrefix (folder);
+    {
+        const juce::ScopedLock sl (lock);
+        // Las carpetas de la biblioteca que estan dentro (o que son esta) dejan de serlo.
+        {
+            Statement s (db, "SELECT path FROM folders WHERE path = ?1 OR substr (path, 1, length (?2)) = ?2");
+            s.bind (1, folder.getFullPathName()).bind (2, prefix);
+            while (s.next())
+                removal.roots.add (juce::File (s.text (0)));
+        }
+        for (const auto& root : removal.roots)
+            Statement (db, "DELETE FROM folders WHERE path = ?").bind (1, root.getFullPathName()).run();
+        // Si queda dentro de otra carpeta de la biblioteca, se apunta para que no vuelva al re-escanear.
+        Statement (db, "INSERT OR IGNORE INTO excluded (path) VALUES (?)").bind (1, prefix).run();
+        Statement (db, "UPDATE tracks SET hidden = 1 WHERE substr (path, 1, length (?1)) = ?1").bind (1, prefix).run();
+    }
+    sendChangeMessage();
+    return removal;
+}
+
+void Library::undoRemoval (const Removal& removal)
+{
+    const auto prefix = folderPrefix (removal.folder);
+    {
+        const juce::ScopedLock sl (lock);
+        Statement (db, "DELETE FROM excluded WHERE path = ?").bind (1, prefix).run();
+        Statement (db, "UPDATE tracks SET hidden = 0 WHERE substr (path, 1, length (?1)) = ?1").bind (1, prefix).run();
+        for (const auto& root : removal.roots)
+            Statement (db, "INSERT OR IGNORE INTO folders (path) VALUES (?)").bind (1, root.getFullPathName()).run();
+    }
+    sendChangeMessage();
+}
+
+juce::StringArray Library::getTrackPaths() const
+{
+    juce::StringArray result;
+    const juce::ScopedLock sl (lock);
+    Statement s (db, "SELECT path FROM tracks WHERE hidden = 0");
+    while (s.next())
+        result.add (s.text (0));
+    return result;
+}
+
+bool Library::isVideoFile (const juce::File& file)
+{
+    return file.hasFileExtension ("mp4;mov;m4v;wmv;3gp");
+}
+
+juce::Array<juce::File> Library::localDrives()
+{
+    juce::Array<juce::File> roots, result;
+    juce::File::findFileSystemRoots (roots);
+    for (const auto& r : roots)
+        if (r.isDirectory() && r.isOnHardDisk())
+            result.add (r);
+    return result;
+}
+
+juce::String Library::driveName (const juce::File& drive)
+{
+    const auto letter = drive.getFullPathName().upToFirstOccurrenceOf (":", true, false);
+    const auto label = drive.getVolumeLabel().trim();
+    return (label.isNotEmpty() ? label : juce::String ("Disco local")) + " (" + letter + ")";
+}
+
+juce::Array<juce::File> Library::findMediaFolders (const SyncOptions& options,
+                                                   const std::function<void (const juce::File&, int)>& progress,
+                                                   const std::function<bool()>& shouldStop, int& filesFound)
+{
+    // Carpetas del sistema o de programas: nunca tienen la musica de nadie y son enormes.
+    static const juce::StringArray skipNames { "windows", "program files", "program files (x86)", "programdata", "appdata",
+                                               "system volume information", "recovery", "perflogs", "msocache", "config.msi",
+                                               "node_modules", "$recycle.bin", "$windows.~bt", "$windows.~ws", "windowsapps",
+                                               "intel", "amd", "nvidia", "drivers", "boot", "efi" };
+    juce::Array<juce::File> found;
+    filesFound = 0;
+    std::function<void (const juce::File&, bool)> visit = [&] (const juce::File& dir, bool isRoot)
+    {
+        if (shouldStop())
+            return;
+        if (progress)
+            progress (dir, filesFound);
+        int here = 0;
+        juce::Array<juce::File> subdirs;
+        for (const auto& entry : juce::RangedDirectoryIterator (dir, false, "*", juce::File::findFilesAndDirectories | juce::File::ignoreHiddenFiles))
+        {
+            const auto f = entry.getFile();
+            if (entry.isDirectory())
+            {
+                const auto name = f.getFileName().toLowerCase();
+                if (! name.startsWithChar ('.') && ! name.startsWithChar ('$') && ! skipNames.contains (name))
+                    subdirs.add (f);
+            }
+            else if (isAudioFile (f) && (isVideoFile (f) ? options.video : options.audio))
+                ++here;
+        }
+        // Los archivos sueltos en la raiz de un disco no cuentan (seria escanear el disco entero).
+        if (here > 0 && ! isRoot)
+        {
+            found.add (dir);
+            filesFound += here;
+        }
+        for (const auto& sub : subdirs)
+            visit (sub, false);
+    };
+    for (const auto& root : options.roots)
+        visit (root, root.getParentDirectory() == root);
+
+    // Sin repetir: una carpeta dentro de otra encontrada ya entra con ella (se escanea con subcarpetas).
+    juce::Array<juce::File> result;
+    for (const auto& f : found)
+        if (! std::any_of (found.begin(), found.end(), [&] (const juce::File& other) { return other != f && f.isAChildOf (other); }))
+            result.add (f);
+    return result;
 }
 
 void Library::setAnalysis (const juce::File& file, const TempoAnalysis& analysis)

@@ -2,15 +2,22 @@
 
 #include "Engine/Automix.h"
 #include "Library/Library.h"
+#include "UI/Icons.h"
 #include "UI/MidiLearnOverlay.h"
+#include "UI/Widgets.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
 namespace midj
 {
-// Navegador de la biblioteca: carpetas a la izquierda (con un divisor para ensancharlas),
-// buscador y lista de canciones (con un icono de audio o video). Una cancion se carga
-// arrastrandola a un deck o con doble clic.
+// Biblioteca (diseno "Escenario"): a la izquierda el arbol de carpetas, como el de VirtualDJ:
+//  - Musica local, con Musica (solo audio) y Videos (solo video);
+//  - Mis carpetas: las que se anaden a mano (con su x para quitarlas);
+//  - Discos: cada disco y las carpetas donde hay canciones de la biblioteca (tambien con x).
+// Arriba del arbol, sincronizar (buscar musica y videos en todo el PC) y anadir carpeta; al
+// quitar algo sale un aviso con Deshacer. Una barrita cambia el ancho del arbol. A la derecha,
+// el buscador y la lista; cada cancion con A / B (cargar en ese deck) y + (al automix). Doble
+// clic: cargar en el deck libre. Tambien se arrastran a un deck, al automix o al sampler.
 class LibraryBrowser : public juce::Component,
                        private juce::ChangeListener,
                        private juce::Timer,
@@ -24,12 +31,12 @@ public:
     std::function<void (const TrackInfo&)> onLoadRequest;
     // Intro en la lista: cargar la cancion elegida (en el deck activo).
     std::function<void (const TrackInfo&)> onReturnKey;
-    // Menu de una cancion: cargar en un deck concreto (0 = A, 1 = B).
+    // Botones A / B y menu de una cancion: cargar en un deck concreto (0 = A, 1 = B).
     std::function<void (const TrackInfo&, int deckIndex)> onLoadToDeck;
     // Menu de una cancion: preparar sus stems en segundo plano.
     std::function<void (const TrackInfo&)> onPrepareStems;
 
-    // Para el menu de una cancion (Agregar a automix); la lista esta en su propio panel.
+    // Para el boton + y el menu de una cancion (Agregar a automix); la lista esta en su propio panel.
     void setAutomix (Automix* a) { automix = a; }
     // Controles asignables por MIDI: la lista (mover).
     void addLearnTargets (std::vector<LearnTarget>& out);
@@ -46,34 +53,34 @@ public:
     juce::Component& getTrackList() { return table; }
     void focusSearch() { searchBox.grabKeyboardFocus(); }
 
-    // Ancho de la columna de carpetas (para guardarlo).
-    int getFoldersWidth() const { return sourceList.getWidth(); }
-    void setFoldersWidth (int w);
+    // Ancho del arbol de carpetas (para guardarlo).
+    int getFoldersWidth() const { return treeWidth; }
+    void setFoldersWidth (int w) { treeWidth = juce::jlimit (minTreeWidth, maxTreeWidth, w); resized(); }
+    static constexpr int defaultTreeWidth = 240, minTreeWidth = 180, maxTreeWidth = 440;
 
     // Para pruebas y para la interfaz: las canciones que se ven ahora.
     const std::vector<TrackInfo>& getVisibleTracks() const { return tracks; }
 
-private:
-    enum Columns { typeCol = 1, titleCol, artistCol, bpmCol, durationCol, albumCol, genreCol };
+    // Sincronizar con el PC (lo usa la ventanita de opciones).
+    void startSync (const Library::SyncOptions& options);
 
-    // Lista de origenes: "Toda la musica" y cada carpeta.
-    struct SourceList : juce::ListBoxModel
-    {
-        explicit SourceList (LibraryBrowser& b) : owner (b) {}
-        int getNumRows() override { return 1 + owner.folders.size(); }
-        void paintListBoxItem (int row, juce::Graphics&, int width, int height, bool selected) override;
-        void selectedRowsChanged (int) override { owner.refresh(); }
-        juce::String getTooltipForRow (int row) override;
-        LibraryBrowser& owner;
-    };
+private:
+    enum Columns { typeCol = 1, titleCol, artistCol, bpmCol, durationCol, loadCol };
+    class Node;
+    class RowButtons;
+    class SyncJob;
 
     void refresh();
-    void refreshFolders();
+    void rebuildTree (bool force);
+    void selectNode (Node* node);
+    void removeNode (Node& node);
+    void showSyncOptions();
+    void finishSync (juce::Array<juce::File> folders, int files, bool stopped);
+    void showToast (const juce::String& text, bool canUndo);
     void chooseFolder();
-    void removeSelectedFolder();
-    juce::File selectedFolder() const;
     static Automix::Item itemFor (const TrackInfo& t) { return { t.getFile(), t.title, t.artist, t.bpm }; }
     void showTrackMenu (int row);
+    juce::String selectionName() const;
 
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void timerCallback() override;
@@ -82,6 +89,7 @@ private:
     int getNumRows() override { return (int) tracks.size(); }
     void paintRowBackground (juce::Graphics&, int row, int width, int height, bool selected) override;
     void paintCell (juce::Graphics&, int row, int column, int width, int height, bool selected) override;
+    juce::Component* refreshComponentForCell (int row, int column, bool selected, juce::Component* existing) override;
     void sortOrderChanged (int columnId, bool forwards) override;
     void cellDoubleClicked (int row, int column, const juce::MouseEvent&) override;
     void cellClicked (int row, int column, const juce::MouseEvent&) override;
@@ -89,21 +97,36 @@ private:
     juce::var getDragSourceDescription (const juce::SparseSet<int>& rows) override;
 
     Library& library;
-    juce::Array<juce::File> folders;
     std::vector<TrackInfo> tracks;
     Library::SortColumn sort = Library::SortColumn::artist;
     bool ascending = true;
 
-    SourceList sourceModel { *this };
-    juce::ListBox sourceList { "origenes", &sourceModel };
-    juce::TextButton addFolderButton { "+ Carpeta" }, removeFolderButton { "Quitar" };
-    juce::Label statusLabel;
+    // Arbol.
+    juce::TreeView tree;
+    std::unique_ptr<Node> rootNode;
+    juce::String treeSignature;           // para no rehacer el arbol si no cambio nada
+    juce::File filterFolder;              // lo elegido en el arbol
+    int filterKind = 0;                   // 0 todo, 1 solo audio, 2 solo video
+    juce::String filterLabel { "Musica local" };
+    IconButton syncButton { Icons::Glyph::sync, "Sincronizar: buscar musica y videos en todo el PC y anadirlos" },
+               addFolderButton { Icons::Glyph::folderPlus, "Anadir una carpeta" };
+
+    // Aviso de abajo (quitar con Deshacer, resultado de sincronizar).
+    juce::Label toastLabel;
+    juce::TextButton undoButton { "Deshacer" };
+    IconButton closeToastButton { Icons::Glyph::close, "Cerrar el aviso" };
+    std::optional<Library::Removal> lastRemoval;
+    juce::uint32 toastShownAt = 0;
+
+    // Sincronizacion en marcha.
+    std::unique_ptr<SyncJob> syncJob;
+    juce::TextButton stopSyncButton { "Detener" };
+
     juce::TextEditor searchBox;
     juce::TableListBox table { "canciones", this };
-
-    // Divisor entre las carpetas y la lista (se arrastra a lo ancho).
-    juce::StretchableLayoutManager layout;
-    juce::StretchableLayoutResizerBar divider { &layout, 1, true };
+    ResizeHandle treeHandle;
+    int treeWidth = defaultTreeWidth, dragStartWidth = 0;
+    juce::Rectangle<int> treeHeaderArea, syncArea, toastArea, footerArea, listArea;
 
     Automix* automix = nullptr;
     std::unique_ptr<juce::FileChooser> chooser;

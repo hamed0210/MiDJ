@@ -826,9 +826,38 @@ void testLibrary()
                library.getNumTracks(), 3);
         const auto t = library.findByFile (maria);
         check (t && t->analysed && std::abs (t->bpm - 120.0) < 0.05, "reabrir: el BPM no se pierde", t ? t->bpm : 0.0, 120.0);
+        // Quitar una carpeta del arbol que esta dentro de otra: no vuelve al re-escanear; Deshacer la
+        // trae con su analisis.
+        const auto sub = music.getChildFile ("sub");
+        auto removal = library.removeFromLibrary (sub);
+        library.scanNow();
+        check (library.getNumTracks() == 2 && library.search ("", sub).empty() && library.getFolders().size() == 1,
+               "arbol: quitar una subcarpeta (no vuelve al re-escanear)", library.getNumTracks(), 2);
+        library.undoRemoval (removal);
+        const auto back = library.findByFile (deep);
+        check (library.getNumTracks() == 3 && back && back->analysed, "arbol: deshacer la trae con su analisis", library.getNumTracks(), 3);
+        // Quitar el disco entero: tambien deja de ser carpeta de la biblioteca; deshacer la recupera.
+        removal = library.removeFromLibrary (root);
+        check (library.getNumTracks() == 0 && library.getFolders().isEmpty(), "arbol: quitar un disco quita sus carpetas", library.getNumTracks(), 0);
+        library.undoRemoval (removal);
+        check (library.getNumTracks() == 3 && library.getFolders().size() == 1, "arbol: deshacer quitar un disco", library.getNumTracks(), 3);
+
+        // Sincronizar con el PC: encuentra las carpetas con audio (sin repetir subcarpetas).
+        int files = 0;
+        Library::SyncOptions sync;
+        sync.roots.add (root);
+        const auto found = Library::findMediaFolders (sync, nullptr, [] { return false; }, files);
+        check (found.size() == 1 && found[0] == music && files == 3, "sincronizar: carpetas con musica", (double) files, 3.0);
+        sync.audio = false;
+        check (Library::findMediaFolders (sync, nullptr, [] { return false; }, files).isEmpty(), "sincronizar: solo video (no hay)", 0.0, 0.0);
+
         library.removeFolder (music);
         check (library.getNumTracks() == 0 && library.getFolders().isEmpty(), "quitar carpeta: quita sus canciones",
                library.getNumTracks(), 0);
+        library.addFolder (music);
+        const auto again = library.findByFile (maria);
+        check (library.getNumTracks() == 3 && again && again->analysed, "volver a anadirla: vuelve con su analisis", library.getNumTracks(), 3);
+        library.removeFolder (music);
     }
     {
         // El hilo de fondo escanea y analiza solo.

@@ -90,17 +90,30 @@ MainComponent::MainComponent()
     addAndMakeVisible (*scenesPanel);
     addAndMakeVisible (*sourcesPanel);
 
-    // Divisores de abajo: biblioteca | automix | escenas y fuentes.
-    bottomLayout.setItemLayout (0, 380, -1.0, -0.56);
-    bottomLayout.setItemLayout (1, 8, 8, 8);
-    bottomLayout.setItemLayout (2, 170, 600, 260);
-    bottomLayout.setItemLayout (3, 8, 8, 8);
-    bottomLayout.setItemLayout (4, 190, 700, 280);
-    for (auto* bar : { &bottomBar1, &bottomBar2 })
-    {
-        bar->setMouseCursor (juce::MouseCursor::LeftRightResizeCursor);
-        addAndMakeVisible (bar);
-    }
+    // Barritas de abajo: cambian el ancho del automix y de las escenas (la biblioteca, el resto).
+    automixHandle.onStart = [this] { dragStartWidth = panels.automixWidth; };
+    automixHandle.onDrag = [this] (int dx) { panels.automixWidth = juce::jlimit ((int) PanelSettings::minWidth, (int) PanelSettings::maxWidth, dragStartWidth - dx); resized(); };
+    automixHandle.onReset = [this] { panels.automixWidth = PanelSettings::defaultAutomixWidth; resized(); };
+    scenesHandle.onStart = [this] { dragStartWidth = panels.scenesWidth; };
+    scenesHandle.onDrag = [this] (int dx) { panels.scenesWidth = juce::jlimit ((int) PanelSettings::minWidth, (int) PanelSettings::maxWidth, dragStartWidth - dx); resized(); };
+    scenesHandle.onReset = [this] { panels.scenesWidth = PanelSettings::defaultScenesWidth; resized(); };
+    addAndMakeVisible (automixHandle);
+    addAndMakeVisible (scenesHandle);
+
+    // Barra de arriba: proyector (menu de monitores), MIDI, atajos y ajustes.
+    projectorButton.setTooltip ("Proyectar la salida de video a pantalla completa en un monitor");
+    projectorButton.onClick = [this] { if (videoStage != nullptr) videoStage->showMenu(); };
+    addAndMakeVisible (projectorButton);
+    settingsButton.setBordered (true);
+    settingsButton.onClick = [this] { showSettings(); };
+    addAndMakeVisible (settingsButton);
+    for (auto* view : { &deckViewA, &deckViewB })
+        view->describe = [this] (const juce::File& file)
+        {
+            if (const auto t = library.findByFile (file); t && t->title.isNotEmpty())
+                return std::pair<juce::String, juce::String> { t->title, t->artist };
+            return std::pair<juce::String, juce::String> { file.getFileNameWithoutExtension(), juce::String() };
+        };
 
     // Controladoras MIDI: mapeo guardado, dispositivos y ganchos hacia la interfaz.
     controlSurface.onBrowserScroll = [this] (int steps) { browser->moveSelection (steps); };
@@ -134,7 +147,7 @@ MainComponent::MainComponent()
     keepFocusForShortcuts (*this);
 
     loadLayout();
-    setSize (1316, 700);
+    setSize (1366, 720);
     setAudioChannels (0, 2);   // sin entradas, salida estereo
 }
 
@@ -349,6 +362,7 @@ void MainComponent::timerCallback()
         if (file != lastLoaded[(size_t) d] && ! deck.isLoading())
         {
             lastLoaded[(size_t) d] = file;
+            requestPoster (d, file);
             if (file != juce::File() && stems.isCached (file))
                 stems.request (file, true);
         }
@@ -405,47 +419,193 @@ void MainComponent::releaseResources()
 void MainComponent::paint (juce::Graphics& g)
 {
     g.fillAll (DarkLookAndFeel::background);
+    // Barra de arriba: nombre y formato de la salida de video.
+    auto header = headerArea;
+    g.setColour (DarkLookAndFeel::selection);
+    g.fillRect (header.removeFromBottom (1));
+    auto h = header.reduced (20, 0);
+    g.setColour (DarkLookAndFeel::text);
+    g.setFont (DarkLookAndFeel::sans (17.0f, true));
+    g.drawText ("MiDJ", h.removeFromLeft (56), juce::Justification::centredLeft, false);
+    if (videoStage != nullptr && videoStage->isReady())
+    {
+        g.setColour (DarkLookAndFeel::textQuiet);
+        g.setFont (DarkLookAndFeel::mono (12.0f));
+        g.drawText (juce::String (videoStage->getProgramWidth()) + juce::String::fromUTF8 (" \xc3\x97 ") + juce::String (videoStage->getProgramHeight())
+                        + juce::String::fromUTF8 (" \xc2\xb7 ") + juce::String (videoSettings().fps) + " fps",
+                    h.removeFromLeft (200), juce::Justification::centredLeft, false);
+    }
 }
 
 void MainComponent::resized()
 {
-    // Arriba los decks y el mezclador, en medio el sampler y abajo los paneles.
-    auto area = getLocalBounds().reduced (6);
-    auto top = area.removeFromTop (juce::jmax (340, area.getHeight() * 50 / 100));
-    auto middle = area.removeFromTop (76);
+    auto area = getLocalBounds();
+    headerArea = area.removeFromTop (52);
+    {
+        auto h = headerArea.reduced (20, 10);
+        settingsButton.setBounds (h.removeFromRight (34));
+        h.removeFromRight (8);
+        helpButton.setBounds (h.removeFromRight (74));
+        h.removeFromRight (8);
+        midiButton.setBounds (h.removeFromRight (64));
+        h.removeFromRight (8);
+        projectorButton.setBounds (h.removeFromRight (96));
+    }
+    area.reduce (16, 12);
+    constexpr int gap = 12;
 
-    const auto centre = top.withSizeKeepingCentre (270, top.getHeight());
-    mixerView.setBounds (centre.reduced (6));
-    deckViewA.setBounds (top.withRight (centre.getX()).reduced (6));
-    deckViewB.setBounds (top.withLeft (centre.getRight()).reduced (6));
+    // Arriba los decks y el centro; abajo los paneles (si hay alguno a la vista).
+    const bool anyBottom = panels.library || panels.automix || panels.scenes;
+    auto top = anyBottom ? area.removeFromTop (juce::jlimit (380, juce::jmax (380, area.getHeight() - 220), area.getHeight() * 62 / 100)) : area;
+    if (anyBottom)
+        area.removeFromTop (gap);
 
-    // El sampler donde estaba el crossfader: bajo el deck A y el mezclador.
-    samplerPanel.setBounds (middle.withRight (centre.getRight()).reduced (6, 2));
-    auto buttons = middle.withLeft (centre.getRight() + 6).withSizeKeepingCentre (middle.getWidth() - centre.getRight() - 12, 30);
-    midiButton.setBounds (buttons.removeFromLeft (64));
-    buttons.removeFromLeft (8);
-    helpButton.setBounds (buttons.removeFromLeft (72));
+    const int deckWidth = juce::jlimit (360, 520, (top.getWidth() - 2 * gap) * 29 / 100);
+    deckViewA.setBounds (top.removeFromLeft (deckWidth));
+    deckViewB.setBounds (top.removeFromRight (deckWidth));
+    top.reduce (gap, 0);
+    samplerPanel.setVisible (panels.sampler);
+    if (panels.sampler)
+    {
+        samplerPanel.setBounds (top.removeFromBottom (juce::jlimit (86, 124, top.getHeight() / 5)));
+        top.removeFromBottom (gap);
+    }
+    mixerView.setBounds (top);
 
-    // Abajo: biblioteca | automix | escenas y fuentes (divisores arrastrables).
-    auto bottom = area.reduced (6, 4);
-    juce::Component* columns[] = { browser.get(), &bottomBar1, &automixPanel, &bottomBar2, &videoColumn };
-    bottomLayout.layOutComponents (columns, 5, bottom.getX(), bottom.getY(), bottom.getWidth(), bottom.getHeight(), false, true);
-    auto video = videoColumn.getBounds();
-    scenesPanel->setBounds (video.removeFromTop (video.getHeight() * 45 / 100));
-    video.removeFromTop (6);
-    sourcesPanel->setBounds (video);
+    // Abajo: biblioteca | automix | escenas y fuentes. La biblioteca se queda con lo que sobra.
+    browser->setVisible (anyBottom && panels.library);
+    automixPanel.setVisible (anyBottom && panels.automix);
+    scenesPanel->setVisible (anyBottom && panels.scenes);
+    sourcesPanel->setVisible (anyBottom && panels.scenes);
+    automixHandle.setVisible (anyBottom && panels.automix && panels.library);
+    scenesHandle.setVisible (anyBottom && panels.scenes && (panels.library || panels.automix));
+    if (anyBottom)
+    {
+        auto bottom = area;
+        constexpr int handle = 14;
+        if (panels.scenes)
+        {
+            auto column = (panels.library || panels.automix) ? bottom.removeFromRight (panels.scenesWidth) : bottom;
+            scenesPanel->setBounds (column.removeFromTop (column.getHeight() * 45 / 100));
+            column.removeFromTop (gap);
+            sourcesPanel->setBounds (column);
+            if (panels.library || panels.automix)
+                scenesHandle.setBounds (bottom.removeFromRight (handle));
+        }
+        if (panels.automix)
+        {
+            automixPanel.setBounds (panels.library ? bottom.removeFromRight (panels.automixWidth) : bottom);
+            if (panels.library)
+                automixHandle.setBounds (bottom.removeFromRight (handle));
+        }
+        if (panels.library)
+            browser->setBounds (bottom);
+    }
 
     midiOverlay.setBounds (getLocalBounds());
+}
+
+void MainComponent::showSettings()
+{
+    // Ventanita de Ajustes (junto al boton): paneles visibles y anchos.
+    class Content : public juce::Component
+    {
+    public:
+        explicit Content (MainComponent& o) : owner (o)
+        {
+            auto& p = owner.getPanels();
+            const std::array<std::pair<bool*, const char*>, 4> items { { { &p.library, "Biblioteca" }, { &p.automix, "Automix" },
+                                                                         { &p.scenes, "Escenas y fuentes" }, { &p.sampler, "Sampler" } } };
+            for (size_t i = 0; i < items.size(); ++i)
+            {
+                auto& t = toggles[i];
+                t.setButtonText (items[i].second);
+                t.setToggleState (*items[i].first, juce::dontSendNotification);
+                t.onClick = [this, flag = items[i].first, &t] { *flag = t.getToggleState(); owner.panelsChanged(); repaint(); };
+                addAndMakeVisible (t);
+            }
+            reset.onClick = [this]
+            {
+                owner.getPanels() = {};
+                for (auto& t : toggles)
+                    t.setToggleState (true, juce::dontSendNotification);
+                owner.panelsChanged();
+                repaint();
+            };
+            addAndMakeVisible (reset);
+            setSize (320, 344);
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            g.setColour (DarkLookAndFeel::text);
+            g.setFont (DarkLookAndFeel::sans (16.0f, true));
+            g.drawText ("Ajustes", 16, 12, getWidth() - 32, 24, juce::Justification::centredLeft);
+            g.setColour (DarkLookAndFeel::textQuiet);
+            g.setFont (DarkLookAndFeel::sans (11.0f, true).withKerningFactor (0.08f));
+            g.drawText ("PANELES VISIBLES", 16, 44, getWidth() - 32, 16, juce::Justification::centredLeft);
+            g.drawText ("ANCHOS", 16, 232, getWidth() - 32, 16, juce::Justification::centredLeft);
+            const auto& p = owner.getPanels();
+            const auto dot = juce::String::fromUTF8 ("  \xc2\xb7  ");
+            g.setFont (DarkLookAndFeel::sans (12.0f));
+            g.setColour (DarkLookAndFeel::text);
+            g.drawFittedText ("Automix " + juce::String (p.automixWidth) + " px" + dot + "Escenas y fuentes " + juce::String (p.scenesWidth)
+                                  + " px" + dot + "Biblioteca: el resto",
+                              16, 250, getWidth() - 32, 32, juce::Justification::topLeft, 2);
+        }
+
+        void resized() override
+        {
+            for (size_t i = 0; i < toggles.size(); ++i)
+                toggles[i].setBounds (16, 64 + (int) i * 40, getWidth() - 32, 36);
+            reset.setBounds (16, 292, 220, 34);
+        }
+
+    private:
+        MainComponent& owner;
+        std::array<juce::ToggleButton, 4> toggles;
+        juce::TextButton reset { "Restablecer anchos y paneles" };
+    };
+
+    juce::CallOutBox::launchAsynchronously (std::make_unique<Content> (*this), settingsButton.getScreenBounds(), nullptr);
+}
+
+void MainComponent::requestPoster (int deckIndex, const juce::File& file)
+{
+    auto& view = deckIndex == 0 ? deckViewA : deckViewB;
+    if (file == juce::File() || ! DeckVideo::isVideoFile (file))
+    {
+        view.setPoster (file, {});
+        return;
+    }
+    // Un fotograma a la quinta parte del video, pequeno, en un hilo aparte (no frena la interfaz).
+    juce::Component::SafePointer<DeckComponent> target (&view);
+    juce::Thread::launch ([target, file]
+    {
+        MediaFoundation::initialiseThisThread();
+        juce::String error;
+        juce::Image frame;
+        if (auto decoder = VideoDecoder::open (file, 480, error, false))
+            decoder->frameAt (juce::jmin (decoder->getDuration() * 0.2, 30.0), frame);
+        juce::MessageManager::callAsync ([target, file, frame]
+        {
+            if (target != nullptr)
+                target->setPoster (file, frame);
+        });
+    });
 }
 
 void MainComponent::saveLayout()
 {
     juce::XmlElement xml ("LAYOUT");
-    xml.setAttribute ("library", (int) bottomLayout.getItemCurrentAbsoluteSize (0));
-    xml.setAttribute ("automix", (int) bottomLayout.getItemCurrentAbsoluteSize (2));
-    xml.setAttribute ("video", (int) bottomLayout.getItemCurrentAbsoluteSize (4));
+    xml.setAttribute ("automix", panels.automixWidth);
+    xml.setAttribute ("video", panels.scenesWidth);
     xml.setAttribute ("folders", browser->getFoldersWidth());
     xml.setAttribute ("tab", mixerView.isVideoTabShowing() ? "video" : "audio");
+    xml.setAttribute ("showLibrary", panels.library);
+    xml.setAttribute ("showAutomix", panels.automix);
+    xml.setAttribute ("showScenes", panels.scenes);
+    xml.setAttribute ("showSampler", panels.sampler);
     xml.writeTo (getDataFolder().getChildFile ("layout.xml"));
 }
 
@@ -454,13 +614,17 @@ void MainComponent::loadLayout()
     const auto xml = juce::XmlDocument::parse (getDataFolder().getChildFile ("layout.xml"));
     if (xml == nullptr)
         return;
-    // Los anchos guardados como preferidos (si la ventana es mas estrecha, se reparten).
-    if (const int w = xml->getIntAttribute ("library"); w > 0)
-        bottomLayout.setItemLayout (0, 380, -1.0, w);
-    if (const int w = xml->getIntAttribute ("automix"); w > 0)
-        bottomLayout.setItemLayout (2, 170, 600, w);
-    if (const int w = xml->getIntAttribute ("video"); w > 0)
-        bottomLayout.setItemLayout (4, 190, 700, w);
+    auto width = [&] (const char* name, int fallback)
+    {
+        const int w = xml->getIntAttribute (name);
+        return w > 0 ? juce::jlimit ((int) PanelSettings::minWidth, (int) PanelSettings::maxWidth, w) : fallback;
+    };
+    panels.automixWidth = width ("automix", panels.automixWidth);
+    panels.scenesWidth = width ("video", panels.scenesWidth);
+    panels.library = xml->getBoolAttribute ("showLibrary", true);
+    panels.automix = xml->getBoolAttribute ("showAutomix", true);
+    panels.scenes = xml->getBoolAttribute ("showScenes", true);
+    panels.sampler = xml->getBoolAttribute ("showSampler", true);
     if (const int w = xml->getIntAttribute ("folders"); w > 0)
         browser->setFoldersWidth (w);
     if (xml->getStringAttribute ("tab") == "video")

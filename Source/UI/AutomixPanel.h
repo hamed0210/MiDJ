@@ -2,6 +2,7 @@
 
 #include "Engine/Automix.h"
 #include "Library/Library.h"
+#include "UI/Icons.h"
 #include "UI/MidiLearnOverlay.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -44,8 +45,9 @@ private:
     bool dragOver = false;
     juce::Label title { {}, "AUTOMIX" }, status;
     juce::ListBox list;
-    juce::TextButton onButton { "Apagado" }, mixNowButton { "Mezclar ya" }, skipButton { "Saltar" },
-                     removeButton { "Quitar" }, clearButton { "Vaciar" };
+    juce::TextButton onButton { "Apagado" };
+    IconButton mixNowButton { Icons::Glyph::mix, "Mezclar ya con la siguiente" }, skipButton { Icons::Glyph::skip, "Saltar la siguiente cancion" },
+               clearButton { Icons::Glyph::trash, "Vaciar la lista" };
     juce::ComboBox fadeBox;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AutomixPanel)

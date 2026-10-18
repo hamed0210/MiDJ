@@ -2,6 +2,7 @@
 
 #include "Engine/Effects.h"
 #include "UI/DarkLookAndFeel.h"
+#include "UI/Icons.h"
 #include "UI/MidiLearnOverlay.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -10,16 +11,16 @@
 
 namespace midj
 {
-// Fila "FX" de un deck: tres ranuras con [nombre del efecto][v][mando].
-//  - Clic en el nombre: enciende / apaga el efecto (se ilumina con el color del deck).
-//  - Flecha: elegir otro efecto para esa ranura.
-//  - Mando: intensidad. Doble clic lo devuelve al centro.
+// Los tres efectos de un deck, cada uno en su ranura: el nombre del efecto es el boton que lo
+// enciende (lleno del color del deck cuando suena), la flecha elige otro efecto y el mando es la
+// cantidad (doble clic: al centro).
 class EffectsRow : public juce::Component,
                    private juce::Timer
 {
 public:
     EffectsRow (EffectRack& rack, juce::Colour accent);
 
+    void paint (juce::Graphics& g) override;
     void resized() override;
     // Controles asignables por MIDI: encender cada ranura y su mando. prefix: "deck1."...
     void addLearnTargets (std::vector<LearnTarget>& out, const juce::String& prefix);
@@ -30,8 +31,9 @@ private:
     struct Slot
     {
         juce::TextButton nameButton;
-        juce::ArrowButton menuButton { "elegir", 0.25f, DarkLookAndFeel::textQuiet };   // flecha hacia abajo
+        IconButton menuButton { Icons::Glyph::down, "Elegir otro efecto" };
         juce::Slider knob;
+        juce::Rectangle<int> area;
     };
 
     void updateSlot (int index);
@@ -39,8 +41,8 @@ private:
 
     EffectRack& rack;
     juce::Colour accent;
-    juce::Label label;
     std::array<Slot, EffectRack::numSlots> slots;
+    std::array<int, EffectRack::numSlots> lastOn { -1, -1, -1 };   // para no repintar si no cambia
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EffectsRow)
 };

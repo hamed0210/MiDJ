@@ -5,30 +5,31 @@ namespace midj
 {
 namespace
 {
-    const juce::Colour live (0xff2a5bd7);   // la escena al aire / la fuente elegida, como el azul de OBS
+    const juce::Colour live (0xff26262b);   // la escena al aire / la fuente elegida
 
     void setUpTitle (juce::Label& l)
     {
-        l.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+        l.setFont (DarkLookAndFeel::sans (14.0f, true));
         l.setColour (juce::Label::textColourId, DarkLookAndFeel::text);
     }
 
     void setUpList (juce::ListBox& list)
     {
-        list.setRowHeight (24);
-        list.setColour (juce::ListBox::backgroundColourId, DarkLookAndFeel::background);
+        list.setRowHeight (32);
+        list.setColour (juce::ListBox::backgroundColourId, DarkLookAndFeel::panel);
         list.setOutlineThickness (0);
     }
 
     void layOutPanel (juce::Rectangle<int> r, juce::Label& title, juce::ListBox& list, std::initializer_list<juce::Component*> buttons)
     {
-        r = r.reduced (6);
-        title.setBounds (r.removeFromTop (20));
-        auto bar = r.removeFromBottom (26);
+        r = r.reduced (12, 10);
+        title.setBounds (r.removeFromTop (22));
+        r.removeFromTop (4);
+        auto bar = r.removeFromBottom (32);
         r.removeFromBottom (4);
         list.setBounds (r);
         for (auto* b : buttons)
-            b->setBounds (bar.removeFromLeft (28).reduced (1));
+            b->setBounds (bar.removeFromLeft (32).reduced (1));
     }
 
     void askName (juce::Component* parent, const juce::String& heading, const juce::String& current,
@@ -152,11 +153,16 @@ void ScenesPanel::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bo
     if (onAir)
     {
         g.setColour (live);
-        g.fillRoundedRectangle (juce::Rectangle<float> (0.0f, 0.0f, (float) w, (float) h).reduced (1.0f), 3.0f);
+        g.fillRoundedRectangle (juce::Rectangle<float> (0.0f, 0.0f, (float) w, (float) h).reduced (1.0f), 8.0f);
     }
     g.setColour (onAir ? juce::Colours::white : DarkLookAndFeel::text.withAlpha (0.85f));
     g.setFont (juce::FontOptions (14.0f));
-    g.drawText (scene.name, 8, 0, w - 16, h, juce::Justification::centredLeft, true);
+    // Punto verde: la escena que esta en el programa.
+    g.setColour (onAir ? DarkLookAndFeel::good : DarkLookAndFeel::line.brighter (0.2f));
+    g.fillEllipse (juce::Rectangle<float> (8.0f, 8.0f).withCentre ({ 14.0f, h * 0.5f }));
+    g.setColour (onAir ? juce::Colours::white : DarkLookAndFeel::text.withAlpha (0.85f));
+    g.setFont (DarkLookAndFeel::sans (14.0f, onAir));
+    g.drawText (scene.name, 26, 0, w - 60, h, juce::Justification::centredLeft, true);
     // Atajo de teclado (F1-F9).
     if (row < 9)
     {
@@ -207,7 +213,7 @@ void ScenesPanel::listBoxItemDoubleClicked (int row, const juce::MouseEvent&)
 void ScenesPanel::paint (juce::Graphics& g)
 {
     g.setColour (DarkLookAndFeel::panel);
-    g.fillRoundedRectangle (getLocalBounds().toFloat(), 8.0f);
+    g.fillRoundedRectangle (getLocalBounds().toFloat(), 14.0f);
 }
 
 void ScenesPanel::resized()
@@ -335,7 +341,7 @@ void SourcesPanel::paintListBoxItem (int row, juce::Graphics& g, int w, int h, b
     if (isSelected)
     {
         g.setColour (live);
-        g.fillRoundedRectangle (r.reduced (1.0f), 3.0f);
+        g.fillRoundedRectangle (r.reduced (1.0f), 8.0f);
     }
     const auto ink = item->visible ? (isSelected ? juce::Colours::white : DarkLookAndFeel::text) : DarkLookAndFeel::textQuiet;
     Icons::drawSource (g, r.removeFromLeft (26.0f).reduced (4.0f), item->type, ink);
@@ -386,7 +392,7 @@ void SourcesPanel::deleteKeyPressed (int)
 void SourcesPanel::paint (juce::Graphics& g)
 {
     g.setColour (DarkLookAndFeel::panel);
-    g.fillRoundedRectangle (getLocalBounds().toFloat(), 8.0f);
+    g.fillRoundedRectangle (getLocalBounds().toFloat(), 14.0f);
 }
 
 void SourcesPanel::resized()

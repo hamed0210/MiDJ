@@ -37,9 +37,9 @@ private:
 
     Sampler& sampler;
     juce::AudioFormatManager& formats;
-    juce::Label title;
+    juce::Rectangle<int> titleArea, volumeLabelArea;
     juce::Slider volume;
-    juce::TextButton stopButton { "STOP" };
+    juce::TextButton stopButton { "Parar todo" };
     std::array<std::unique_ptr<Pad>, Sampler::numPads> pads;
     std::unique_ptr<juce::FileChooser> chooser;
 
