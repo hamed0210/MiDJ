@@ -28,13 +28,13 @@ namespace
 class LibraryBrowser::Node : public juce::TreeViewItem
 {
 public:
-    enum class Kind { root, all, audio, video, favorites, mostPlayed, mine, myFolder, disks, drive, folder };
+    enum class Kind { root, all, audio, video, favorites, mostPlayed, playlists, playlist, mine, myFolder, disks, drive, folder };
 
-    Node (LibraryBrowser& o, Kind k, const juce::String& l, const juce::File& f, int c)
-        : owner (o), kind (k), label (l), file (f), count (c) {}
+    Node (LibraryBrowser& o, Kind k, const juce::String& l, const juce::File& f, int c, juce::int64 list = 0)
+        : owner (o), kind (k), label (l), file (f), count (c), playlistId (list) {}
 
     bool mightContainSubItems() override { return getNumSubItems() > 0; }
-    juce::String getUniqueName() const override { return juce::String ((int) kind) + "|" + file.getFullPathName() + "|" + label; }
+    juce::String getUniqueName() const override { return juce::String ((int) kind) + "|" + file.getFullPathName() + "|" + label + "|" + juce::String (playlistId); }
     int getItemHeight() const override { return 30; }
     bool canBeSelected() const override { return kind != Kind::root; }
     bool removable() const { return kind == Kind::myFolder || kind == Kind::drive || kind == Kind::folder; }
@@ -65,6 +65,8 @@ public:
             case Kind::video:   Icons::draw (g, icon, Icons::Glyph::film, juce::Colour (0xffd58cf5)); break;
             case Kind::favorites:  Icons::draw (g, icon, Icons::Glyph::star, DarkLookAndFeel::accentB); break;
             case Kind::mostPlayed: Icons::draw (g, icon, Icons::Glyph::play, DarkLookAndFeel::good); break;
+            case Kind::playlists:  Icons::draw (g, icon, Icons::Glyph::note, DarkLookAndFeel::textQuiet); break;
+            case Kind::playlist:   Icons::draw (g, icon, Icons::Glyph::note, juce::Colour (0xff8ab4ff)); break;
             case Kind::mine:    Icons::draw (g, icon, Icons::Glyph::folderPlus, DarkLookAndFeel::textQuiet); break;
             case Kind::drive:   Icons::draw (g, icon, Icons::Glyph::drive, DarkLookAndFeel::textQuiet); break;
             case Kind::myFolder: case Kind::folder: Icons::draw (g, icon, Icons::Glyph::folder, juce::Colour (0xffc9c9cf)); break;
@@ -92,8 +94,20 @@ public:
 
     void itemClicked (const juce::MouseEvent& e) override
     {
-        if (removable() && e.x >= getItemWidth() - 26)
+        if (e.mods.isPopupMenu() && (kind == Kind::playlists || kind == Kind::playlist))
+            owner.showPlaylistMenu (kind == Kind::playlist ? playlistId : 0, label);
+        else if (removable() && e.x >= getItemWidth() - 26)
             owner.removeNode (*this);
+    }
+
+    // Arrastrar canciones de la lista a una lista de reproduccion: se anaden al final.
+    bool isInterestedInDragSource (const juce::DragAndDropTarget::SourceDetails& d) override
+    {
+        return kind == Kind::playlist && d.description.toString().startsWith (LibraryBrowser::dragPrefix);
+    }
+    void itemDropped (const juce::DragAndDropTarget::SourceDetails& d, int) override
+    {
+        owner.addToPlaylist (playlistId, juce::File (d.description.toString().fromFirstOccurrenceOf (LibraryBrowser::dragPrefix, false, false)));
     }
 
     void itemSelectionChanged (bool isNowSelected) override
@@ -106,6 +120,10 @@ public:
     {
         if (removable())
             return file.getFullPathName() + "\n(x: quitar de la biblioteca, sin borrar archivos)";
+        if (kind == Kind::playlists)
+            return "Clic derecho: nueva lista";
+        if (kind == Kind::playlist)
+            return "Arrastra canciones aqui. Clic derecho: renombrar, borrar o reproducir en el automix";
         return {};
     }
 
@@ -114,6 +132,7 @@ public:
     juce::String label;
     juce::File file;
     int count;
+    juce::int64 playlistId;
 };
 
 // --- Botones de cada fila: A, B y + -------------------------------------------------------------
@@ -318,7 +337,10 @@ void LibraryBrowser::rebuildTree (bool force)
     for (const auto& p : paths)
         hash += p.hashCode64();
     const int favorites = library.countFavorites(), played = library.countPlayed();
+    const auto playlists = library.getPlaylists();
     juce::String signature = juce::String (paths.size()) + "|" + juce::String (hash) + "|" + juce::String (favorites) + "|" + juce::String (played);
+    for (const auto& p : playlists)
+        signature << "|" << p.id << ":" << p.name << ":" << p.count;
     for (const auto& f : folders)
         signature << "|" << f.getFullPathName();
     if (! force && signature == treeSignature)
@@ -339,6 +361,10 @@ void LibraryBrowser::rebuildTree (bool force)
     rootNode->addSubItem (local);
     rootNode->addSubItem (new Node (*this, Node::Kind::favorites, "Favoritos", {}, favorites));
     rootNode->addSubItem (new Node (*this, Node::Kind::mostPlayed, "Mas reproducidos", {}, played));
+    auto* lists = new Node (*this, Node::Kind::playlists, "Listas", {}, -1);
+    for (const auto& p : playlists)
+        lists->addSubItem (new Node (*this, Node::Kind::playlist, p.name, {}, p.count, p.id));
+    rootNode->addSubItem (lists);
 
     auto countUnder = [&paths] (const juce::File& folder)
     {
@@ -406,6 +432,8 @@ void LibraryBrowser::rebuildTree (bool force)
         for (int i = 0; i < disks->getNumSubItems(); ++i)
             disks->getSubItem (i)->setOpen (true);
     }
+    if (std::exchange (openPlaylists, false))
+        lists->setOpen (true);   // se acaba de crear una lista: que se vea
 
     // Lo elegido: el mismo nodo si sigue; si no (se quito), Musica local.
     Node* selected = nullptr;
@@ -419,6 +447,7 @@ void LibraryBrowser::rebuildTree (bool force)
                              : c->kind == Node::Kind::video ? filterKind == 2
                              : c->kind == Node::Kind::favorites ? filterKind == 3
                              : c->kind == Node::Kind::mostPlayed ? filterKind == 4
+                             : c->kind == Node::Kind::playlist ? filterKind == 5 && filterPlaylist == c->playlistId
                              : (c->kind == Node::Kind::myFolder || c->kind == Node::Kind::drive || c->kind == Node::Kind::folder)
                                    && filterFolder != juce::File() && c->file == filterFolder;
             if (match)
@@ -445,6 +474,8 @@ void LibraryBrowser::selectNode (Node* node)
         case Node::Kind::video: filterKind = 2; break;
         case Node::Kind::favorites: filterKind = 3; break;
         case Node::Kind::mostPlayed: filterKind = 4; break;
+        case Node::Kind::playlist: filterKind = 5; filterPlaylist = node->playlistId; break;
+        case Node::Kind::playlists: filterKind = 5; filterPlaylist = 0; break;   // la carpeta de listas: vacia
         case Node::Kind::myFolder: case Node::Kind::drive: case Node::Kind::folder: filterFolder = node->file; break;
         default: break;
     }
@@ -628,10 +659,11 @@ void LibraryBrowser::refresh()
     const int row = table.getSelectedRow();
     const auto selectedId = row >= 0 && row < (int) tracks.size() ? tracks[(size_t) row].id : 0;
 
-    if (filterKind == 3 || filterKind == 4)
+    if (filterKind >= 3)
     {
-        // Favoritos o mas reproducidos (en su orden), con el texto del buscador si hay.
-        tracks = filterKind == 3 ? library.getFavorites() : library.getMostPlayed();
+        // Favoritos, mas reproducidos o una lista (en su orden), con el texto del buscador si hay.
+        tracks = filterKind == 3 ? library.getFavorites() : filterKind == 4 ? library.getMostPlayed()
+               : filterPlaylist != 0 ? library.getPlaylistTracks (filterPlaylist) : std::vector<TrackInfo>();
         juce::StringArray words;
         words.addTokens (Library::normalise (searchBox.getText()), " \t", "\"");
         words.removeEmptyStrings();
@@ -834,6 +866,93 @@ void LibraryBrowser::cellClicked (int row, int column, const juce::MouseEvent& e
         toggleFavorite (tracks[(size_t) row]);
 }
 
+void LibraryBrowser::addToPlaylist (juce::int64 id, const juce::File& file)
+{
+    if (! library.addToPlaylist (id, file))
+        showToast ("Esa cancion ya estaba en la lista.", false);
+    rebuildTree (false);
+    refresh();
+}
+
+void LibraryBrowser::createPlaylistThen (std::function<void (juce::int64)> then)
+{
+    auto* window = new juce::AlertWindow ("Nueva lista", "Nombre de la lista:", juce::MessageBoxIconType::NoIcon, this);
+    window->addTextEditor ("name", "Lista " + juce::String ((int) library.getPlaylists().size() + 1));
+    window->addButton ("Crear", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    window->addButton ("Cancelar", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    window->enterModalState (true, juce::ModalCallbackFunction::create ([this, window, then] (int result)
+    {
+        const auto name = window->getTextEditorContents ("name").trim();
+        if (result != 1 || name.isEmpty())
+            return;
+        const auto id = library.createPlaylist (name);
+        openPlaylists = true;
+        rebuildTree (false);
+        if (then && id != 0)
+            then (id);
+    }), true);
+}
+
+void LibraryBrowser::addPlaylistToAutomix (juce::int64 id, bool replace)
+{
+    if (automix == nullptr)
+        return;
+    if (replace)
+        automix->clearQueue();
+    for (const auto& t : library.getPlaylistTracks (id))
+        automix->add (itemFor (t));
+    if (replace && ! automix->isEnabled())
+        automix->setEnabled (true);
+}
+
+void LibraryBrowser::showPlaylistMenu (juce::int64 id, const juce::String& name)
+{
+    enum { create = 1, rename, remove, play, append };
+    juce::PopupMenu menu;
+    if (id != 0)
+    {
+        menu.addSectionHeader (name);
+        menu.addItem (play, "Reproducir en el automix", automix != nullptr);
+        menu.addItem (append, "Anadir al final del automix", automix != nullptr);
+        menu.addSeparator();
+        menu.addItem (rename, "Renombrar...");
+        menu.addItem (remove, "Borrar la lista (las canciones no se borran)");
+        menu.addSeparator();
+    }
+    menu.addItem (create, "Nueva lista...");
+    menu.showMenuAsync (juce::PopupMenu::Options(), [this, id, name] (int r)
+    {
+        if (r == create)
+            createPlaylistThen ({});
+        else if (r == play || r == append)
+            addPlaylistToAutomix (id, r == play);
+        else if (r == remove)
+        {
+            library.deletePlaylist (id);
+            if (filterKind == 5 && filterPlaylist == id)
+                filterPlaylist = 0;
+            rebuildTree (false);
+            refresh();
+        }
+        else if (r == rename)
+        {
+            auto* window = new juce::AlertWindow ("Renombrar lista", {}, juce::MessageBoxIconType::NoIcon, this);
+            window->addTextEditor ("name", name);
+            window->addButton ("Aceptar", 1, juce::KeyPress (juce::KeyPress::returnKey));
+            window->addButton ("Cancelar", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+            window->enterModalState (true, juce::ModalCallbackFunction::create ([this, window, id] (int result)
+            {
+                const auto newName = window->getTextEditorContents ("name").trim();
+                if (result == 1 && newName.isNotEmpty())
+                {
+                    library.renamePlaylist (id, newName);
+                    rebuildTree (false);
+                }
+            }), true);
+        }
+    });
+}
+
 void LibraryBrowser::toggleFavorite (const TrackInfo& track)
 {
     library.setFavorite (track.getFile(), ! track.favorite);
@@ -843,9 +962,25 @@ void LibraryBrowser::toggleFavorite (const TrackInfo& track)
 
 void LibraryBrowser::showTrackMenu (int row)
 {
-    enum { addToAutomix = 1, playNext, loadA, loadB, prepareStems, favorite };
+    enum { addToAutomix = 1, playNext, loadA, loadB, prepareStems, favorite, removeFromList, moveUp, moveDown,
+           newList = 999, listBase = 1000 };
     juce::PopupMenu menu;
     menu.addItem (favorite, tracks[(size_t) row].favorite ? "Quitar de favoritos" : "Agregar a favoritos");
+    // Agregar a una lista (o a una nueva); en una lista, quitarla o moverla.
+    const auto playlists = library.getPlaylists();
+    juce::PopupMenu lists;
+    for (size_t i = 0; i < playlists.size(); ++i)
+        lists.addItem (listBase + (int) i, playlists[i].name, playlists[i].id != filterPlaylist || filterKind != 5);
+    if (! playlists.empty())
+        lists.addSeparator();
+    lists.addItem (newList, "Nueva lista...");
+    menu.addSubMenu ("Agregar a lista", lists);
+    if (filterKind == 5 && filterPlaylist != 0)
+    {
+        menu.addItem (removeFromList, "Quitar de esta lista");
+        menu.addItem (moveUp, "Mover arriba", row > 0);
+        menu.addItem (moveDown, "Mover abajo", row + 1 < (int) tracks.size());
+    }
     menu.addSeparator();
     if (automix != nullptr)
     {
@@ -861,8 +996,22 @@ void LibraryBrowser::showTrackMenu (int row)
         menu.addItem (prepareStems, "Preparar stems (voz / instrumental) en segundo plano");
     }
     const auto track = tracks[(size_t) row];
-    menu.showMenuAsync (juce::PopupMenu::Options(), [this, track] (int r)
+    menu.showMenuAsync (juce::PopupMenu::Options(), [this, track, row, playlists] (int r)
     {
+        if (r >= listBase && r < listBase + (int) playlists.size())
+            addToPlaylist (playlists[(size_t) (r - listBase)].id, track.getFile());
+        else if (r == newList)
+            createPlaylistThen ([this, file = track.getFile()] (juce::int64 id) { addToPlaylist (id, file); });
+        else if (r == removeFromList)
+            library.removeFromPlaylist (filterPlaylist, track.id);
+        else if (r == moveUp || r == moveDown)
+            library.moveInPlaylist (filterPlaylist, track.id, row + (r == moveUp ? -1 : 1));
+        if (r == removeFromList || r == moveUp || r == moveDown)
+        {
+            rebuildTree (false);
+            refresh();
+            return;
+        }
         if (r == addToAutomix && automix != nullptr)          automix->add (itemFor (track));
         else if (r == playNext && automix != nullptr)         automix->insertNext (itemFor (track));
         else if ((r == loadA || r == loadB) && onLoadToDeck)  onLoadToDeck (track, r == loadA ? 0 : 1);

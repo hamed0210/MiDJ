@@ -68,15 +68,30 @@ void AutomixPanel::showListsMenu()
     menu.addSectionHeader ("Mas reproducidos (" + juce::String (played) + ")");
     menu.addItem (playMostPlayed, "Reproducir Mas reproducidos", played > 0);
     menu.addItem (addMostPlayed, "Anadir Mas reproducidos al final", played > 0);
+    // Las listas propias: cada una con Reproducir / Anadir al final (100 + 2i y 101 + 2i).
+    const auto playlists = library.getPlaylists();
+    if (! playlists.empty())
+    {
+        menu.addSectionHeader ("Mis listas");
+        for (size_t i = 0; i < playlists.size(); ++i)
+        {
+            juce::PopupMenu sub;
+            sub.addItem (100 + 2 * (int) i, "Reproducir", playlists[i].count > 0);
+            sub.addItem (101 + 2 * (int) i, "Anadir al final", playlists[i].count > 0);
+            menu.addSubMenu (playlists[i].name + " (" + juce::String (playlists[i].count) + ")", sub);
+        }
+    }
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&listsButton),
-                        [safe = juce::Component::SafePointer<AutomixPanel> (this)] (int r)
+                        [safe = juce::Component::SafePointer<AutomixPanel> (this), playlists] (int r)
                         {
                             if (safe == nullptr || r <= 0)
                                 return;
                             auto& panel = *safe;
+                            const bool own = r >= 100;
                             const bool favs = r == playFavorites || r == addFavorites;
-                            const bool replace = r == playFavorites || r == playMostPlayed;
-                            const auto tracks = favs ? panel.library.getFavorites() : panel.library.getMostPlayed();
+                            const bool replace = own ? r % 2 == 0 : (r == playFavorites || r == playMostPlayed);
+                            const auto tracks = own ? panel.library.getPlaylistTracks (playlists[(size_t) ((r - 100) / 2)].id)
+                                              : favs ? panel.library.getFavorites() : panel.library.getMostPlayed();
                             if (replace)
                                 panel.automix.clearQueue();
                             for (const auto& t : tracks)

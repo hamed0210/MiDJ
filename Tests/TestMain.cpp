@@ -3415,6 +3415,74 @@ int videoInfo (const juce::File& file)
     return 0;
 }
 
+// --- Biblioteca: favoritos, mas reproducidos y listas propias -----------------------------------
+
+void testLibraryLists()
+{
+    std::printf ("== Biblioteca: favoritos, mas reproducidos y listas ==\n");
+    using midj::Library;
+    const auto root = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("MiDJTestsLists");
+    root.deleteRecursively();
+    const auto music = root.getChildFile ("Musica");
+    const auto a = music.getChildFile ("Artista A - Uno.wav"), b = music.getChildFile ("Artista B - Dos.wav"),
+               c = music.getChildFile ("Artista C - Tres.wav");
+    for (const auto& f : { a, b, c })
+        writeClickWav (f, 120.0);
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    const auto dbFile = root.getChildFile ("library.db");
+    {
+        Library library (formats);
+        library.open (dbFile);
+        library.addFolder (music);
+        library.scanNow();
+
+        library.setFavorite (b, true);
+        library.setFavorite (c, true);
+        library.setFavorite (c, false);
+        check (library.countFavorites() == 1 && library.getFavorites()[0].getFile() == b, "favoritos: marcar y desmarcar",
+               library.countFavorites(), 1.0);
+
+        library.addPlay (a);
+        library.addPlay (c);
+        library.addPlay (c);
+        const auto most = library.getMostPlayed();
+        check (most.size() == 2 && most[0].getFile() == c && most[0].plays == 2, "mas reproducidos: la que mas sono primero",
+               most.empty() ? 0.0 : most[0].plays, 2.0);
+
+        const auto list = library.createPlaylist ("Bailables");
+        check (list != 0, "listas: crear", (double) list, 1.0);
+        library.addToPlaylist (list, c);
+        library.addToPlaylist (list, a);
+        check (! library.addToPlaylist (list, a), "listas: no repite una cancion", 0.0, 0.0);
+        check (! library.addToPlaylist (list, music.getChildFile ("no existe.wav")), "listas: solo canciones de la biblioteca", 0.0, 0.0);
+        auto tracks = library.getPlaylistTracks (list);
+        check (tracks.size() == 2 && tracks[0].getFile() == c && tracks[1].getFile() == a, "listas: en el orden en que se anadieron",
+               (double) tracks.size(), 2.0);
+        library.addToPlaylist (list, b);
+        library.moveInPlaylist (list, tracks[1].id, 0);   // a al principio
+        tracks = library.getPlaylistTracks (list);
+        check (tracks.size() == 3 && tracks[0].getFile() == a && tracks[1].getFile() == c && tracks[2].getFile() == b,
+               "listas: mover al principio", (double) tracks.size(), 3.0);
+        library.removeFromPlaylist (list, tracks[1].id);
+        library.renamePlaylist (list, "Fiesta");
+        const auto lists = library.getPlaylists();
+        check (lists.size() == 1 && lists[0].name == "Fiesta" && lists[0].count == 2, "listas: quitar una y renombrar",
+               lists.empty() ? 0.0 : lists[0].count, 2.0);
+    }
+    {
+        Library library (formats);   // reabrir: todo guardado
+        library.open (dbFile);
+        const auto lists = library.getPlaylists();
+        check (library.countFavorites() == 1 && library.countPlayed() == 2 && lists.size() == 1 && lists[0].count == 2,
+               "reabrir: favoritos, reproducciones y listas guardados", (double) lists.size(), 1.0);
+        library.deletePlaylist (lists[0].id);
+        check (library.getPlaylists().empty() && library.getNumTracks() == 3, "listas: borrar la lista no borra canciones",
+               library.getNumTracks(), 3.0);
+    }
+    root.deleteRecursively();
+}
+
 // --- Limitador del master, pre-escucha y audifonos por otra tarjeta -----------------------------
 
 void testLimiterAndHeadphones()
@@ -3638,6 +3706,7 @@ int main (int argc, char* argv[])
     testChannelStrip();
     testMixerChannels();
     testLimiterAndHeadphones();
+    testLibraryLists();
 
     std::printf ("== Video ==\n");
     testVideo();

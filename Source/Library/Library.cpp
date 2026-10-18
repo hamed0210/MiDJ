@@ -71,6 +71,14 @@ namespace
         CREATE INDEX IF NOT EXISTS tracks_pending ON tracks (analysed);
         CREATE TABLE IF NOT EXISTS excluded (       -- carpetas quitadas del arbol (no se re-escanean)
             path  TEXT PRIMARY KEY);
+        CREATE TABLE IF NOT EXISTS playlists (      -- listas de reproduccion propias
+            id    INTEGER PRIMARY KEY,
+            name  TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS playlist_items (
+            playlist_id INTEGER NOT NULL,
+            track_id    INTEGER NOT NULL,
+            position    INTEGER NOT NULL,
+            PRIMARY KEY (playlist_id, track_id));
     )sql";
 
     constexpr const char* trackColumns = "id, path, title, artist, album, genre, duration, bpm, first_beat, analysed, favorite, plays";
@@ -697,5 +705,111 @@ int Library::countPlayed() const
     const juce::ScopedLock sl (lock);
     Statement s (db, "SELECT COUNT(*) FROM tracks WHERE hidden = 0 AND plays > 0");
     return s.next() ? juce::jmin (50, (int) s.integer (0)) : 0;
+}
+
+std::vector<Library::Playlist> Library::getPlaylists() const
+{
+    std::vector<Playlist> result;
+    const juce::ScopedLock sl (lock);
+    Statement s (db, "SELECT p.id, p.name, (SELECT COUNT(*) FROM playlist_items i JOIN tracks t ON t.id = i.track_id"
+                     " WHERE i.playlist_id = p.id AND t.hidden = 0) FROM playlists p ORDER BY p.name COLLATE NOCASE");
+    while (s.next())
+        result.push_back ({ s.integer (0), s.text (1), (int) s.integer (2) });
+    return result;
+}
+
+juce::int64 Library::createPlaylist (const juce::String& name)
+{
+    juce::int64 id = 0;
+    {
+        const juce::ScopedLock sl (lock);
+        if (Statement (db, "INSERT INTO playlists (name) VALUES (?)").bind (1, name).run())
+            id = sqlite3_last_insert_rowid (db);
+    }
+    sendChangeMessage();
+    return id;
+}
+
+void Library::renamePlaylist (juce::int64 id, const juce::String& name)
+{
+    {
+        const juce::ScopedLock sl (lock);
+        Statement (db, "UPDATE playlists SET name = ? WHERE id = ?").bind (1, name).bind (2, id).run();
+    }
+    sendChangeMessage();
+}
+
+void Library::deletePlaylist (juce::int64 id)
+{
+    {
+        const juce::ScopedLock sl (lock);
+        Statement (db, "DELETE FROM playlist_items WHERE playlist_id = ?").bind (1, id).run();
+        Statement (db, "DELETE FROM playlists WHERE id = ?").bind (1, id).run();
+    }
+    sendChangeMessage();
+}
+
+bool Library::addToPlaylist (juce::int64 id, const juce::File& file)
+{
+    bool added = false;
+    {
+        const juce::ScopedLock sl (lock);
+        Statement find (db, "SELECT id FROM tracks WHERE path = ?");
+        find.bind (1, file.getFullPathName());
+        if (! find.next())
+            return false;
+        const auto trackId = find.integer (0);
+        Statement last (db, "SELECT COALESCE (MAX (position), -1) FROM playlist_items WHERE playlist_id = ?");
+        last.bind (1, id);
+        const auto position = last.next() ? last.integer (0) + 1 : 0;
+        Statement insert (db, "INSERT OR IGNORE INTO playlist_items (playlist_id, track_id, position) VALUES (?, ?, ?)");
+        insert.bind (1, id).bind (2, trackId).bind (3, position);
+        added = insert.run() && sqlite3_changes (db) > 0;
+    }
+    if (added)
+        sendChangeMessage();
+    return added;
+}
+
+void Library::removeFromPlaylist (juce::int64 id, juce::int64 trackId)
+{
+    {
+        const juce::ScopedLock sl (lock);
+        Statement (db, "DELETE FROM playlist_items WHERE playlist_id = ? AND track_id = ?").bind (1, id).bind (2, trackId).run();
+    }
+    sendChangeMessage();
+}
+
+void Library::moveInPlaylist (juce::int64 id, juce::int64 trackId, int newIndex)
+{
+    // Se rehace el orden entero (las listas son cortas).
+    auto tracks = getPlaylistTracks (id);
+    const auto it = std::find_if (tracks.begin(), tracks.end(), [trackId] (const TrackInfo& t) { return t.id == trackId; });
+    if (it == tracks.end())
+        return;
+    const auto moved = *it;
+    tracks.erase (it);
+    tracks.insert (tracks.begin() + juce::jlimit (0, (int) tracks.size(), newIndex), moved);
+    {
+        const juce::ScopedLock sl (lock);
+        exec ("BEGIN");
+        for (size_t i = 0; i < tracks.size(); ++i)
+            Statement (db, "UPDATE playlist_items SET position = ? WHERE playlist_id = ? AND track_id = ?")
+                .bind (1, (juce::int64) i).bind (2, id).bind (3, tracks[i].id).run();
+        exec ("COMMIT");
+    }
+    sendChangeMessage();
+}
+
+std::vector<TrackInfo> Library::getPlaylistTracks (juce::int64 id) const
+{
+    std::vector<TrackInfo> result;
+    const juce::ScopedLock sl (lock);
+    Statement s (db, (juce::String ("SELECT ") + trackColumns + " FROM playlist_items i JOIN tracks ON tracks.id = i.track_id"
+                      " WHERE i.playlist_id = ? AND hidden = 0 ORDER BY i.position").toRawUTF8());
+    s.bind (1, id);
+    while (s.next())
+        result.push_back (readTrack (s));
+    return result;
 }
 }

@@ -81,6 +81,11 @@ private:
     static Automix::Item itemFor (const TrackInfo& t) { return { t.getFile(), t.title, t.artist, t.bpm }; }
     void showTrackMenu (int row);
     void toggleFavorite (const TrackInfo& track);
+    // Listas de reproduccion: menu de la carpeta "Listas" (id 0) o de una lista; anadir canciones.
+    void showPlaylistMenu (juce::int64 id, const juce::String& name);
+    void addToPlaylist (juce::int64 id, const juce::File& file);
+    void createPlaylistThen (std::function<void (juce::int64)> then);
+    void addPlaylistToAutomix (juce::int64 id, bool replace);
     juce::String selectionName() const;
 
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
@@ -107,7 +112,9 @@ private:
     std::unique_ptr<Node> rootNode;
     juce::String treeSignature;           // para no rehacer el arbol si no cambio nada
     juce::File filterFolder;              // lo elegido en el arbol
-    int filterKind = 0;                   // 0 todo, 1 solo audio, 2 solo video, 3 favoritos, 4 mas reproducidos
+    int filterKind = 0;                   // 0 todo, 1 solo audio, 2 solo video, 3 favoritos, 4 mas reproducidos, 5 una lista
+    juce::int64 filterPlaylist = 0;       // la lista elegida (filterKind 5)
+    bool openPlaylists = false;           // desplegar "Listas" al rehacer el arbol (lista nueva)
     juce::String filterLabel { "Musica local" };
     IconButton syncButton { Icons::Glyph::sync, "Sincronizar: buscar musica y videos en todo el PC y anadirlos" },
                addFolderButton { Icons::Glyph::folderPlus, "Anadir una carpeta" };

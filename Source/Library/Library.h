@@ -108,6 +108,23 @@ public:
     int countFavorites() const;
     int countPlayed() const;
 
+    // Listas de reproduccion propias: un nombre y canciones en orden (una cancion no se repite
+    // en la misma lista).
+    struct Playlist
+    {
+        juce::int64 id = 0;
+        juce::String name;
+        int count = 0;
+    };
+    std::vector<Playlist> getPlaylists() const;   // por nombre
+    juce::int64 createPlaylist (const juce::String& name);
+    void renamePlaylist (juce::int64 id, const juce::String& name);
+    void deletePlaylist (juce::int64 id);
+    bool addToPlaylist (juce::int64 id, const juce::File& file);   // false si no esta en la biblioteca o ya estaba
+    void removeFromPlaylist (juce::int64 id, juce::int64 trackId);
+    void moveInPlaylist (juce::int64 id, juce::int64 trackId, int newIndex);
+    std::vector<TrackInfo> getPlaylistTracks (juce::int64 id) const;
+
     // Minusculas y sin acentos: "María Ñandú" -> "maria nandu".
     static juce::String normalise (const juce::String& text);
     // Extensiones de audio que entran en la biblioteca.
