@@ -130,7 +130,8 @@ void DeckComponent::addLearnTargets (std::vector<LearnTarget>& out, const juce::
     out.push_back ({ &tempoSlider, prefix + "tempo" });
     out.push_back ({ &vocalButton, prefix + "vocals" });
     out.push_back ({ &instrumentalButton, prefix + "instrumental" });
-    out.push_back ({ this, prefix + "jog", waveformArea });   // la forma de onda hace de plato
+    if (sections.waveform)
+        out.push_back ({ this, prefix + "jog", waveformArea });   // la forma de onda hace de plato
     effectsRow.addLearnTargets (out, prefix);
 }
 
@@ -237,9 +238,9 @@ void DeckComponent::updateLabels()
 
     // Stems: Voz / Instrumental si ya estan; si no, "Separar stems" con el estado de la separacion.
     const bool stems = deck.hasStems();
-    vocalButton.setVisible (stems);
-    instrumentalButton.setVisible (stems);
-    stemsButton.setVisible (! stems);
+    vocalButton.setVisible (sections.stems && stems);
+    instrumentalButton.setVisible (sections.stems && stems);
+    stemsButton.setVisible (sections.stems && ! stems);
     styleToggle (vocalButton, deck.isVocalsOn(), false);
     styleToggle (instrumentalButton, deck.isInstrumentalOn(), false);
     if (! stems)
@@ -429,30 +430,47 @@ void DeckComponent::paint (juce::Graphics& g)
 
     paintPoster (g);
 
-    // Titulo, artista, BPM y tiempo.
+    // Titulo, artista, BPM y tiempo. Con poco alto, el BPM y el tiempo van a la derecha.
     auto info = infoArea;
-    auto bottomRow = info.removeFromBottom (34);
+    const bool compact = info.getHeight() < 74;
+    if (compact)
+    {
+        auto right = info.removeFromRight (84);
+        g.setColour (DarkLookAndFeel::text);
+        g.setFont (DarkLookAndFeel::mono (22.0f, true));
+        g.drawText (bpmText, right.removeFromTop (right.getHeight() / 2 + 6), juce::Justification::bottomRight, false);
+        g.setColour (DarkLookAndFeel::textQuiet);
+        g.setFont (DarkLookAndFeel::mono (11.0f));
+        g.drawText (timeText, right.withTrimmedTop (2), juce::Justification::topRight, false);
+        info.removeFromRight (6);
+        info = info.withSizeKeepingCentre (info.getWidth(), 40);
+    }
+    auto bottomRow = compact ? juce::Rectangle<int>() : info.removeFromBottom (34);
     g.setColour (DarkLookAndFeel::text);
-    g.setFont (DarkLookAndFeel::sans (16.0f, true));
+    g.setFont (DarkLookAndFeel::sans (compact ? 15.0f : 16.0f, true));
     g.drawText (deck.isLoading() ? juce::String ("Cargando...") : deck.hasTrack() ? title : juce::String ("Sin cancion"),
                 info.removeFromTop (22), juce::Justification::centredLeft, true);
     g.setColour (DarkLookAndFeel::textQuiet);
     g.setFont (DarkLookAndFeel::sans (13.0f));
     g.drawText (deck.hasTrack() ? artist : juce::String ("Arrastrala o pulsa ") + deckName + " en la biblioteca",
                 info.removeFromTop (18), juce::Justification::centredLeft, true);
-    g.setColour (DarkLookAndFeel::text);
-    g.setFont (DarkLookAndFeel::mono (28.0f, true));
-    const int bpmWidth = juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), bpmText) + 4;
-    g.drawText (bpmText, bottomRow.removeFromLeft (bpmWidth), juce::Justification::bottomLeft, false);
-    g.setColour (DarkLookAndFeel::textQuiet);
-    g.setFont (DarkLookAndFeel::sans (12.0f));
-    g.drawText ("BPM", bottomRow.removeFromLeft (34).withTrimmedBottom (4), juce::Justification::bottomLeft, false);
-    g.setFont (DarkLookAndFeel::mono (12.0f));
-    g.drawText (timeText, bottomRow.withTrimmedBottom (4), juce::Justification::bottomRight, false);
+    if (! compact)
+    {
+        g.setColour (DarkLookAndFeel::text);
+        g.setFont (DarkLookAndFeel::mono (28.0f, true));
+        const int bpmWidth = juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), bpmText) + 4;
+        g.drawText (bpmText, bottomRow.removeFromLeft (bpmWidth), juce::Justification::bottomLeft, false);
+        g.setColour (DarkLookAndFeel::textQuiet);
+        g.setFont (DarkLookAndFeel::sans (12.0f));
+        g.drawText ("BPM", bottomRow.removeFromLeft (34).withTrimmedBottom (4), juce::Justification::bottomLeft, false);
+        g.setFont (DarkLookAndFeel::mono (12.0f));
+        g.drawText (timeText, bottomRow.withTrimmedBottom (4), juce::Justification::bottomRight, false);
+    }
 
-    paintWaveform (g);
+    if (sections.waveform)
+        paintWaveform (g);
 
-    // Pitch: nombre, valor (verde en 0) y escala con el 0 en el centro del fader.
+    // Pitch (las zonas quedan vacias si esta oculto): nombre, valor (verde en 0) y escala con el 0 en el centro del fader.
     const bool centred = tempoSlider.isAtCentre();
     g.setFont (DarkLookAndFeel::sans (12.0f));
     g.setColour (DarkLookAndFeel::textQuiet);
@@ -471,72 +489,123 @@ void DeckComponent::paint (juce::Graphics& g)
     g.setFont (DarkLookAndFeel::sans (12.0f));
     g.setColour (DarkLookAndFeel::textQuiet);
     g.drawText ("Loop", loopLabelArea, juce::Justification::centredLeft, false);
-    g.drawText ("Stems", stemsLabelArea, juce::Justification::centredLeft, false);
+}
+
+namespace
+{
+    // Medidas del deck (alto de cada parte y separacion entre ellas).
+    constexpr int padX = 12, padY = 10, headerH = 22, gapH = 8, minInfoH = 60, waveH = 40, pitchH = 50,
+                  rowH = 30, effectsH = 38, transportH = 42;
+}
+
+void DeckComponent::setSections (const Sections& s)
+{
+    sections = s;
+    tempoSlider.setVisible (s.pitch);
+    keyButton.setVisible (s.pitch);
+    for (auto& b : loopButtons)
+        b.setVisible (s.loops);
+    effectsRow.setVisible (s.effects);
+    waveDirty = true;
+    updateLabels();   // los botones de stems
+    resized();
+    repaint();
+}
+
+int DeckComponent::getPreferredHeight() const
+{
+    int h = 2 * padY + headerH + gapH + minInfoH + gapH + transportH;
+    if (sections.waveform)                 h += gapH + waveH;
+    if (sections.pitch)                    h += gapH + pitchH;
+    if (sections.loops || sections.stems)  h += gapH + rowH;
+    if (sections.effects)                  h += gapH + effectsH;
+    return h;
 }
 
 void DeckComponent::resized()
 {
-    auto area = getLocalBounds().reduced (14, 12);
-    headerArea = area.removeFromTop (22);
+    auto area = getLocalBounds().reduced (padX, padY);
+    headerArea = area.removeFromTop (headerH);
     loadButton.setBounds (headerArea.withLeft (headerArea.getRight() - 28));
-    area.removeFromTop (10);
+    area.removeFromTop (gapH);
 
-    // Transporte abajo del todo.
-    auto transport = area.removeFromBottom (44);
+    // Transporte abajo del todo; encima, de abajo arriba, las partes que se ven. Lo que sobra
+    // queda arriba para la portada y el titulo (asi no hay huecos al ocultar algo).
+    auto transport = area.removeFromBottom (transportH);
     const int bw = (transport.getWidth() - 16) / 3;
     playButton.setBounds (transport.removeFromLeft (bw));
     transport.removeFromLeft (8);
     cueButton.setBounds (transport.removeFromLeft (bw));
     transport.removeFromLeft (8);
     syncButton.setBounds (transport);
-    area.removeFromBottom (10);
+    area.removeFromBottom (gapH);
 
-    effectsRow.setBounds (area.removeFromBottom (40));
-    area.removeFromBottom (8);
-
-    // Bucles y stems en una fila.
-    auto row = area.removeFromBottom (32);
-    loopLabelArea = row.removeFromLeft (38);
-    for (auto& b : loopButtons)
+    if (sections.effects)
     {
-        b.setBounds (row.removeFromLeft (34));
-        row.removeFromLeft (4);
+        effectsRow.setBounds (area.removeFromBottom (effectsH));
+        area.removeFromBottom (gapH);
     }
-    row.removeFromLeft (8);
-    stemsLabelArea = row.removeFromLeft (46);
-    stemsButton.setBounds (row);
-    vocalButton.setBounds (row.removeFromLeft (row.getWidth() * 2 / 5).withTrimmedRight (3));
-    instrumentalButton.setBounds (row.withTrimmedLeft (3));
-    area.removeFromBottom (10);
+
+    // Bucles y stems en una fila (si solo queda una de las dos, ocupa la fila).
+    loopLabelArea = {};
+    if (sections.loops || sections.stems)
+    {
+        auto row = area.removeFromBottom (rowH);
+        if (sections.loops)
+        {
+            loopLabelArea = row.removeFromLeft (36);
+            for (auto& b : loopButtons)
+            {
+                b.setBounds (row.removeFromLeft (34));
+                row.removeFromLeft (4);
+            }
+            row.removeFromLeft (6);
+        }
+        stemsButton.setBounds (row);
+        vocalButton.setBounds (row.removeFromLeft (row.getWidth() * 2 / 5).withTrimmedRight (3));
+        instrumentalButton.setBounds (row.withTrimmedLeft (3));
+        area.removeFromBottom (gapH);
+    }
 
     // Pitch: nombre y valor, fader (con KEY a la derecha) y escala.
-    auto pitch = area.removeFromBottom (58);
-    auto key = pitch.removeFromRight (52);
-    keyButton.setBounds (key.withSizeKeepingCentre (48, 30).withY (pitch.getY() + 18));
-    pitch.removeFromRight (10);
-    pitchLabelArea = pitch.removeFromTop (16);
-    pitchScaleArea = pitch.removeFromBottom (12);
-    tempoSlider.setBounds (pitch);
-    area.removeFromBottom (10);
-
-    // Portada e informacion: lado a lado si falta alto; si sobra, la portada a todo lo ancho.
-    const bool bigPoster = area.getHeight() >= 300;
-    if (bigPoster)
+    pitchLabelArea = pitchScaleArea = {};
+    if (sections.pitch)
     {
-        const int h = juce::jmin (area.getWidth() * 9 / 16, area.getHeight() - 76 - 10 - 48);
+        auto pitch = area.removeFromBottom (pitchH);
+        auto key = pitch.removeFromRight (52);
+        keyButton.setBounds (key.withSizeKeepingCentre (48, 30).withY (pitch.getY() + 14));
+        pitch.removeFromRight (10);
+        pitchLabelArea = pitch.removeFromTop (14);
+        pitchScaleArea = pitch.removeFromBottom (11);
+        tempoSlider.setBounds (pitch);
+        area.removeFromBottom (gapH);
+    }
+
+    // Forma de onda delgada.
+    waveformArea = {};
+    if (sections.waveform)
+    {
+        waveformArea = area.removeFromBottom (waveH);
+        area.removeFromBottom (gapH);
+    }
+
+    // Portada e informacion con todo lo que queda: lado a lado (portada cuadrada si es poco
+    // alto); si sobra mucho, la portada a todo lo ancho y la informacion debajo.
+    if (area.getHeight() >= 76 + 10 + 120)
+    {
+        const int h = juce::jmin (area.getWidth() * 9 / 16, area.getHeight() - 76 - 10);
         posterArea = area.removeFromTop (h).withSizeKeepingCentre (juce::jmin (area.getWidth(), h * 16 / 9), h);
         area.removeFromTop (10);
-        infoArea = area.removeFromTop (76);
+        infoArea = area.withSizeKeepingCentre (area.getWidth(), juce::jmin (area.getHeight(), 76));
     }
     else
     {
-        auto top = area.removeFromTop (76);
-        posterArea = top.removeFromLeft (76 * 16 / 9);
+        auto top = area.withSizeKeepingCentre (area.getWidth(), juce::jmin (area.getHeight(), 110));
+        const int h = top.getHeight();
+        posterArea = top.removeFromLeft (h < 74 ? h : juce::jmin (h * 16 / 9, top.getWidth() * 45 / 100));
         top.removeFromLeft (12);
         infoArea = top;
     }
-    area.removeFromTop (10);
-    waveformArea = area.withHeight (juce::jmax (30, area.getHeight()));
 }
 
 void DeckComponent::mouseDown (const juce::MouseEvent& e)

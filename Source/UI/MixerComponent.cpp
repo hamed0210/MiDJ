@@ -43,17 +43,6 @@ MixerComponent::MixerComponent (Mixer& m) : mixer (m)
     addChildComponent (masterLeft);
     addChildComponent (masterRight);
 
-    // Pestanas AUDIO / PROGRAMA.
-    for (auto* b : { &audioTabButton, &videoTabButton })
-    {
-        b->setColour (juce::ComboBox::outlineColourId, juce::Colours::transparentBlack);
-        addAndMakeVisible (b);
-    }
-    audioTabButton.setTooltip ("EQ, filtro y vumetros de cada deck y el master (tecla V: cambiar de pestana)");
-    videoTabButton.setTooltip ("La salida de video y el nivel de video de cada deck (tecla V)");
-    audioTabButton.onClick = [this] { showVideoTab (false); };
-    videoTabButton.onClick = [this] { showVideoTab (true); };
-
     noVideoLabel.setJustificationType (juce::Justification::centred);
     noVideoLabel.setColour (juce::Label::textColourId, DarkLookAndFeel::textQuiet);
     addChildComponent (noVideoLabel);
@@ -67,16 +56,26 @@ MixerComponent::MixerComponent (Mixer& m) : mixer (m)
     addTransitionButton.setTooltip ("Crear una transicion propia: stinger (video), barrido con imagen o fundido a un color");
     addTransitionButton.onClick = [this] { addCustomTransition(); };
     addAndMakeVisible (addTransitionButton);
-    transitionMs.setSliderStyle (juce::Slider::LinearHorizontal);
-    transitionMs.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-    transitionMs.setRange (100.0, 3000.0, 50.0);
+    // Duracion: un boton con el valor; al pulsarlo, la lista de duraciones.
     transitionMs.setTooltip ("Duracion de la transicion");
-    transitionMs.onValueChange = [this]
+    transitionMs.onClick = [this]
     {
-        if (stage == nullptr) return;
-        stage->getScenes().transition.milliseconds = (int) transitionMs.getValue();
-        stage->scenesChanged();
-        repaint (msLabelArea);
+        if (stage == nullptr)
+            return;
+        const int current = stage->getScenes().transition.milliseconds;
+        juce::PopupMenu menu;
+        menu.addSectionHeader ("Duracion de la transicion");
+        for (int ms : { 250, 400, 600, 800, 1000, 1500, 2000, 3000 })
+            menu.addItem (ms, juce::String (ms) + " ms", true, ms == current);
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&transitionMs),
+                            [safe = juce::Component::SafePointer<MixerComponent> (this)] (int ms)
+                            {
+                                if (safe == nullptr || safe->stage == nullptr || ms <= 0)
+                                    return;
+                                safe->stage->getScenes().transition.milliseconds = ms;
+                                safe->stage->scenesChanged();
+                                safe->refreshTransitions();
+                            });
     };
     addAndMakeVisible (transitionMs);
 
@@ -129,24 +128,9 @@ void MixerComponent::setUpChannel (int index)
     v.setDoubleClickReturnValue (true, ChannelStrip::defaultVolume);
     v.setColour (juce::Slider::trackColourId, accent);
     v.setTooltip (juce::String ("Volumen del deck ") + (index == 0 ? "A" : "B"));
-    v.onValueChange = [this, &v, &strip] { strip.setVolume ((float) v.getValue()); repaint (faderLabelArea[0].getUnion (faderLabelArea[1])); };
+    v.onValueChange = [this, index, &v, &strip] { strip.setVolume ((float) v.getValue()); repaint (faderLabelArea[(size_t) index]); };
     addAndMakeVisible (v);
     addAndMakeVisible (channel.faderMeter);
-
-    auto& level = channel.videoLevel;
-    level.setSliderStyle (juce::Slider::LinearHorizontal);
-    level.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-    level.setRange (0.0, 1.0);
-    level.setValue (1.0, juce::dontSendNotification);
-    level.setDoubleClickReturnValue (true, 1.0);
-    level.setColour (juce::Slider::trackColourId, accent);
-    level.setTooltip (juce::String ("Nivel de video del deck ") + (index == 0 ? "A" : "B") + " (0 = no se ve)");
-    level.onValueChange = [this, index, &level]
-    {
-        if (stage != nullptr) stage->getMix().setLevel (index, (float) level.getValue());
-        repaint (videoLevelLabel[(size_t) index]);
-    };
-    addChildComponent (level);
 }
 
 void MixerComponent::setVideoStage (VideoStage* s)
@@ -211,7 +195,7 @@ void MixerComponent::refreshTransitions()
     {
         const auto& tr = stage->getScenes().transition;
         const auto* own = stage->getScenes().currentCustom();
-        transitionMs.setValue (tr.milliseconds, juce::dontSendNotification);
+        transitionMs.setButtonText (tr.type == TransitionType::cut && own == nullptr ? juce::String ("al instante") : juce::String (tr.milliseconds) + " ms");
         transitionMs.setEnabled (own == nullptr && tr.type != TransitionType::cut);
         for (size_t i = 0; i < transitionButtons.size(); ++i)
         {
@@ -280,17 +264,11 @@ void MixerComponent::addCustomTransition()
 void MixerComponent::showVideoTab (bool video)
 {
     videoTab = video;
-    for (auto [b, on] : { std::pair<juce::TextButton*, bool> { &audioTabButton, ! video }, std::pair<juce::TextButton*, bool> { &videoTabButton, video } })
-    {
-        b->setColour (juce::TextButton::buttonColourId, on ? DarkLookAndFeel::line : juce::Colours::transparentBlack);
-        b->setColour (juce::TextButton::textColourOffId, on ? DarkLookAndFeel::text : DarkLookAndFeel::textQuiet);
-    }
     for (auto& c : channels)
     {
         for (auto& k : c.knobs)
             k->setVisible (! video);
         c.meter.setVisible (! video);
-        c.videoLevel.setVisible (video);
     }
     master.setVisible (! video);
     masterLeft.setVisible (! video);
@@ -306,6 +284,8 @@ void MixerComponent::showVideoTab (bool video)
     }
     resized();
     repaint();
+    if (onTabChanged)
+        onTabChanged (video);
 }
 
 void MixerComponent::addLearnTargets (std::vector<LearnTarget>& out)
@@ -360,15 +340,14 @@ void MixerComponent::timerCallback()
 
 void MixerComponent::paint (juce::Graphics& g)
 {
-    // Fondo de las pestanas, de la pagina y de la tarjeta del crossfader.
+    // Tarjeta de arriba (volumenes y pagina) y franja del crossfader.
     g.setColour (DarkLookAndFeel::panel);
-    g.fillRoundedRectangle (tabsArea.toFloat(), 10.0f);
-    g.fillRoundedRectangle (cardArea.toFloat(), 14.0f);
+    g.fillRoundedRectangle (pageArea.toFloat(), 14.0f);
+    g.fillRoundedRectangle (cardArea.toFloat(), 12.0f);
+    g.setColour (DarkLookAndFeel::line);
+    g.drawRoundedRectangle (pageArea.toFloat().reduced (0.5f), 14.0f, 1.0f);
     if (! videoTab)
     {
-        g.fillRoundedRectangle (pageArea.toFloat(), 14.0f);
-        g.setColour (DarkLookAndFeel::line);
-        g.drawRoundedRectangle (pageArea.toFloat().reduced (0.5f), 14.0f, 1.0f);
         g.setFont (DarkLookAndFeel::sans (12.0f, true).withKerningFactor (0.08f));
         for (size_t c = 0; c < channels.size(); ++c)
         {
@@ -385,126 +364,122 @@ void MixerComponent::paint (juce::Graphics& g)
     else
     {
         g.setColour (juce::Colours::black);
-        g.fillRoundedRectangle (previewArea.toFloat(), 10.0f);
-        g.setColour (DarkLookAndFeel::panel);
-        g.fillRoundedRectangle (videoLabelArea.toFloat(), 10.0f);
-        g.setFont (DarkLookAndFeel::sans (12.0f, true));
-        for (size_t c = 0; c < channels.size(); ++c)
-        {
-            auto r = videoLevelLabel[c];
-            g.setColour (deckColour (c));
-            g.drawText (c == 0 ? "Video A" : "Video B", r.removeFromLeft (56), juce::Justification::centredLeft, false);
-            g.setColour (DarkLookAndFeel::text);
-            g.setFont (DarkLookAndFeel::mono (12.0f));
-            g.drawText (juce::String (juce::roundToInt (channels[c].videoLevel.getValue() * 100.0)) + " %", r.removeFromRight (44),
-                        juce::Justification::centredRight, false);
-            g.setFont (DarkLookAndFeel::sans (12.0f, true));
-        }
+        g.fillRoundedRectangle (previewArea.toFloat(), 8.0f);
     }
 
-    // Tarjeta: VOL A / VOL B con su valor, A y B junto al crossfader, el texto del centro y la transicion.
+    // VOL A / VOL B arriba de cada fader y su valor debajo.
     for (size_t c = 0; c < channels.size(); ++c)
     {
-        auto r = faderLabelArea[c];
         g.setColour (deckColour (c));
         g.setFont (DarkLookAndFeel::sans (11.0f, true));
-        g.drawText (c == 0 ? "VOL A" : "VOL B", r.removeFromTop (14), juce::Justification::centred, false);
+        g.drawText (c == 0 ? "VOL A" : "VOL B", faderTitleArea[c], juce::Justification::centred, false);
         g.setColour (DarkLookAndFeel::textQuiet);
         g.setFont (DarkLookAndFeel::mono (11.0f));
-        g.drawText (juce::String (juce::roundToInt (channels[c].volume.getValue() * 100.0)) + " %", r, juce::Justification::centred, false);
+        g.drawText (juce::String (juce::roundToInt (channels[c].volume.getValue() * 100.0)) + " %", faderLabelArea[c], juce::Justification::centred, false);
     }
+
+    // Franja: A y B junto al crossfader, el texto del centro, separador y la duracion de la transicion.
     g.setFont (DarkLookAndFeel::sans (14.0f, true));
     g.setColour (DarkLookAndFeel::accentA);
     g.drawText ("A", crossLabelsA, juce::Justification::centred, false);
     g.setColour (DarkLookAndFeel::accentB);
     g.drawText ("B", crossLabelsB, juce::Justification::centred, false);
     g.setColour (crossfader.isAtCentre() ? DarkLookAndFeel::good : DarkLookAndFeel::textFaint);
-    g.setFont (DarkLookAndFeel::sans (10.0f, true).withKerningFactor (0.08f));
+    g.setFont (DarkLookAndFeel::sans (9.5f, true).withKerningFactor (0.08f));
     g.drawText (centreText(), centreLabelArea, juce::Justification::centred, false);
-    g.setColour (DarkLookAndFeel::textQuiet);
-    g.setFont (DarkLookAndFeel::sans (12.0f));
-    g.drawText ("Transicion", transitionLabelArea, juce::Justification::centredLeft, false);
-    if (stage != nullptr)
+    if (! separatorArea.isEmpty())
     {
-        const auto& tr = stage->getScenes().transition;
-        g.setColour (DarkLookAndFeel::text);
-        g.setFont (DarkLookAndFeel::mono (12.0f));
-        g.drawText (tr.type == TransitionType::cut ? juce::String ("al instante") : juce::String (tr.milliseconds) + " ms",
-                    msLabelArea, juce::Justification::centredRight, false);
+        g.setColour (DarkLookAndFeel::selection);
+        g.fillRect (separatorArea);
     }
 }
 
 void MixerComponent::resized()
 {
     auto area = getLocalBounds();
+    constexpr int gap = 8, buttonH = 28, msButtonW = 72, crossMinW = 140;
 
-    // Pestanas.
-    tabsArea = area.removeFromTop (34);
-    auto tabs = tabsArea.reduced (4);
-    audioTabButton.setBounds (tabs.removeFromLeft (tabs.getWidth() / 2));
-    videoTabButton.setBounds (tabs);
-    area.removeFromTop (10);
+    // Ancho de los botones de transicion (las propias con su x detras) y de "+".
+    const juce::Font font (DarkLookAndFeel::sans (12.0f, true));
+    std::vector<int> widths;
+    int transitionsW = 0;
+    for (size_t i = 0; i < transitionButtons.size(); ++i)
+    {
+        widths.push_back (juce::GlyphArrangement::getStringWidthInt (font, transitionButtons[i]->getButtonText()) + 16);
+        transitionsW += widths.back() + (removeButtons[i] != nullptr ? 22 : 0) + 4;
+    }
+    transitionsW += 28 + 8 + msButtonW;
 
-    // Tarjeta del crossfader abajo.
-    cardArea = area.removeFromBottom (area.getHeight() >= 420 ? 164 : 136);
-    area.removeFromBottom (10);
+    // Franja de abajo: una linea si cabe todo; si no, el crossfader arriba y la transicion debajo.
+    const int stripInnerW = area.getWidth() - 24;
+    const bool oneLine = stripInnerW >= 2 * 18 + crossMinW + 25 + transitionsW;
+    cardArea = area.removeFromBottom (oneLine ? 46 : 82);
+    area.removeFromBottom (gap);
     pageArea = area;
 
     {
-        auto card = cardArea.reduced (14, 12);
-        for (size_t c = 0; c < channels.size(); ++c)
+        auto strip = cardArea.reduced (12, 6);
+        juce::Rectangle<int> cross, row;
+        separatorArea = {};
+        if (oneLine)
         {
-            auto col = c == 0 ? card.removeFromLeft (46) : card.removeFromRight (46);
-            faderLabelArea[c] = col.removeFromBottom (30);
-            col.removeFromBottom (4);
-            auto meter = c == 0 ? col.removeFromRight (6) : col.removeFromLeft (6);
-            channels[c].faderMeter.setBounds (meter);
-            channels[c].volume.setBounds (col.reduced (2, 0));
+            row = strip.removeFromRight (transitionsW);
+            separatorArea = strip.removeFromRight (25).withSizeKeepingCentre (1, 22);
+            cross = strip;
         }
-        card.reduce (14, 0);
-        auto cross = card.removeFromTop (30);
+        else
+        {
+            cross = strip.removeFromTop (34);
+            strip.removeFromTop (4);
+            row = strip;
+        }
         crossLabelsA = cross.removeFromLeft (18);
         crossLabelsB = cross.removeFromRight (18);
-        crossfader.setBounds (cross.reduced (6, 0));
-        centreLabelArea = card.removeFromTop (14);
-        card.removeFromTop (8);
+        centreLabelArea = cross.removeFromBottom (11);
+        crossfader.setBounds (cross.reduced (4, 0));
 
-        // Botones de transicion (pueden ocupar dos lineas) y la duracion.
-        auto msRow = card.removeFromBottom (24);
-        transitionLabelArea = msRow.removeFromLeft (70);
-        msLabelArea = msRow.removeFromRight (76);
-        transitionMs.setBounds (msRow.reduced (4, 2));
-        card.removeFromBottom (6);
-        juce::Font font (DarkLookAndFeel::sans (12.0f, true));
-        int x = card.getX(), y = card.getY();
-        const int rowH = 28;
-        // Cada boton (las propias con su x detras) y al final "+ Personalizada".
+        // La duracion a la derecha; los botones y "+" desde la izquierda.
+        row = row.withSizeKeepingCentre (row.getWidth(), buttonH);
+        transitionMs.setBounds (row.removeFromRight (msButtonW));
+        row.removeFromRight (8);
+        int x = row.getX();
         for (size_t i = 0; i <= transitionButtons.size(); ++i)
         {
-            auto* b = i < transitionButtons.size() ? static_cast<juce::Button*> (transitionButtons[i].get()) : &addTransitionButton;
-            auto* remove = i < removeButtons.size() ? removeButtons[i].get() : nullptr;
-            const int w = juce::GlyphArrangement::getStringWidthInt (font, b->getButtonText()) + 22;
+            const bool isAdd = i == transitionButtons.size();
+            auto* b = isAdd ? static_cast<juce::Button*> (&addTransitionButton) : transitionButtons[i].get();
+            auto* remove = isAdd ? nullptr : removeButtons[i].get();
+            const int w = isAdd ? 28 : widths[i];
             const int total = w + (remove != nullptr ? 22 : 0);
-            if (x + total > card.getRight() && x > card.getX())
-            {
-                x = card.getX();
-                y += rowH + 4;
-            }
-            const bool fits = y + rowH <= card.getBottom() + 2;
-            b->setBounds (x, y, w, rowH);
+            const bool fits = x + total <= row.getRight();
+            b->setBounds (x, row.getY(), w, buttonH);
             b->setVisible (fits);
             if (remove != nullptr)
             {
-                remove->setBounds (x + w, y + 4, 20, rowH - 8);
+                remove->setBounds (x + w, row.getY() + 4, 20, buttonH - 8);
                 remove->setVisible (fits);
             }
             x += total + 4;
         }
     }
 
+    // Tarjeta de arriba: el volumen de cada deck a los lados (titulo, fader con vumetro y valor).
+    auto inner = pageArea.reduced (12, 10);
+    for (size_t c = 0; c < channels.size(); ++c)
+    {
+        auto col = c == 0 ? inner.removeFromLeft (46) : inner.removeFromRight (46);
+        faderTitleArea[c] = col.removeFromTop (14);
+        col.removeFromTop (6);
+        faderLabelArea[c] = col.removeFromBottom (14);
+        col.removeFromBottom (6);
+        auto meter = c == 0 ? col.removeFromRight (6) : col.removeFromLeft (6);
+        channels[c].faderMeter.setBounds (meter);
+        channels[c].volume.setBounds (col.reduced (2, 0));
+    }
+    inner.reduce (12, 0);
+
     // Pagina AUDIO: tira A | master | tira B.
     {
-        auto page = pageArea.reduced (14, 12);
+        auto page = inner;
         auto centre = page.withSizeKeepingCentre (juce::jmin (112, page.getWidth() / 4), page.getHeight());
         auto stripA = page.withRight (centre.getX() - 16);
         auto stripB = page.withLeft (centre.getRight() + 16);
@@ -544,23 +519,13 @@ void MixerComponent::resized()
         }
     }
 
-    // Pagina PROGRAMA: la vista previa 16:9 y los niveles de video debajo.
+    // Pagina PROGRAMA: la vista previa 16:9, lo mas grande que quepa entre los volumenes.
     {
-        auto page = pageArea;
-        videoLabelArea = page.removeFromBottom (34);
-        page.removeFromBottom (8);
-        const int h = juce::jmin (page.getHeight(), page.getWidth() * 9 / 16);
-        previewArea = page.withSizeKeepingCentre (h * 16 / 9, h);
+        const int h = juce::jmin (inner.getHeight(), inner.getWidth() * 9 / 16);
+        previewArea = inner.withSizeKeepingCentre (h * 16 / 9, h);
         if (stage != nullptr)
             stage->getPreview().setBounds (previewArea);
         noVideoLabel.setBounds (previewArea);
-        auto levels = videoLabelArea.reduced (12, 4);
-        for (size_t c = 0; c < channels.size(); ++c)
-        {
-            auto half = c == 0 ? levels.removeFromLeft (levels.getWidth() / 2 - 8) : levels.withTrimmedLeft (8);
-            videoLevelLabel[c] = half;
-            channels[c].videoLevel.setBounds (half.withTrimmedLeft (60).withTrimmedRight (48));
-        }
     }
 }
 }

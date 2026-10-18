@@ -13,12 +13,14 @@ namespace midj
 {
 class VideoStage;
 
-// Columna central (diseno "Escenario"), con dos pestanas arriba:
+// Columna central (diseno "Escenario"). Arriba una tarjeta con el volumen de cada deck a los
+// lados (fader vertical y vumetro) y en medio la pagina elegida con las pestanas AUDIO /
+// PROGRAMA (que estan en la barra de arriba de la ventana):
 //  - AUDIO: para cada deck High, Mid, Low, Gain y Filter con su vumetro; en medio el master
 //    (volumen y vumetro de cada lado). Doble clic en un mando: a su posicion neutra.
-//  - PROGRAMA: la salida de video (vista previa) y el nivel de video de cada deck.
-// Debajo, siempre, la tarjeta del crossfader: el volumen de cada deck a los lados (fader
-// vertical y vumetro), el crossfader con su centro marcado y la transicion entre escenas.
+//  - PROGRAMA: la salida de video (vista previa), lo mas grande que quepa.
+// Debajo, una franja con el crossfader (su centro marcado) y en la misma linea la transicion
+// entre escenas y su duracion; si no caben, la transicion pasa a una segunda linea.
 class MixerComponent : public juce::Component,
                        private juce::Timer
 {
@@ -30,6 +32,7 @@ public:
     void setVideoStage (VideoStage* stage);
     void showVideoTab (bool program);
     bool isVideoTabShowing() const { return videoTab; }
+    std::function<void (bool program)> onTabChanged;   // para marcar la pestana de la barra de arriba
     // Las transiciones cambiaron (p. ej. se anadio una personalizada): rehacer los botones.
     void refreshTransitions();
     void addCustomTransition();   // boton "+ Personalizada": abre la ventana para crearla
@@ -51,7 +54,6 @@ private:
         // Orden: HIGH, MID, LOW, GAIN, FILTER (como se ven, en dos filas).
         std::array<std::unique_ptr<LabelledKnob>, 5> knobs;
         juce::Slider volume;
-        juce::Slider videoLevel;   // pestana PROGRAMA
         LevelMeter meter, faderMeter { 12 };
     };
 
@@ -66,18 +68,17 @@ private:
     std::array<Channel, 2> channels;
     LabelledKnob master { "Master", 0.0, 1.0, Mixer::defaultMasterVolume };
     LevelMeter masterLeft, masterRight;
-    juce::TextButton audioTabButton { "AUDIO" }, videoTabButton { "PROGRAMA" };
     juce::Label noVideoLabel;
     CentredSlider crossfader { 0.0, 1.0, 0.02 };
     std::vector<std::unique_ptr<juce::TextButton>> transitionButtons;
     std::vector<int> transitionCustomIds;                       // 0 = una de las de siempre
     std::vector<std::unique_ptr<IconButton>> removeButtons;     // la x de cada propia (nullptr en las de siempre)
-    juce::TextButton addTransitionButton { "+ Personalizada" };
-    juce::Slider transitionMs;
+    juce::TextButton addTransitionButton { "+" };
+    juce::TextButton transitionMs;   // la duracion ("600 ms"); al pulsarlo, la lista de duraciones
 
-    juce::Rectangle<int> tabsArea, pageArea, previewArea, cardArea, centreLabelArea, crossLabelsA, crossLabelsB,
-                         transitionLabelArea, msLabelArea, masterLabelArea, videoLabelArea;
-    std::array<juce::Rectangle<int>, 2> stripLabelArea, faderLabelArea, videoLevelLabel;
+    juce::Rectangle<int> pageArea, previewArea, cardArea, centreLabelArea, crossLabelsA, crossLabelsB,
+                         masterLabelArea, separatorArea;
+    std::array<juce::Rectangle<int>, 2> stripLabelArea, faderTitleArea, faderLabelArea;
     juce::String lastCentreText;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MixerComponent)

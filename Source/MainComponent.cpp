@@ -77,7 +77,21 @@ MainComponent::MainComponent()
     // Sampler: el banco se lee al arrancar y se guarda cada vez que cambia.
     mixer.getSampler().loadBank (getDataFolder().getChildFile ("sampler.xml"), formatManager);
     samplerPanel.onBankChanged = [this] { saveSamplerBank(); };
+    samplerPanel.setCompact (true);   // en la barra de arriba
     addAndMakeVisible (samplerPanel);
+
+    // Pestanas AUDIO / PROGRAMA del centro, en la barra de arriba junto a Proyector.
+    for (auto* b : { &audioTabButton, &programTabButton })
+    {
+        b->setColour (juce::ComboBox::outlineColourId, juce::Colours::transparentBlack);
+        addAndMakeVisible (b);
+    }
+    audioTabButton.setTooltip ("EQ, filtro y vumetros de cada deck y el master (tecla V: cambiar de pestana)");
+    programTabButton.setTooltip ("La salida de video (tecla V)");
+    audioTabButton.onClick = [this] { mixerView.showVideoTab (false); };
+    programTabButton.onClick = [this] { mixerView.showVideoTab (true); };
+    mixerView.onTabChanged = [this] (bool program) { updateTabButtons (program); };
+    updateTabButtons (mixerView.isVideoTabShowing());
 
     // Video: el escenario existe siempre (las escenas y fuentes estan en la ventana principal);
     // solo compone mientras se ve la pestana VIDEO o hay un proyector.
@@ -421,11 +435,11 @@ void MainComponent::releaseResources()
 void MainComponent::paint (juce::Graphics& g)
 {
     g.fillAll (DarkLookAndFeel::background);
-    // Barra de arriba: nombre y formato de la salida de video.
+    // Barra de arriba: nombre y formato de la salida de video; fondo de las pestanas.
     auto header = headerArea;
     g.setColour (DarkLookAndFeel::selection);
     g.fillRect (header.removeFromBottom (1));
-    auto h = header.reduced (20, 0);
+    auto h = header.reduced (14, 0);
     g.setColour (DarkLookAndFeel::text);
     g.setFont (DarkLookAndFeel::sans (17.0f, true));
     g.drawText ("MiDJ", h.removeFromLeft (56), juce::Justification::centredLeft, false);
@@ -435,43 +449,70 @@ void MainComponent::paint (juce::Graphics& g)
         g.setFont (DarkLookAndFeel::mono (12.0f));
         g.drawText (juce::String (videoStage->getProgramWidth()) + juce::String::fromUTF8 (" \xc3\x97 ") + juce::String (videoStage->getProgramHeight())
                         + juce::String::fromUTF8 (" \xc2\xb7 ") + juce::String (videoSettings().fps) + " fps",
-                    h.removeFromLeft (200), juce::Justification::centredLeft, false);
+                    h.removeFromLeft (170), juce::Justification::centredLeft, false);
     }
+    g.setColour (DarkLookAndFeel::panel);
+    g.fillRoundedRectangle (tabsArea.toFloat(), 8.0f);
+}
+
+void MainComponent::updateTabButtons (bool program)
+{
+    for (auto [b, on] : { std::pair<juce::TextButton*, bool> { &audioTabButton, ! program }, std::pair<juce::TextButton*, bool> { &programTabButton, program } })
+    {
+        b->setColour (juce::TextButton::buttonColourId, on ? DarkLookAndFeel::line : juce::Colours::transparentBlack);
+        b->setColour (juce::TextButton::textColourOffId, on ? DarkLookAndFeel::text : DarkLookAndFeel::textQuiet);
+    }
+}
+
+void MainComponent::panelsChanged()
+{
+    deckViewA.setSections (panels.deck);
+    deckViewB.setSections (panels.deck);
+    resized();
+    repaint();
 }
 
 void MainComponent::resized()
 {
     auto area = getLocalBounds();
-    headerArea = area.removeFromTop (52);
+    headerArea = area.removeFromTop (46);
     {
-        auto h = headerArea.reduced (20, 10);
-        settingsButton.setBounds (h.removeFromRight (34));
+        // Derecha: AUDIO / PROGRAMA, Proyector, MIDI, Atajos y Ajustes. Izquierda: nombre, formato y sampler.
+        auto h = headerArea.reduced (14, 8);
+        settingsButton.setBounds (h.removeFromRight (32));
+        h.removeFromRight (6);
+        helpButton.setBounds (h.removeFromRight (70));
+        h.removeFromRight (6);
+        midiButton.setBounds (h.removeFromRight (58));
+        h.removeFromRight (6);
+        projectorButton.setBounds (h.removeFromRight (92));
         h.removeFromRight (8);
-        helpButton.setBounds (h.removeFromRight (74));
-        h.removeFromRight (8);
-        midiButton.setBounds (h.removeFromRight (64));
-        h.removeFromRight (8);
-        projectorButton.setBounds (h.removeFromRight (96));
+        tabsArea = h.removeFromRight (220);
+        auto tabs = tabsArea.reduced (3);
+        audioTabButton.setBounds (tabs.removeFromLeft (tabs.getWidth() / 2));
+        programTabButton.setBounds (tabs);
+        h.removeFromLeft (56 + 170);
+        // El sampler solo si cabe entero (en ventanas estrechas se oculta).
+        const bool samplerFits = h.getWidth() >= SamplerPanel::compactWidth + 16;
+        samplerPanel.setVisible (panels.sampler && samplerFits);
+        if (samplerFits)
+            samplerPanel.setBounds (h.removeFromLeft (SamplerPanel::compactWidth));
     }
-    area.reduce (16, 12);
-    constexpr int gap = 12;
+    area.reduce (10, 8);
+    constexpr int gap = 8;
 
-    // Arriba los decks y el centro; abajo los paneles (si hay alguno a la vista).
+    // Arriba los decks y el centro, con el alto que piden los decks (al ocultar partes de los
+    // decks crece lo de abajo); abajo los paneles (si hay alguno a la vista).
     const bool anyBottom = panels.library || panels.automix || panels.scenes;
-    auto top = anyBottom ? area.removeFromTop (juce::jlimit (380, juce::jmax (380, area.getHeight() - 220), area.getHeight() * 62 / 100)) : area;
+    const int deckH = juce::jmax (300, deckViewA.getPreferredHeight());
+    auto top = anyBottom ? area.removeFromTop (juce::jlimit (240, juce::jmax (240, area.getHeight() - 160), deckH)) : area;
     if (anyBottom)
         area.removeFromTop (gap);
 
-    const int deckWidth = juce::jlimit (360, 520, (top.getWidth() - 2 * gap) * 29 / 100);
+    const int deckWidth = juce::jlimit (330, 480, (top.getWidth() - 2 * gap) * 26 / 100);
     deckViewA.setBounds (top.removeFromLeft (deckWidth));
     deckViewB.setBounds (top.removeFromRight (deckWidth));
     top.reduce (gap, 0);
-    samplerPanel.setVisible (panels.sampler);
-    if (panels.sampler)
-    {
-        samplerPanel.setBounds (top.removeFromBottom (juce::jlimit (86, 124, top.getHeight() / 5)));
-        top.removeFromBottom (gap);
-    }
     mixerView.setBounds (top);
 
     // Abajo: biblioteca | automix | escenas y fuentes. La biblioteca se queda con lo que sobra.
@@ -509,15 +550,17 @@ void MainComponent::resized()
 
 void MainComponent::showSettings()
 {
-    // Ventanita de Ajustes (junto al boton): paneles visibles y anchos.
+    // Ventanita de Ajustes (junto al boton): paneles visibles, partes de los decks y anchos.
     class Content : public juce::Component
     {
     public:
         explicit Content (MainComponent& o) : owner (o)
         {
             auto& p = owner.getPanels();
-            const std::array<std::pair<bool*, const char*>, 4> items { { { &p.library, "Biblioteca" }, { &p.automix, "Automix" },
-                                                                         { &p.scenes, "Escenas y fuentes" }, { &p.sampler, "Sampler" } } };
+            const std::array<std::pair<bool*, const char*>, numToggles> items { {
+                { &p.library, "Biblioteca" }, { &p.automix, "Automix" }, { &p.scenes, "Escenas y fuentes" }, { &p.sampler, "Sampler (barra de arriba)" },
+                { &p.deck.waveform, "Forma de onda" }, { &p.deck.pitch, "Pitch y KEY" }, { &p.deck.loops, "Loops" },
+                { &p.deck.stems, "Stems" }, { &p.deck.effects, "Efectos (FX)" } } };
             for (size_t i = 0; i < items.size(); ++i)
             {
                 auto& t = toggles[i];
@@ -535,7 +578,7 @@ void MainComponent::showSettings()
                 repaint();
             };
             addAndMakeVisible (reset);
-            setSize (320, 344);
+            setSize (320, 512);
         }
 
         void paint (juce::Graphics& g) override
@@ -546,27 +589,32 @@ void MainComponent::showSettings()
             g.setColour (DarkLookAndFeel::textQuiet);
             g.setFont (DarkLookAndFeel::sans (11.0f, true).withKerningFactor (0.08f));
             g.drawText ("PANELES VISIBLES", 16, 44, getWidth() - 32, 16, juce::Justification::centredLeft);
-            g.drawText ("ANCHOS", 16, 232, getWidth() - 32, 16, juce::Justification::centredLeft);
+            g.drawText ("EN LOS DECKS", 16, 64 + numPanels * step + 6, getWidth() - 32, 16, juce::Justification::centredLeft);
+            g.drawText ("ANCHOS", 16, widthsY, getWidth() - 32, 16, juce::Justification::centredLeft);
             const auto& p = owner.getPanels();
             const auto dot = juce::String::fromUTF8 ("  \xc2\xb7  ");
             g.setFont (DarkLookAndFeel::sans (12.0f));
             g.setColour (DarkLookAndFeel::text);
             g.drawFittedText ("Automix " + juce::String (p.automixWidth) + " px" + dot + "Escenas y fuentes " + juce::String (p.scenesWidth)
                                   + " px" + dot + "Biblioteca: el resto",
-                              16, 250, getWidth() - 32, 32, juce::Justification::topLeft, 2);
+                              16, widthsY + 18, getWidth() - 32, 32, juce::Justification::topLeft, 2);
         }
 
         void resized() override
         {
-            for (size_t i = 0; i < toggles.size(); ++i)
-                toggles[i].setBounds (16, 64 + (int) i * 40, getWidth() - 32, 36);
-            reset.setBounds (16, 292, 220, 34);
+            for (int i = 0; i < numToggles; ++i)
+            {
+                const int y = 64 + i * step + (i >= numPanels ? 28 : 0);
+                toggles[(size_t) i].setBounds (16, y, getWidth() - 32, step - 2);
+            }
+            reset.setBounds (16, widthsY + 58, 220, 34);
         }
 
     private:
+        enum { numPanels = 4, numToggles = 9, step = 34, widthsY = 64 + numToggles * step + 28 + 8 };
         MainComponent& owner;
-        std::array<juce::ToggleButton, 4> toggles;
-        juce::TextButton reset { "Restablecer anchos y paneles" };
+        std::array<juce::ToggleButton, numToggles> toggles;
+        juce::TextButton reset { "Mostrar todo y restablecer anchos" };
     };
 
     juce::CallOutBox::launchAsynchronously (std::make_unique<Content> (*this), settingsButton.getScreenBounds(), nullptr);
@@ -608,6 +656,11 @@ void MainComponent::saveLayout()
     xml.setAttribute ("showAutomix", panels.automix);
     xml.setAttribute ("showScenes", panels.scenes);
     xml.setAttribute ("showSampler", panels.sampler);
+    xml.setAttribute ("deckWaveform", panels.deck.waveform);
+    xml.setAttribute ("deckPitch", panels.deck.pitch);
+    xml.setAttribute ("deckLoops", panels.deck.loops);
+    xml.setAttribute ("deckStems", panels.deck.stems);
+    xml.setAttribute ("deckEffects", panels.deck.effects);
     xml.writeTo (getDataFolder().getChildFile ("layout.xml"));
 }
 
@@ -627,6 +680,13 @@ void MainComponent::loadLayout()
     panels.automix = xml->getBoolAttribute ("showAutomix", true);
     panels.scenes = xml->getBoolAttribute ("showScenes", true);
     panels.sampler = xml->getBoolAttribute ("showSampler", true);
+    panels.deck.waveform = xml->getBoolAttribute ("deckWaveform", true);
+    panels.deck.pitch = xml->getBoolAttribute ("deckPitch", true);
+    panels.deck.loops = xml->getBoolAttribute ("deckLoops", true);
+    panels.deck.stems = xml->getBoolAttribute ("deckStems", true);
+    panels.deck.effects = xml->getBoolAttribute ("deckEffects", true);
+    deckViewA.setSections (panels.deck);
+    deckViewB.setSections (panels.deck);
     if (const int w = xml->getIntAttribute ("folders"); w > 0)
         browser->setFoldersWidth (w);
     if (xml->getStringAttribute ("tab") == "video")

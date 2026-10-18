@@ -21,10 +21,12 @@
 namespace midj
 {
 // Ventana principal (diseno "Escenario"): arriba una barra con el nombre, el formato del video,
-// Proyector, MIDI, Atajos y Ajustes; debajo los dos decks a los lados y en el centro las
-// pestanas AUDIO / PROGRAMA, la tarjeta del crossfader y el sampler; abajo, con el ancho que se
-// quiera (barritas para arrastrar), la biblioteca, el automix y las escenas y fuentes. Ajustes
-// permite ocultar paneles. Atajos de teclado: ver shortcutsHelp().
+// el sampler (compacto) y a la derecha las pestanas AUDIO / PROGRAMA junto a Proyector, MIDI,
+// Atajos y Ajustes; debajo los dos decks a los lados y en el centro el programa (o el EQ) con
+// el volumen de cada deck a los lados y la franja del crossfader y las transiciones; abajo, con
+// el ancho que se quiera (barritas para arrastrar), la biblioteca, el automix y las escenas y
+// fuentes. La fila de los decks mide lo que piden los decks: lo que se oculta en ellos desde
+// Ajustes lo ganan los paneles de abajo. Atajos de teclado: ver shortcutsHelp().
 class MainComponent : public juce::AudioAppComponent,
                       public juce::DragAndDropContainer,
                       private juce::KeyListener,
@@ -44,15 +46,16 @@ public:
 
     static juce::String shortcutsHelp();
 
-    // Paneles que se pueden ocultar desde Ajustes y sus anchos (los de abajo).
+    // Paneles y partes de los decks que se pueden ocultar desde Ajustes, y los anchos de abajo.
     struct PanelSettings
     {
         bool library = true, automix = true, scenes = true, sampler = true;
+        DeckComponent::Sections deck;
         int automixWidth = defaultAutomixWidth, scenesWidth = defaultScenesWidth;
         static constexpr int defaultAutomixWidth = 300, defaultScenesWidth = 280, minWidth = 220, maxWidth = 640;
     };
     PanelSettings& getPanels() { return panels; }
-    void panelsChanged() { resized(); repaint(); }
+    void panelsChanged();
 
 private:
     // Carga usando el analisis guardado en la biblioteca si lo hay (carga mucho mas rapida).
@@ -105,8 +108,10 @@ private:
 
     // Barra de arriba.
     juce::TextButton projectorButton { "Proyector" }, midiButton { "MIDI" }, helpButton { "Atajos" };
-    IconButton settingsButton { Icons::Glyph::sliders, "Ajustes: paneles visibles y anchos" };
-    juce::Rectangle<int> headerArea;
+    juce::TextButton audioTabButton { "AUDIO" }, programTabButton { "PROGRAMA" };
+    IconButton settingsButton { Icons::Glyph::sliders, "Ajustes: que se ve en pantalla y anchos" };
+    juce::Rectangle<int> headerArea, tabsArea;
+    void updateTabButtons (bool program);
 
     // Abajo: biblioteca | automix | escenas y fuentes, con barritas para cambiar el ancho.
     PanelSettings panels;

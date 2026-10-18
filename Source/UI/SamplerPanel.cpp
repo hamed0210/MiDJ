@@ -19,7 +19,8 @@ namespace
 
 class SamplerPanel::Pad : public juce::Component,
                           public juce::DragAndDropTarget,
-                          public juce::FileDragAndDropTarget
+                          public juce::FileDragAndDropTarget,
+                          public juce::SettableTooltipClient
 {
 public:
     Pad (SamplerPanel& o, int i) : owner (o), index (i) {}
@@ -37,6 +38,9 @@ public:
         if (state != lastState)
         {
             lastState = state;
+            const juce::String name = "Pad " + juce::String (index + 1) + " (tecla " + juce::String (index + 1) + ")";
+            setTooltip (sample != nullptr ? name + ": " + sample->name + ". Clic derecho: opciones"
+                                          : name + " vacio: clic para cargar un sonido. Clic derecho: grabar de un deck");
             repaint();
         }
     }
@@ -49,19 +53,20 @@ public:
         const bool playing = smp.isPlaying (index);
         const bool recording = smp.getRecordingPad() == index;
         auto r = getLocalBounds().toFloat().reduced (1.0f);
+        const float radius = owner.compact ? 6.0f : 10.0f, inset = owner.compact ? 4.0f : 8.0f;
 
         // Vacio: borde de rayas; con sonido: borde de su color; sonando: lleno de su color.
         g.setColour (playing ? colour : DarkLookAndFeel::raised);
-        g.fillRoundedRectangle (r, 10.0f);
+        g.fillRoundedRectangle (r, radius);
         if (dragOver)
         {
             g.setColour (juce::Colours::white);
-            g.drawRoundedRectangle (r, 10.0f, 2.0f);
+            g.drawRoundedRectangle (r, radius, 2.0f);
         }
         else if (sample == nullptr && ! recording)
         {
             juce::Path outline, dashed;
-            outline.addRoundedRectangle (r.reduced (0.5f), 10.0f);
+            outline.addRoundedRectangle (r.reduced (0.5f), radius);
             const float dashes[] = { 4.0f, 3.0f };
             juce::PathStrokeType (1.0f).createDashedStroke (dashed, outline, dashes, 2);
             g.setColour (DarkLookAndFeel::line.brighter (0.25f));
@@ -70,14 +75,24 @@ public:
         else
         {
             g.setColour (colour.withAlpha (0.9f));
-            g.drawRoundedRectangle (r.reduced (0.5f), 10.0f, 1.0f);
+            g.drawRoundedRectangle (r.reduced (0.5f), radius, 1.0f);
         }
 
         // Barra de avance abajo.
         if (playing)
         {
             g.setColour (DarkLookAndFeel::background.withAlpha (0.6f));
-            g.fillRect (r.reduced (8.0f, 0.0f).removeFromBottom (3.0f).withWidth ((r.getWidth() - 16.0f) * (float) smp.getProgress (index)));
+            g.fillRect (r.reduced (inset, 0.0f).removeFromBottom (3.0f).withWidth ((r.getWidth() - 2.0f * inset) * (float) smp.getProgress (index)));
+        }
+
+        // Compacto: solo el numero (rojo mientras graba).
+        if (owner.compact)
+        {
+            g.setFont (DarkLookAndFeel::mono (12.0f, sample != nullptr));
+            g.setColour (recording ? DarkLookAndFeel::danger : playing ? DarkLookAndFeel::background
+                                   : sample != nullptr ? DarkLookAndFeel::text : DarkLookAndFeel::textFaint);
+            g.drawText (juce::String (index + 1), getLocalBounds(), juce::Justification::centred);
+            return;
         }
 
         auto text = getLocalBounds().reduced (8, 6);
@@ -304,6 +319,13 @@ void SamplerPanel::addLearnTargets (std::vector<LearnTarget>& out)
 
 void SamplerPanel::paint (juce::Graphics& g)
 {
+    if (compact)
+    {
+        g.setColour (DarkLookAndFeel::textQuiet);
+        g.setFont (DarkLookAndFeel::sans (11.0f, true).withKerningFactor (0.08f));
+        g.drawText ("SAMPLER", titleArea, juce::Justification::centredLeft, false);
+        return;
+    }
     g.setColour (DarkLookAndFeel::panel);
     g.fillRoundedRectangle (getLocalBounds().toFloat(), 14.0f);
     g.setColour (DarkLookAndFeel::text);
@@ -317,6 +339,25 @@ void SamplerPanel::paint (juce::Graphics& g)
 
 void SamplerPanel::resized()
 {
+    if (compact)
+    {
+        // Una fila: SAMPLER, los 8 pads, el volumen y "Parar".
+        auto row = getLocalBounds();
+        titleArea = row.removeFromLeft (62);
+        for (auto& p : pads)
+        {
+            p->setBounds (row.removeFromLeft (34));
+            row.removeFromLeft (4);
+        }
+        row.removeFromLeft (6);
+        volume.setBounds (row.removeFromLeft (72));
+        row.removeFromLeft (8);
+        stopButton.setBounds (row.removeFromLeft (56));
+        stopButton.setButtonText ("Parar");
+        volumeLabelArea = {};
+        return;
+    }
+    stopButton.setButtonText ("Parar todo");
     // Arriba el nombre, el volumen y "Parar todo"; debajo los 8 pads en fila (o en 2 filas si es estrecho).
     auto area = getLocalBounds().reduced (14, 10);
     auto header = area.removeFromTop (28);

@@ -14,11 +14,13 @@ namespace midj
 // Tarjeta de un deck (diseno "Escenario"), de arriba abajo:
 //  - DECK A / B, su estado (sonando, en pausa...) y el boton de abrir un archivo;
 //  - la portada (un fotograma si es un video) con titulo, artista, BPM y tiempo;
-//  - la forma de onda (lo ya sonado mas apagado) con la rejilla de pulsos, el CUE y el bucle;
+//  - la forma de onda, delgada (lo ya sonado mas apagado) con la rejilla de pulsos, el CUE y el bucle;
 //  - el pitch +-16 % con su centro marcado (verde en 0, se engancha al pasar) y KEY;
 //  - bucles de 1-2-4-8 pulsos y stems (voz / instrumental);
 //  - tres efectos;
 //  - Play / Pausa, CUE y SYNC.
+// Desde Ajustes se ocultan la onda, el pitch, los bucles, los stems o los efectos: lo que queda se
+// junta sin huecos y getPreferredHeight() da el alto justo (si la ventana da mas, crece la portada).
 class DeckComponent : public juce::Component,
                       public juce::DragAndDropTarget,
                       public juce::FileDragAndDropTarget,
@@ -33,6 +35,14 @@ public:
     void paint (juce::Graphics& g) override;
     void resized() override;
     void mouseDown (const juce::MouseEvent& e) override;   // clic en la forma de onda = saltar
+
+    // Partes que se ven (Ajustes).
+    struct Sections
+    {
+        bool waveform = true, pitch = true, loops = true, stems = true, effects = true;
+    };
+    void setSections (const Sections& s);
+    int getPreferredHeight() const;
 
     // Stems: estado de la separacion de la cancion cargada (lo da la ventana) y pedirla.
     enum class StemsState { none, queued, working, failed };
@@ -104,8 +114,8 @@ private:
     bool waveDirty = true;
     int waveCacheSize = 0;
     float waveCacheScale = 0.0f;
-    juce::Rectangle<int> headerArea, posterArea, infoArea, waveformArea, pitchLabelArea, pitchScaleArea,
-                         loopLabelArea, stemsLabelArea, effectsLabelArea;
+    juce::Rectangle<int> headerArea, posterArea, infoArea, waveformArea, pitchLabelArea, pitchScaleArea, loopLabelArea;
+    Sections sections;
     std::unique_ptr<juce::FileChooser> chooser;
     bool dragHighlight = false, active = false;
 
