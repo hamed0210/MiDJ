@@ -19,7 +19,8 @@ enum class SourceType
     window,   // captura de una ventana
     visualizer,   // espectro, onda o pulso de lo que suena por el master
     media,        // un archivo de video o audio (la fuente Multimedia de OBS)
-    captureDevice // capturadora de video o webcam (Dispositivo de captura de video de OBS)
+    captureDevice, // capturadora de video o webcam (Dispositivo de captura de video de OBS)
+    youtube       // el reproductor de YouTube de MiDJ (la captura de su ventana)
 };
 
 // Como dibuja el visualizador lo que suena.
@@ -91,9 +92,16 @@ struct SceneItem
 };
 
 // Cambio automatico de escena: la ventana pasa a esta escena cuando lo que mas se oye de los
-// decks pasa a ser una cancion de solo audio (audio) o un video (video), o cuando no suena
-// ningun deck (idle).
-enum class SceneAuto { none, audio, video, idle };
+// decks pasa a ser una cancion de solo audio (audio) o un video (video), cuando no suena
+// ningun deck (idle) o cuando suena el reproductor de YouTube (youtube, que manda sobre los decks).
+enum class SceneAuto { none, audio, video, idle, youtube };
+
+// La ventana del reproductor de YouTube de MiDJ (la fuente YouTube la captura).
+namespace YouTubeWindow
+{
+    inline const char* const title = "MiDJ YouTube";
+    inline const char* const className = "MiDJYouTubePlayer";
+}
 
 struct Scene
 {

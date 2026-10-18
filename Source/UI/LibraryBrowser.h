@@ -5,6 +5,7 @@
 #include "UI/Icons.h"
 #include "UI/MidiLearnOverlay.h"
 #include "UI/Widgets.h"
+#include "Video/YouTubeSearch.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -35,6 +36,13 @@ public:
     std::function<void (const TrackInfo&, int deckIndex)> onLoadToDeck;
     // Menu de una cancion: preparar sus stems en segundo plano.
     std::function<void (const TrackInfo&)> onPrepareStems;
+    // YouTube (el arbol > YouTube): ver ya un video, o anadirlo a la lista del automix de YouTube
+    // (al final o como el siguiente).
+    std::function<void (const YouTubeVideo&)> onYouTubePlay;
+    std::function<void (const YouTubeVideo&, bool next)> onYouTubeQueue;
+    // El video de YouTube elegido en la lista (si se esta viendo YouTube).
+    std::optional<YouTubeVideo> getSelectedYouTube() const;
+    static bool isYouTube (const TrackInfo& t) { return t.path.startsWith ("youtube:"); }
 
     // Para el boton + y el menu de una cancion (Agregar a automix); la lista esta en su propio panel.
     void setAutomix (Automix* a) { automix = a; }
@@ -115,6 +123,12 @@ private:
     int filterKind = 0;                   // 0 todo, 1 solo audio, 2 solo video, 3 favoritos, 4 mas reproducidos, 5 una lista
     juce::int64 filterPlaylist = 0;       // la lista elegida (filterKind 5)
     bool openPlaylists = false;           // desplegar "Listas" al rehacer el arbol (lista nueva)
+    // YouTube (filterKind 6): los resultados de la ultima busqueda y su estado.
+    std::vector<YouTubeVideo> youtubeResults;
+    juce::String youtubeStatus { "Escribe y pulsa Intro para buscar en YouTube (o pega un enlace)" };
+    int youtubeSearchId = 0;
+    void startYouTubeSearch (const juce::String& text);
+    std::optional<YouTubeVideo> youTubeAt (int row) const;
     juce::String filterLabel { "Musica local" };
     IconButton syncButton { Icons::Glyph::sync, "Sincronizar: buscar musica y videos en todo el PC y anadirlos" },
                addFolderButton { Icons::Glyph::folderPlus, "Anadir una carpeta" };

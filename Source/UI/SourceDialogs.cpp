@@ -28,7 +28,7 @@ namespace
     const juce::Colour selectedRow (0xff2a5bd7);
 
     // Los tipos del dialogo, en el orden de OBS (y los propios de MiDJ al principio).
-    const std::array<SourceType, 11> addableTypes { SourceType::decks, SourceType::deckA, SourceType::deckB, SourceType::screen,
+    const std::array<SourceType, 12> addableTypes { SourceType::decks, SourceType::deckA, SourceType::deckB, SourceType::youtube, SourceType::screen,
                                                     SourceType::window, SourceType::captureDevice, SourceType::image, SourceType::media,
                                                     SourceType::text, SourceType::colour, SourceType::visualizer };
 

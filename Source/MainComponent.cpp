@@ -74,6 +74,36 @@ MainComponent::MainComponent()
     addAndMakeVisible (*browser);
     addAndMakeVisible (automixPanel);
 
+    // YouTube: el reproductor (del tamano del programa), su lista guardada y la pestana del automix.
+    youtubePlayer = std::make_unique<YouTubePlayer> (getDataFolder(), videoSettings().width, videoSettings().height);
+    youtubeQueue.load (getDataFolder().getChildFile ("youtube.xml"));
+    youtubePanel = std::make_unique<YouTubePanel> (*youtubePlayer, youtubeQueue);
+    automixPanel.setYouTube (youtubePanel.get(), &youtubeQueue);
+    youtubePlayer->onEnded = [this]
+    {
+        // Con el automix de YouTube, el siguiente; si no, se cierra (libera la memoria).
+        if (youtubeQueue.isEnabled() && ! youtubeQueue.getItems().empty())
+            youtubePanel->next();
+        else
+            juce::Timer::callAfterDelay (1500, [safe = juce::Component::SafePointer<MainComponent> (this)]
+            {
+                if (safe != nullptr && safe->youtubePlayer->getStatus().state == YouTubePlayer::State::ended)
+                    safe->youtubePlayer->close();
+            });
+    };
+    browser->onYouTubePlay = [this] (const YouTubeVideo& v)
+    {
+        youtubePanel->playNow (v);
+        automixPanel.showYouTubeTab (true);
+    };
+    browser->onYouTubeQueue = [this] (const YouTubeVideo& v, bool next)
+    {
+        next ? youtubeQueue.insertNext (v) : youtubeQueue.add (v);
+        automixPanel.showYouTubeTab (true);
+        if (youtubeQueue.isEnabled() && ! youtubePlayer->isOpen())
+            youtubePanel->next();
+    };
+
     // Sampler: el banco se lee al arrancar y se guarda cada vez que cambia.
     mixer.getSampler().loadBank (getDataFolder().getChildFile ("sampler.xml"), formatManager);
     samplerPanel.onBankChanged = [this] { saveSamplerBank(); };
@@ -185,7 +215,13 @@ MainComponent::~MainComponent()
     saveLayout();
     saveAudioSettings();
     headphones.close();
+    youtubeQueue.save (getDataFolder().getChildFile ("youtube.xml"));
+    automixPanel.setYouTube (nullptr, nullptr);
+    youtubePanel.reset();
+    youtubePlayer.reset();
     removeKeyListener (this);
+    if (keyWindow != nullptr)
+        keyWindow->removeKeyListener (this);
     mixerView.setVideoStage (nullptr);
     scenesPanel.reset();
     sourcesPanel.reset();
@@ -203,6 +239,15 @@ MainComponent::~MainComponent()
 
 void MainComponent::parentHierarchyChanged()
 {
+    // Los atajos tambien cuando ningun control tiene el foco (JUCE manda entonces la tecla a la
+    // ventana, que esta por encima de este componente).
+    if (auto* top = getTopLevelComponent(); top != this && top != keyWindow.getComponent())
+    {
+        if (keyWindow != nullptr)
+            keyWindow->removeKeyListener (this);
+        keyWindow = top;
+        top->addKeyListener (this);
+    }
     // Con la ventana ya creada, el foco del teclado empieza aqui (para los atajos).
     juce::Component::SafePointer<MainComponent> self (this);
     juce::MessageManager::callAsync ([self] { if (self != nullptr && self->isShowing()) self->grabKeyboardFocus(); });
@@ -245,9 +290,11 @@ void MainComponent::spacePressed()
 {
     // Lo que suena se pausa (y se recuerda); si no suena nada, vuelve lo que se pauso con el
     // espacio; si no hay nada recordado, el deck activo.
+    // YouTube cuenta como uno mas: si suena (y ningun deck), se pausa y vuelve igual.
     std::array<DeckComponent*, 2> views { &deckViewA, &deckViewB };
     const std::array<bool, 2> playing { deckA.isPlaying(), deckB.isPlaying() };
-    if (playing[0] || playing[1])
+    const bool youtubePlaying = youtubePlayer->getStatus().state == YouTubePlayer::State::playing;
+    if (playing[0] || playing[1] || youtubePlaying)
     {
         for (size_t d = 0; d < 2; ++d)
         {
@@ -255,6 +302,15 @@ void MainComponent::spacePressed()
             if (playing[d])
                 views[d]->togglePlay();
         }
+        youtubePausedBySpace = youtubePlaying;
+        if (youtubePlaying)
+            youtubePlayer->pause();
+        return;
+    }
+    if (std::exchange (youtubePausedBySpace, false) && youtubePlayer->getStatus().state == YouTubePlayer::State::paused)
+    {
+        youtubePlayer->play();
+        pausedBySpace = {};
         return;
     }
     bool resumed = false;
@@ -308,7 +364,9 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
     if (code == juce::KeyPress::pageDownKey)              { browser->moveSelection (+10); return true; }
     if (code == juce::KeyPress::returnKey)
     {
-        if (const auto track = browser->getSelectedTrack())
+        if (const auto video = browser->getSelectedYouTube())
+            browser->onYouTubePlay (*video);
+        else if (const auto track = browser->getSelectedTrack())
             loadIntoDeck (activeDeck == 0 ? deckA : deckB, track->getFile());
         return true;
     }
@@ -344,7 +402,9 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
         case 'K': activeView().toggleKeyLock(); return true;
         case 'V': mixerView.showVideoTab (! mixerView.isVideoTabShowing()); return true;
         case 'A':
-            if (const auto track = browser->getSelectedTrack())
+            if (const auto video = browser->getSelectedYouTube())
+                browser->onYouTubeQueue (*video, false);
+            else if (const auto track = browser->getSelectedTrack())
                 automix.add ({ track->getFile(), track->title, track->artist, track->bpm });
             return true;
         default: break;
@@ -471,6 +531,9 @@ void MainComponent::updateAutoScene()
     // Sin nada sonando: 3. El cambio tiene que durar 0,6 s (un crossfader que pasa por el centro
     // no hace saltar la escena; 1,5 s para "no suena nada": una pausa corta tampoco) y solo actua
     // al cambiar: si despues se elige otra escena a mano, se respeta hasta el proximo cambio.
+    // YouTube sonando (o su anuncio) manda sobre los decks: 4.
+    if (youtubePlayer != nullptr && youtubePlayer->isSounding())
+        kind = 4;
     if (kind == 0)
         kind = 3;
     const auto now = juce::Time::getMillisecondCounter();
@@ -489,7 +552,7 @@ void MainComponent::updateAutoScene()
         return;
     autoKind = kind;
     pendingAutoKind = 0;
-    const auto wanted = kind == 2 ? SceneAuto::video : kind == 1 ? SceneAuto::audio : SceneAuto::idle;
+    const auto wanted = kind == 4 ? SceneAuto::youtube : kind == 2 ? SceneAuto::video : kind == 1 ? SceneAuto::audio : SceneAuto::idle;
     for (const auto& scene : videoStage->getScenes().scenes)
         if (scene.autoWhen == wanted)
         {

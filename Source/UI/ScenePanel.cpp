@@ -168,9 +168,13 @@ void ScenesPanel::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bo
     if (autoW > 0)
     {
         const auto when = scene.autoWhen;
-        Icons::draw (g, juce::Rectangle<float> ((float) (w - 70), 0.0f, 16.0f, (float) h).withSizeKeepingCentre (13.0f, 13.0f),
-                     when == SceneAuto::video ? Icons::Glyph::film : when == SceneAuto::audio ? Icons::Glyph::note : Icons::Glyph::pause,
-                     when == SceneAuto::video ? juce::Colour (0xffd58cf5) : when == SceneAuto::audio ? DarkLookAndFeel::accentA : DarkLookAndFeel::textQuiet);
+        const auto iconArea = juce::Rectangle<float> ((float) (w - 70), 0.0f, 16.0f, (float) h).withSizeKeepingCentre (13.0f, 13.0f);
+        if (when == SceneAuto::youtube)
+            Icons::drawSource (g, iconArea, SourceType::youtube, juce::Colour (0xffff4e45));
+        else
+            Icons::draw (g, iconArea,
+                         when == SceneAuto::video ? Icons::Glyph::film : when == SceneAuto::audio ? Icons::Glyph::note : Icons::Glyph::pause,
+                         when == SceneAuto::video ? juce::Colour (0xffd58cf5) : when == SceneAuto::audio ? DarkLookAndFeel::accentA : DarkLookAndFeel::textQuiet);
     }
     // Atajo de teclado (Ctrl+1-9; tambien F1-F9).
     if (row < 9)
@@ -224,6 +228,7 @@ void ScenesPanel::listBoxItemClicked (int row, const juce::MouseEvent& e)
         autoMenu.addItem ("Cuando suena una cancion de audio", true, current == SceneAuto::audio, [setAuto] { setAuto (SceneAuto::audio); });
         autoMenu.addItem ("Cuando suena un video", true, current == SceneAuto::video, [setAuto] { setAuto (SceneAuto::video); });
         autoMenu.addItem ("Cuando no suena nada", true, current == SceneAuto::idle, [setAuto] { setAuto (SceneAuto::idle); });
+        autoMenu.addItem ("Cuando suena YouTube", true, current == SceneAuto::youtube, [setAuto] { setAuto (SceneAuto::youtube); });
         menu.addSeparator();
         menu.addSubMenu ("Pasar a esta escena automaticamente", autoMenu);
         menu.showMenuAsync (juce::PopupMenu::Options().withMousePosition());

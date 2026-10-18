@@ -17,6 +17,8 @@
 #include "UI/ScenePanel.h"
 #include "UI/VideoWindow.h"
 #include "UI/Widgets.h"
+#include "UI/YouTubePanel.h"
+#include "UI/YouTubePlayer.h"
 #include "Video/DeckVideo.h"
 
 namespace midj
@@ -94,6 +96,7 @@ private:
     // Los botones, mandos y listas no se quedan con el foco del teclado al hacer clic (si no,
     // el espacio pulsaria el ultimo boton): solo los textos, las listas y la vista previa.
     void keepFocusForShortcuts (juce::Component& root);
+    juce::Component::SafePointer<juce::Component> keyWindow;   // la ventana, que tambien recibe los atajos
     void saveLayout();
     void loadLayout();
     // Tarjeta de sonido, audifonos y limitador: %APPDATA%\MiDJ\audio.xml.
@@ -167,6 +170,11 @@ private:
     std::unique_ptr<SourcesPanel> sourcesPanel;
     juce::String videoTitleFor (int deckIndex);
     std::array<std::pair<juce::File, juce::String>, 2> videoTitles;   // para no consultar la biblioteca a cada fotograma
+    // YouTube: reproductor (ventana oculta con WebView2), su lista del automix y su pestana.
+    std::unique_ptr<YouTubePlayer> youtubePlayer;
+    YouTubeQueue youtubeQueue;
+    std::unique_ptr<YouTubePanel> youtubePanel;
+    bool youtubePausedBySpace = false;
     MidiLearnOverlay midiOverlay { midi };
     int timerTicks = 0;
 

@@ -88,7 +88,8 @@ add_library(MiDJEngine STATIC
     Source/Video/Capture.cpp
     Source/Video/Visualizer.cpp
     Source/Video/MediaSources.cpp
-    Source/Video/GpuFrames.cpp)
+    Source/Video/GpuFrames.cpp
+    Source/Video/YouTubeSearch.cpp)
 target_include_directories(MiDJEngine PUBLIC Source)
 # Los modulos JUCE se compilan una sola vez aqui (PRIVATE) y se exportan sus
 # cabeceras y definiciones a la app y a las pruebas (patron recomendado por JUCE).
@@ -124,8 +125,14 @@ target_sources(MiDJ PRIVATE
     Source/UI/Icons.cpp
     Source/UI/Widgets.cpp
     Source/UI/TransitionDialog.cpp
-    Source/UI/DarkLookAndFeel.cpp)
-target_link_libraries(MiDJ PRIVATE MiDJEngine)
+    Source/UI/DarkLookAndFeel.cpp
+    Source/UI/YouTubePlayer.cpp
+    Source/UI/YouTubePanel.cpp)
+# WebView2 (Microsoft, motor de Edge) para el reproductor de YouTube: el cargador estatico; el
+# motor lo pone Windows (WebView2 Runtime).
+set(WEBVIEW2_DIR "D:/Tools/WebView2" CACHE PATH "Carpeta del SDK de WebView2 (include y x64)")
+target_include_directories(MiDJ PRIVATE ${WEBVIEW2_DIR}/include)
+target_link_libraries(MiDJ PRIVATE MiDJEngine ${WEBVIEW2_DIR}/x64/WebView2LoaderStatic.lib version.lib)
 midj_copy_runtime(MiDJ)
 
 # Pruebas automaticas (ctest)

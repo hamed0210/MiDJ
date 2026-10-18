@@ -11,6 +11,7 @@
 #include "Engine/Deck.h"
 #include "Engine/Effects.h"
 #include "Engine/HeadphoneOutput.h"
+#include "Video/YouTubeSearch.h"
 #include "Engine/Mixer.h"
 #include "Engine/Sampler.h"
 #include "Engine/StemSeparator.h"
@@ -3483,6 +3484,43 @@ void testLibraryLists()
     root.deleteRecursively();
 }
 
+// --- YouTube: leer la pagina de resultados, duraciones y enlaces --------------------------------
+
+void testYouTubeSearch()
+{
+    std::printf ("== YouTube: busqueda ==\n");
+    using midj::YouTubeSearch::parseDuration;
+    using midj::YouTubeSearch::idFromText;
+    check (parseDuration ("3:41") == 221.0 && parseDuration ("1:02:03") == 3723.0 && parseDuration ("EN VIVO") == 0.0,
+           "duraciones: 3:41, 1:02:03 y en vivo", parseDuration ("3:41"), 221.0);
+    check (midj::YouTubeSearch::formatDuration (221.0) == "3:41" && midj::YouTubeSearch::formatDuration (3723.0) == "1:02:03",
+           "duraciones: escribirlas", 0.0, 0.0);
+    check (idFromText ("https://www.youtube.com/watch?v=pnEHsUWFuNM&list=x") == "pnEHsUWFuNM"
+               && idFromText ("https://youtu.be/bJ1Y9S6SR9I?t=10") == "bJ1Y9S6SR9I"
+               && idFromText ("https://www.youtube.com/shorts/CCF1_jI8Prk") == "CCF1_jI8Prk"
+               && idFromText ("nq9TVmwWoOM") == "nq9TVmwWoOM" && idFromText ("nicky jam").isEmpty(),
+           "enlaces: watch, youtu.be, shorts e id; texto normal no", 0.0, 0.0);
+
+    // Una pagina de resultados en miniatura, como la de YouTube: dos videos, un directo (sin
+    // duracion, se descarta), un repetido y una lista (no es un video).
+    const juce::String page = R"html(<html><script>var ytInitialData = {"contents":{"twoColumnSearchResultsRenderer":{"primaryContents":
+      {"sectionListRenderer":{"contents":[{"itemSectionRenderer":{"contents":[
+        {"videoRenderer":{"videoId":"pnEHsUWFuNM","title":{"runs":[{"text":"Piensas En Mi - Nicky Jam"}]},
+          "ownerText":{"runs":[{"text":"NickyJamTV"}]},"lengthText":{"simpleText":"4:16"}}},
+        {"videoRenderer":{"videoId":"LIVE0000001","title":{"runs":[{"text":"Radio en vivo"}]},"ownerText":{"runs":[{"text":"Radio"}]}}},
+        {"playlistRenderer":{"playlistId":"PL123","title":{"simpleText":"Mix"}}},
+        {"videoRenderer":{"videoId":"bJ1Y9S6SR9I","title":{"runs":[{"text":"La Mar"},{"text":"ia"}]},
+          "longBylineText":{"runs":[{"text":"Luister La Voz"}]},"lengthText":{"simpleText":"3:41"}}},
+        {"videoRenderer":{"videoId":"pnEHsUWFuNM","title":{"runs":[{"text":"Repetido"}]},"lengthText":{"simpleText":"4:16"}}}
+      ]}}]}}}}};</script></html>)html";
+    const auto videos = midj::YouTubeSearch::parseResultsPage (page);
+    check (videos.size() == 2, "resultados: 2 videos (sin directos, listas ni repetidos)", (double) videos.size(), 2.0);
+    check (videos.size() == 2 && videos[0].id == "pnEHsUWFuNM" && videos[0].channel == "NickyJamTV" && videos[0].seconds == 256.0
+               && videos[1].title == "La Maria" && videos[1].channel == "Luister La Voz",
+           "resultados: id, titulo (en partes), canal y duracion", videos.empty() ? 0.0 : videos[0].seconds, 256.0);
+    check (midj::YouTubeSearch::parseResultsPage ("<html>sin datos</html>").empty(), "pagina sin datos: nada", 0.0, 0.0);
+}
+
 // --- Limitador del master, pre-escucha y audifonos por otra tarjeta -----------------------------
 
 void testLimiterAndHeadphones()
@@ -3707,6 +3745,7 @@ int main (int argc, char* argv[])
     testMixerChannels();
     testLimiterAndHeadphones();
     testLibraryLists();
+    testYouTubeSearch();
 
     std::printf ("== Video ==\n");
     testVideo();

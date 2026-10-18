@@ -21,8 +21,25 @@ AutomixPanel::AutomixPanel (Automix& a, Library& l) : automix (a), library (l)
     list.setColour (juce::ListBox::backgroundColourId, DarkLookAndFeel::panel);
     addAndMakeVisible (list);
 
-    onButton.setTooltip ("Encender / apagar el automix");
-    onButton.onClick = [this] { automix.setEnabled (! automix.isEnabled()); updateStatus(); };
+    onButton.setTooltip ("Encender / apagar el automix (el de la pestana que se ve)");
+    onButton.onClick = [this]
+    {
+        if (youtubeShown && youtube != nullptr && youtubeQueue != nullptr)
+            youtube->setAutomix (! youtubeQueue->isEnabled());
+        else
+            automix.setEnabled (! automix.isEnabled());
+        updateStatus();
+    };
+    // Pestanas AUTOMIX / YOUTUBE (como las de AUDIO / PROGRAMA).
+    for (auto* b : { &localTab, &youtubeTab })
+    {
+        b->setColour (juce::ComboBox::outlineColourId, juce::Colours::transparentBlack);
+        addAndMakeVisible (b);
+    }
+    localTab.setTooltip ("Automix de los decks");
+    youtubeTab.setTooltip ("Automix de YouTube: su propia lista, suena en el reproductor de YouTube");
+    localTab.onClick = [this] { showYouTubeTab (false); };
+    youtubeTab.onClick = [this] { showYouTubeTab (true); };
     mixNowButton.setBordered (true, DarkLookAndFeel::text);
     mixNowButton.onClick = [this] { automix.mixNow(); };
     skipButton.setBordered (true);
@@ -40,13 +57,47 @@ AutomixPanel::AutomixPanel (Automix& a, Library& l) : automix (a), library (l)
         addAndMakeVisible (c);
 
     automix.addChangeListener (this);
-    updateStatus();
+    showYouTubeTab (false);
 }
 
 AutomixPanel::~AutomixPanel()
 {
     automix.removeChangeListener (this);
+    if (youtubeQueue != nullptr)
+        youtubeQueue->removeChangeListener (this);
     list.setModel (nullptr);
+}
+
+void AutomixPanel::setYouTube (YouTubePanel* panel, YouTubeQueue* queue)
+{
+    if (youtube != nullptr)
+        removeChildComponent (youtube);
+    if (youtubeQueue != nullptr)
+        youtubeQueue->removeChangeListener (this);
+    youtube = panel;
+    youtubeQueue = queue;
+    if (youtube != nullptr)
+        addChildComponent (*youtube);
+    if (youtubeQueue != nullptr)
+        youtubeQueue->addChangeListener (this);
+    showYouTubeTab (youtubeShown);
+}
+
+void AutomixPanel::showYouTubeTab (bool show)
+{
+    youtubeShown = show && youtube != nullptr;
+    for (auto [b, on] : { std::pair<juce::TextButton*, bool> { &localTab, ! youtubeShown }, std::pair<juce::TextButton*, bool> { &youtubeTab, youtubeShown } })
+    {
+        b->setColour (juce::TextButton::buttonColourId, on ? DarkLookAndFeel::line : juce::Colours::transparentBlack);
+        b->setColour (juce::TextButton::textColourOffId, on ? DarkLookAndFeel::text : DarkLookAndFeel::textQuiet);
+    }
+    for (auto* c : std::initializer_list<juce::Component*> { &list, &status, &listsButton, &mixNowButton, &skipButton, &clearButton, &fadeBox })
+        c->setVisible (! youtubeShown);
+    if (youtube != nullptr)
+        youtube->setVisible (youtubeShown);
+    updateStatus();
+    resized();
+    repaint();
 }
 
 void AutomixPanel::addLearnTargets (std::vector<LearnTarget>& out)
@@ -105,7 +156,10 @@ void AutomixPanel::showListsMenu()
 void AutomixPanel::updateStatus()
 {
     status.setText (automix.getStatusText(), juce::dontSendNotification);
-    const bool on = automix.isEnabled();
+    const bool on = youtubeShown && youtubeQueue != nullptr ? youtubeQueue->isEnabled() : automix.isEnabled();
+    // Las pestanas con su cantidad.
+    localTab.setButtonText ("AUTOMIX " + juce::String ((int) automix.getQueue().size()));
+    youtubeTab.setButtonText ("YOUTUBE " + juce::String (youtubeQueue != nullptr ? (int) youtubeQueue->getItems().size() : 0));
     onButton.setButtonText (on ? "Encendido" : "Apagado");
     onButton.getProperties().set (DarkLookAndFeel::filledProperty, on);
     onButton.setColour (juce::TextButton::buttonColourId, on ? DarkLookAndFeel::good : juce::Colours::transparentBlack);
@@ -114,7 +168,7 @@ void AutomixPanel::updateStatus()
     mixNowButton.setEnabled (canMix);
     skipButton.setEnabled (canMix);
     clearButton.setEnabled (! automix.getQueue().empty());
-    title.setText ("Automix  " + juce::String ((int) automix.getQueue().size()), juce::dontSendNotification);
+    title.setText (youtubeShown ? "Automix de YouTube" : "Automix de los decks", juce::dontSendNotification);
 }
 
 void AutomixPanel::changeListenerCallback (juce::ChangeBroadcaster*)
@@ -206,11 +260,13 @@ void AutomixPanel::paint (juce::Graphics& g)
 {
     g.setColour (DarkLookAndFeel::panel);
     g.fillRoundedRectangle (getLocalBounds().toFloat(), 14.0f);
+    g.setColour (DarkLookAndFeel::background);
+    g.fillRoundedRectangle (tabsArea.toFloat(), 8.0f);
 }
 
 void AutomixPanel::paintOverChildren (juce::Graphics& g)
 {
-    if (getNumRows() == 0)
+    if (getNumRows() == 0 && ! youtubeShown)
     {
         const auto r = list.getBounds().toFloat().reduced (2.0f);
         juce::Path outline, dashed;
@@ -233,12 +289,20 @@ void AutomixPanel::paintOverChildren (juce::Graphics& g)
 void AutomixPanel::resized()
 {
     auto r = getLocalBounds().reduced (12, 10);
+    // Pestanas arriba; debajo el titulo, Listas y Encendido / Apagado.
+    tabsArea = r.removeFromTop (28);
+    auto tabs = tabsArea.reduced (3);
+    localTab.setBounds (tabs.removeFromLeft (tabs.getWidth() / 2));
+    youtubeTab.setBounds (tabs);
+    r.removeFromTop (8);
     auto header = r.removeFromTop (30);
     onButton.setBounds (header.removeFromRight (96).reduced (0, 1));
     header.removeFromRight (6);
     listsButton.setBounds (header.removeFromRight (64).reduced (0, 1));
     title.setBounds (header);
     r.removeFromTop (8);
+    if (youtube != nullptr)
+        youtube->setBounds (r);
     status.setBounds (r.removeFromBottom (30));
     r.removeFromBottom (4);
     auto buttons = r.removeFromBottom (40);

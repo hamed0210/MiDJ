@@ -1,0 +1,267 @@
+#include "UI/YouTubePanel.h"
+#include "UI/DarkLookAndFeel.h"
+
+namespace midj
+{
+namespace
+{
+    const juce::Colour youTubeRed (0xffff4e45);
+}
+
+// --- Lista -----------------------------------------------------------------------------------------
+
+void YouTubeQueue::remove (int index)
+{
+    if (juce::isPositiveAndBelow (index, (int) items.size()))
+    {
+        items.erase (items.begin() + index);
+        sendChangeMessage();
+    }
+}
+
+bool YouTubeQueue::takeNext (YouTubeVideo& out)
+{
+    if (items.empty())
+        return false;
+    out = items.front();
+    items.erase (items.begin());
+    sendChangeMessage();
+    return true;
+}
+
+void YouTubeQueue::save (const juce::File& file) const
+{
+    juce::XmlElement xml ("YOUTUBE");
+    for (const auto& v : items)
+    {
+        auto* e = xml.createNewChildElement ("VIDEO");
+        e->setAttribute ("id", v.id);
+        e->setAttribute ("title", v.title);
+        e->setAttribute ("channel", v.channel);
+        e->setAttribute ("seconds", v.seconds);
+    }
+    xml.writeTo (file);
+}
+
+void YouTubeQueue::load (const juce::File& file)
+{
+    items.clear();
+    if (const auto xml = juce::XmlDocument::parse (file))
+        for (auto* e : xml->getChildWithTagNameIterator ("VIDEO"))
+            items.push_back ({ e->getStringAttribute ("id"), e->getStringAttribute ("title"), e->getStringAttribute ("channel"),
+                               e->getDoubleAttribute ("seconds") });
+    sendChangeMessage();
+}
+
+// --- Panel -----------------------------------------------------------------------------------------
+
+YouTubePanel::YouTubePanel (YouTubePlayer& p, YouTubeQueue& q) : player (p), queue (q)
+{
+    list.setModel (this);
+    list.setRowHeight (40);
+    list.setColour (juce::ListBox::backgroundColourId, DarkLookAndFeel::panel);
+    addAndMakeVisible (list);
+
+    playButton.setBordered (true);
+    playButton.onClick = [this] { player.togglePlay(); };
+    stopButton.setBordered (true);
+    stopButton.onClick = [this] { player.close(); };
+    nextButton.setBordered (true);
+    nextButton.onClick = [this] { next(); };
+    clearButton.setBordered (true);
+    clearButton.onClick = [this] { queue.clear(); };
+    for (auto* b : { &playButton, &stopButton, &nextButton, &clearButton })
+        addAndMakeVisible (b);
+
+    volume.setSliderStyle (juce::Slider::LinearHorizontal);
+    volume.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+    volume.setRange (0.0, 1.0);
+    volume.setValue (player.getVolume(), juce::dontSendNotification);
+    volume.setTooltip ("Volumen de YouTube (su sonido sale por la tarjeta predeterminada de Windows)");
+    volume.onValueChange = [this] { player.setVolume ((float) volume.getValue()); };
+    addAndMakeVisible (volume);
+
+    player.addChangeListener (this);
+    queue.addChangeListener (this);
+    updateButtons();
+}
+
+YouTubePanel::~YouTubePanel()
+{
+    player.removeChangeListener (this);
+    queue.removeChangeListener (this);
+    list.setModel (nullptr);
+}
+
+void YouTubePanel::playNow (const YouTubeVideo& video)
+{
+    player.open (video);
+}
+
+void YouTubePanel::next()
+{
+    YouTubeVideo v;
+    if (queue.takeNext (v))
+        player.open (v);
+    else
+        player.close();
+}
+
+void YouTubePanel::setAutomix (bool on)
+{
+    queue.setEnabled (on);
+    // Al encender sin nada sonando, empieza la lista.
+    if (on && ! player.isSounding() && player.getStatus().state != YouTubePlayer::State::paused
+        && player.getStatus().state != YouTubePlayer::State::opening && ! queue.getItems().empty())
+        next();
+}
+
+void YouTubePanel::changeListenerCallback (juce::ChangeBroadcaster* source)
+{
+    if (source == &queue)
+    {
+        list.updateContent();
+        list.repaint();
+    }
+    // Un video que no se puede reproducir: con el automix, al siguiente a los 2 s.
+    const auto state = player.getStatus().state;
+    if (state == YouTubePlayer::State::error && queue.isEnabled() && ! errorPending)
+    {
+        errorPending = true;
+        juce::Timer::callAfterDelay (2000, [safe = juce::Component::SafePointer<YouTubePanel> (this)]
+        {
+            if (safe != nullptr && safe->player.getStatus().state == YouTubePlayer::State::error)
+                safe->next();
+            if (safe != nullptr)
+                safe->errorPending = false;
+        });
+    }
+    updateButtons();
+    repaint (nowArea.getUnion (progressArea).getUnion (timeArea));
+}
+
+void YouTubePanel::updateButtons()
+{
+    const auto state = player.getStatus().state;
+    playButton.setGlyph (state == YouTubePlayer::State::playing ? Icons::Glyph::pause : Icons::Glyph::play);
+    playButton.setEnabled (state == YouTubePlayer::State::playing || state == YouTubePlayer::State::paused);
+    stopButton.setEnabled (player.isOpen());
+    nextButton.setEnabled (! queue.getItems().empty());
+    clearButton.setEnabled (! queue.getItems().empty());
+}
+
+void YouTubePanel::paint (juce::Graphics& g)
+{
+    // Lo que suena: titulo, canal o estado, y la barra de avance con el tiempo.
+    const auto& s = player.getStatus();
+    auto r = nowArea;
+    g.setColour (DarkLookAndFeel::raised);
+    g.fillRoundedRectangle (r.toFloat(), 8.0f);
+    r.reduce (10, 6);
+    Icons::drawSource (g, r.removeFromLeft (22).withSizeKeepingCentre (20, 20).toFloat(), SourceType::youtube,
+                       player.isOpen() ? youTubeRed : DarkLookAndFeel::textFaint);
+    r.removeFromLeft (8);
+    const auto& v = player.getVideo();
+    g.setColour (DarkLookAndFeel::text);
+    g.setFont (DarkLookAndFeel::sans (13.0f, true));
+    g.drawText (player.isOpen() ? v.title : juce::String ("Nada de YouTube sonando"), r.removeFromTop (18), juce::Justification::centredLeft, true);
+    g.setColour (s.state == YouTubePlayer::State::error ? DarkLookAndFeel::danger
+                 : s.state == YouTubePlayer::State::ad ? DarkLookAndFeel::accentB : DarkLookAndFeel::textQuiet);
+    g.setFont (DarkLookAndFeel::sans (11.5f));
+    const auto line = player.isOpen() ? YouTubePlayer::stateText (s) + (v.channel.isNotEmpty() ? juce::String::fromUTF8 ("  \xc2\xb7  ") + v.channel : juce::String())
+                                      : juce::String ("Busca en la biblioteca > YouTube");
+    g.drawText (line, r.removeFromTop (16), juce::Justification::centredLeft, true);
+
+    // Tiempo (a la derecha de los botones) y barra de avance (su propia fila, clic: saltar).
+    g.setColour (DarkLookAndFeel::textQuiet);
+    g.setFont (DarkLookAndFeel::mono (11.0f));
+    const auto timeText = YouTubeSearch::formatDuration (s.time) + (s.duration > 0.0 ? " / " + YouTubeSearch::formatDuration (s.duration) : juce::String());
+    g.drawText (player.isOpen() && s.state != YouTubePlayer::State::ad ? timeText : juce::String(), timeArea,
+                juce::Justification::centredRight, false);
+    auto bar = progressArea.withSizeKeepingCentre (progressArea.getWidth(), 4);
+    g.setColour (DarkLookAndFeel::line);
+    g.fillRoundedRectangle (bar.toFloat(), 2.0f);
+    if (s.duration > 0.0 && s.state != YouTubePlayer::State::ad)
+    {
+        g.setColour (youTubeRed);
+        g.fillRoundedRectangle (bar.toFloat().withWidth ((float) bar.getWidth() * (float) juce::jlimit (0.0, 1.0, s.time / s.duration)), 2.0f);
+    }
+}
+
+void YouTubePanel::mouseDown (const juce::MouseEvent& e)
+{
+    // La barra (sin el tiempo de la derecha): saltar a ese punto del video.
+    const auto bar = progressArea;
+    const auto& s = player.getStatus();
+    if (bar.contains (e.getPosition()) && s.duration > 0.0
+        && (s.state == YouTubePlayer::State::playing || s.state == YouTubePlayer::State::paused))
+        player.seek (s.duration * juce::jlimit (0.0, 1.0, (double) (e.x - bar.getX()) / (double) bar.getWidth()));
+}
+
+void YouTubePanel::resized()
+{
+    auto r = getLocalBounds();
+    nowArea = r.removeFromTop (46);
+    progressArea = r.removeFromTop (14).reduced (4, 0);
+    r.removeFromTop (2);
+    auto controls = r.removeFromTop (28);
+    playButton.setBounds (controls.removeFromLeft (36));
+    controls.removeFromLeft (4);
+    stopButton.setBounds (controls.removeFromLeft (36));
+    controls.removeFromLeft (8);
+    timeArea = controls.removeFromRight (86);
+    volume.setBounds (controls.removeFromLeft (juce::jmin (110, controls.getWidth())));
+    r.removeFromTop (6);
+    auto bottom = r.removeFromBottom (32);
+    r.removeFromBottom (6);
+    list.setBounds (r);
+    nextButton.setBounds (bottom.removeFromLeft (44));
+    bottom.removeFromLeft (6);
+    clearButton.setBounds (bottom.removeFromLeft (44));
+}
+
+void YouTubePanel::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool selected)
+{
+    const auto& items = queue.getItems();
+    if (! juce::isPositiveAndBelow (row, (int) items.size()))
+        return;
+    const auto& v = items[(size_t) row];
+    auto r = juce::Rectangle<float> (0.0f, 0.0f, (float) w, (float) h).reduced (0.0f, 2.0f);
+    if (selected || row == 0)
+    {
+        g.setColour (selected ? DarkLookAndFeel::selection : DarkLookAndFeel::raised);
+        g.fillRoundedRectangle (r, 8.0f);
+    }
+    r.reduce (8.0f, 0.0f);
+    g.setColour (DarkLookAndFeel::textQuiet);
+    g.setFont (DarkLookAndFeel::mono (12.0f));
+    g.drawText (juce::String (row + 1), r.removeFromLeft (18.0f), juce::Justification::centredLeft, false);
+    Icons::draw (g, r.removeFromRight (16.0f).withSizeKeepingCentre (12.0f, 12.0f), Icons::Glyph::close, DarkLookAndFeel::textQuiet);
+    r.removeFromRight (6.0f);
+    g.setColour (DarkLookAndFeel::text);
+    g.setFont (DarkLookAndFeel::sans (13.0f, true));
+    g.drawText (v.title, r.removeFromTop (r.getHeight() / 2.0f + 1.0f), juce::Justification::bottomLeft, true);
+    g.setColour (DarkLookAndFeel::textQuiet);
+    g.setFont (DarkLookAndFeel::sans (12.0f));
+    g.drawText (v.channel + (v.seconds > 0.0 ? "  " + YouTubeSearch::formatDuration (v.seconds) : juce::String()), r,
+                juce::Justification::topLeft, true);
+}
+
+void YouTubePanel::listBoxItemClicked (int row, const juce::MouseEvent& e)
+{
+    // La x de la derecha la quita.
+    if (e.x >= list.getVisibleRowWidth() - 26)
+        queue.remove (row);
+}
+
+void YouTubePanel::listBoxItemDoubleClicked (int row, const juce::MouseEvent&)
+{
+    // Doble clic: que suene ya (sale de la lista).
+    const auto& items = queue.getItems();
+    if (! juce::isPositiveAndBelow (row, (int) items.size()))
+        return;
+    const auto v = items[(size_t) row];
+    queue.remove (row);
+    player.open (v);
+}
+}

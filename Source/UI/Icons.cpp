@@ -281,6 +281,12 @@ void Icons::drawSource (juce::Graphics& g, R area, SourceType type, juce::Colour
             g.fillPath (p);
             g.fillEllipse (R (at (0.62f, 0.24f), at (0.76f, 0.38f)));
             break;
+        case SourceType::youtube:   // rectangulo redondeado con el triangulo de play
+            g.fillRoundedRectangle (R (at (0.06f, 0.2f), at (0.94f, 0.8f)), s * 0.16f);
+            p.addTriangle (at (0.42f, 0.36f), at (0.42f, 0.64f), at (0.66f, 0.5f));
+            g.setColour (juce::Colours::black.withAlpha (0.85f));
+            g.fillPath (p);
+            break;
         case SourceType::media:
             Icons::draw (g, area, Icons::Glyph::play, colour);
             break;

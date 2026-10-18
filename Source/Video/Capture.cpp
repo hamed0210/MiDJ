@@ -139,7 +139,7 @@ namespace ScreenCapture
         return juce::isPositiveAndBelow (index, (int) list.size()) ? index : -1;
     }
 
-    void* findWindow (const juce::String& title, const juce::String& className, const juce::String& exe)
+    void* findWindow (const juce::String& title, const juce::String& className, const juce::String& exe, bool exact)
     {
         if (title.isEmpty() && className.isEmpty() && exe.isEmpty())
             return nullptr;
@@ -159,6 +159,7 @@ namespace ScreenCapture
             if (sameExe == nullptr)
                 sameExe = w.hwnd;
         }
+        if (exact) return nullptr;
         if (sameTitle != nullptr) return sameTitle;   // la clase cambia en cada arranque en algunos programas (JUCE)
         if (sameClass != nullptr) return sameClass;
         return sameExe;
@@ -569,6 +570,11 @@ namespace
                 winrtDevice = inspectable.as<winrt::Windows::Graphics::DirectX::Direct3D11::IDirect3DDevice>();
 
                 poolSize = item.Size();
+                // Una ventana fuera de las pantallas (el reproductor de YouTube) da 0x0, pero sus
+                // fotogramas llegan bien: el grupo se crea con el tamano de su area.
+                RECT rc {};
+                if ((poolSize.Width <= 0 || poolSize.Height <= 0) && hwnd != nullptr && GetClientRect (hwnd, &rc))
+                    poolSize = { juce::jmax (1, (int) rc.right), juce::jmax (1, (int) rc.bottom) };
                 pool = wgc::Direct3D11CaptureFramePool::CreateFreeThreaded (winrtDevice, wgd::DirectXPixelFormat::B8G8R8A8UIntNormalized,
                                                                             2, poolSize);
                 session = pool.CreateCaptureSession (item);
@@ -606,7 +612,10 @@ namespace
                     D3D11_TEXTURE2D_DESC desc {};
                     if (surface != nullptr)
                         surface->GetDesc (&desc);
-                    const auto content = latest.ContentSize();
+                    auto content = latest.ContentSize();
+                    // Una ventana fuera de las pantallas (el reproductor de YouTube) da 0x0: vale la textura entera.
+                    if (content.Width <= 0 || content.Height <= 0)
+                        content = { (int) desc.Width, (int) desc.Height };
                     // La textura del grupo puede ser mas grande que la ventana: solo vale lo de ContentSize.
                     D3D11_BOX box { 0, 0, 0, (UINT) juce::jmin ((int) desc.Width, content.Width),
                                     (UINT) juce::jmin ((int) desc.Height, content.Height), 1 };
@@ -748,7 +757,8 @@ bool Capture::reconnect()
     }
     else
     {
-        auto* hwnd = (HWND) ScreenCapture::findWindow (item.windowTitle, item.windowClass, item.windowExe);
+        auto* hwnd = (HWND) ScreenCapture::findWindow (item.windowTitle, item.windowClass, item.windowExe,
+                                                       item.windowClass == YouTubeWindow::className);
         if (hwnd == nullptr)
         {
             problem = item.windowTitle.isEmpty() ? "Elige una ventana" : "La ventana no esta abierta";

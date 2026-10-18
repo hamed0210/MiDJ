@@ -28,7 +28,7 @@ namespace
 class LibraryBrowser::Node : public juce::TreeViewItem
 {
 public:
-    enum class Kind { root, all, audio, video, favorites, mostPlayed, playlists, playlist, mine, myFolder, disks, drive, folder };
+    enum class Kind { root, all, audio, video, favorites, mostPlayed, playlists, playlist, youtube, mine, myFolder, disks, drive, folder };
 
     Node (LibraryBrowser& o, Kind k, const juce::String& l, const juce::File& f, int c, juce::int64 list = 0)
         : owner (o), kind (k), label (l), file (f), count (c), playlistId (list) {}
@@ -67,6 +67,7 @@ public:
             case Kind::mostPlayed: Icons::draw (g, icon, Icons::Glyph::play, DarkLookAndFeel::good); break;
             case Kind::playlists:  Icons::draw (g, icon, Icons::Glyph::note, DarkLookAndFeel::textQuiet); break;
             case Kind::playlist:   Icons::draw (g, icon, Icons::Glyph::note, juce::Colour (0xff8ab4ff)); break;
+            case Kind::youtube:    Icons::drawSource (g, icon, SourceType::youtube, juce::Colour (0xffff4e45)); break;
             case Kind::mine:    Icons::draw (g, icon, Icons::Glyph::folderPlus, DarkLookAndFeel::textQuiet); break;
             case Kind::drive:   Icons::draw (g, icon, Icons::Glyph::drive, DarkLookAndFeel::textQuiet); break;
             case Kind::myFolder: case Kind::folder: Icons::draw (g, icon, Icons::Glyph::folder, juce::Colour (0xffc9c9cf)); break;
@@ -148,7 +149,11 @@ public:
             button->setTooltip (juce::String ("Cargar en el deck ") + (deck == 0 ? "A" : "B"));
             button->onClick = [this, deck]
             {
-                if (juce::isPositiveAndBelow (row, (int) owner.tracks.size()) && owner.onLoadToDeck)
+                if (const auto video = owner.youTubeAt (row))
+                {
+                    if (owner.onYouTubePlay) owner.onYouTubePlay (*video);   // "Ver"
+                }
+                else if (juce::isPositiveAndBelow (row, (int) owner.tracks.size()) && owner.onLoadToDeck)
                     owner.onLoadToDeck (owner.tracks[(size_t) row], deck);
             };
             addAndMakeVisible (button);
@@ -156,7 +161,11 @@ public:
         plus.setBordered (true);
         plus.onClick = [this]
         {
-            if (juce::isPositiveAndBelow (row, (int) owner.tracks.size()) && owner.automix != nullptr)
+            if (const auto video = owner.youTubeAt (row))
+            {
+                if (owner.onYouTubeQueue) owner.onYouTubeQueue (*video, false);
+            }
+            else if (juce::isPositiveAndBelow (row, (int) owner.tracks.size()) && owner.automix != nullptr)
                 owner.automix->add (itemFor (owner.tracks[(size_t) row]));
         };
         addAndMakeVisible (plus);
@@ -167,10 +176,30 @@ public:
         }
     }
 
+    // Una fila de YouTube: "Ver" (suena ya) y + (al automix de YouTube); si no, A, B y +.
+    void setRow (int r)
+    {
+        row = r;
+        const bool yt = owner.youTubeAt (row).has_value();
+        a.setButtonText (yt ? "Ver" : "A");
+        a.setTooltip (yt ? "Ver ahora en el reproductor de YouTube" : "Cargar en el deck A");
+        a.setColour (juce::TextButton::textColourOffId, yt ? juce::Colour (0xffff4e45) : DarkLookAndFeel::deckColour (0));
+        b.setVisible (! yt);
+        plus.setTooltip (yt ? "Anadir al automix de YouTube" : "Anadir al automix");
+        resized();
+    }
+
     void resized() override
     {
         auto r = getLocalBounds().withSizeKeepingCentre (getWidth(), juce::jmin (getHeight() - 6, 28));
         const int w = (r.getWidth() - 8) / 3;
+        if (! b.isVisible())
+        {
+            a.setBounds (r.removeFromLeft (w * 2 + 4));
+            r.removeFromLeft (4);
+            plus.setBounds (r);
+            return;
+        }
         a.setBounds (r.removeFromLeft (w));
         r.removeFromLeft (4);
         b.setBounds (r.removeFromLeft (w));
@@ -271,9 +300,14 @@ LibraryBrowser::LibraryBrowser (Library& l) : library (l)
     searchBox.setColour (juce::TextEditor::outlineColourId, DarkLookAndFeel::line);
     searchBox.setFont (DarkLookAndFeel::sans (14.0f));
     searchBox.setIndents (10, 8);
-    searchBox.onTextChange = [this] { startTimer (200); };   // espera a que se deje de teclear
+    searchBox.onTextChange = [this] { if (filterKind != 6) startTimer (200); };   // espera a que se deje de teclear (YouTube: con Intro)
     searchBox.onEscapeKey = [this] { searchBox.clear(); refresh(); unfocusAllComponents(); };
-    searchBox.onReturnKey = [this] { unfocusAllComponents(); };   // Intro: a la lista (las flechas y el espacio vuelven a ser atajos)
+    searchBox.onReturnKey = [this]
+    {
+        if (filterKind == 6)
+            startYouTubeSearch (searchBox.getText());
+        unfocusAllComponents();   // Intro: a la lista (las flechas y el espacio vuelven a ser atajos)
+    };
     addAndMakeVisible (searchBox);
 
     auto& header = table.getHeader();
@@ -365,6 +399,7 @@ void LibraryBrowser::rebuildTree (bool force)
     for (const auto& p : playlists)
         lists->addSubItem (new Node (*this, Node::Kind::playlist, p.name, {}, p.count, p.id));
     rootNode->addSubItem (lists);
+    rootNode->addSubItem (new Node (*this, Node::Kind::youtube, "YouTube", {}, -1));
 
     auto countUnder = [&paths] (const juce::File& folder)
     {
@@ -448,6 +483,7 @@ void LibraryBrowser::rebuildTree (bool force)
                              : c->kind == Node::Kind::favorites ? filterKind == 3
                              : c->kind == Node::Kind::mostPlayed ? filterKind == 4
                              : c->kind == Node::Kind::playlist ? filterKind == 5 && filterPlaylist == c->playlistId
+                             : c->kind == Node::Kind::youtube ? filterKind == 6
                              : (c->kind == Node::Kind::myFolder || c->kind == Node::Kind::drive || c->kind == Node::Kind::folder)
                                    && filterFolder != juce::File() && c->file == filterFolder;
             if (match)
@@ -476,10 +512,63 @@ void LibraryBrowser::selectNode (Node* node)
         case Node::Kind::mostPlayed: filterKind = 4; break;
         case Node::Kind::playlist: filterKind = 5; filterPlaylist = node->playlistId; break;
         case Node::Kind::playlists: filterKind = 5; filterPlaylist = 0; break;   // la carpeta de listas: vacia
+        case Node::Kind::youtube: filterKind = 6; break;
         case Node::Kind::myFolder: case Node::Kind::drive: case Node::Kind::folder: filterFolder = node->file; break;
         default: break;
     }
+    // En YouTube el buscador busca en YouTube (con Intro).
+    searchBox.setTextToShowWhenEmpty (filterKind == 6 ? "Buscar en YouTube o pegar un enlace (Intro)"
+                                                      : "Buscar titulo, artista, album o genero   (Ctrl+F)",
+                                      DarkLookAndFeel::textQuiet);
     refresh();
+}
+
+void LibraryBrowser::startYouTubeSearch (const juce::String& text)
+{
+    const auto query = text.trim();
+    if (query.isEmpty())
+        return;
+    // Un enlace o un id: ese video directamente.
+    if (const auto id = YouTubeSearch::idFromText (query); id.isNotEmpty())
+    {
+        youtubeResults = { { id, "Video de YouTube (" + id + ")", {}, 0.0 } };
+        youtubeStatus = "Enlace de YouTube";
+        refresh();
+        return;
+    }
+    youtubeStatus = "Buscando \"" + query + "\" en YouTube...";
+    repaint (footerArea);
+    const int searchId = ++youtubeSearchId;
+    juce::Component::SafePointer<LibraryBrowser> safe (this);
+    juce::Thread::launch ([safe, query, searchId]
+    {
+        juce::String error;
+        auto results = YouTubeSearch::search (query, error);
+        juce::MessageManager::callAsync ([safe, searchId, results = std::move (results), error, query]
+        {
+            if (safe == nullptr || searchId != safe->youtubeSearchId)
+                return;   // ya se pidio otra busqueda
+            safe->youtubeResults = results;
+            safe->youtubeStatus = results.empty() ? error : juce::String ((int) results.size()) + " videos para \"" + query + "\"";
+            safe->refresh();
+        });
+    });
+}
+
+std::optional<YouTubeVideo> LibraryBrowser::youTubeAt (int row) const
+{
+    if (! juce::isPositiveAndBelow (row, (int) tracks.size()) || ! isYouTube (tracks[(size_t) row]))
+        return std::nullopt;
+    const auto id = tracks[(size_t) row].path.fromFirstOccurrenceOf ("youtube:", false, false);
+    for (const auto& v : youtubeResults)
+        if (v.id == id)
+            return v;
+    return std::nullopt;
+}
+
+std::optional<YouTubeVideo> LibraryBrowser::getSelectedYouTube() const
+{
+    return youTubeAt (table.getSelectedRow());
 }
 
 void LibraryBrowser::removeNode (Node& node)
@@ -659,7 +748,23 @@ void LibraryBrowser::refresh()
     const int row = table.getSelectedRow();
     const auto selectedId = row >= 0 && row < (int) tracks.size() ? tracks[(size_t) row].id : 0;
 
-    if (filterKind >= 3)
+    if (filterKind == 6)
+    {
+        // YouTube: los resultados de la busqueda como filas (ruta "youtube:id").
+        tracks.clear();
+        juce::int64 fakeId = -1;
+        for (const auto& v : youtubeResults)
+        {
+            TrackInfo t;
+            t.id = fakeId--;
+            t.path = "youtube:" + v.id;
+            t.title = v.title;
+            t.artist = v.channel;
+            t.duration = v.seconds;
+            tracks.push_back (t);
+        }
+    }
+    else if (filterKind >= 3)
     {
         // Favoritos, mas reproducidos o una lista (en su orden), con el texto del buscador si hay.
         tracks = filterKind == 3 ? library.getFavorites() : filterKind == 4 ? library.getMostPlayed()
@@ -771,11 +876,18 @@ void LibraryBrowser::paintCell (juce::Graphics& g, int row, int column, int widt
         const auto chip = juce::Rectangle<float> (6.0f, (float) height / 2.0f - 12.0f, 30.0f, 24.0f);
         g.setColour (DarkLookAndFeel::raised);
         g.fillRoundedRectangle (chip, 5.0f);
+        if (isYouTube (t))
+        {
+            Icons::drawSource (g, chip.reduced (6.0f, 4.0f), SourceType::youtube, juce::Colour (0xffff4e45));
+            return;
+        }
         const bool video = Library::isVideoFile (t.getFile());
         Icons::draw (g, chip.reduced (7.0f, 5.0f), video ? Icons::Glyph::film : Icons::Glyph::note,
                      video ? juce::Colour (0xffd58cf5) : DarkLookAndFeel::textQuiet);
         return;
     }
+    if ((column == favCol || column == bpmCol) && isYouTube (t))
+        return;   // YouTube: sin favorito ni BPM
     if (column == favCol)
     {
         // Estrella: encendida si es favorita (clic: cambiar).
@@ -829,7 +941,7 @@ juce::Component* LibraryBrowser::refreshComponentForCell (int row, int column, b
         delete existing;
         buttons = new RowButtons (*this);
     }
-    buttons->row = row;
+    buttons->setRow (row);
     return buttons;
 }
 
@@ -849,7 +961,11 @@ void LibraryBrowser::sortOrderChanged (int columnId, bool forwards)
 
 void LibraryBrowser::cellDoubleClicked (int row, int, const juce::MouseEvent&)
 {
-    if (row >= 0 && row < (int) tracks.size() && onLoadRequest)
+    if (const auto video = youTubeAt (row))
+    {
+        if (onYouTubePlay) onYouTubePlay (*video);
+    }
+    else if (row >= 0 && row < (int) tracks.size() && onLoadRequest)
         onLoadRequest (tracks[(size_t) row]);
 }
 
@@ -962,6 +1078,15 @@ void LibraryBrowser::toggleFavorite (const TrackInfo& track)
 
 void LibraryBrowser::showTrackMenu (int row)
 {
+    if (const auto video = youTubeAt (row))
+    {
+        juce::PopupMenu yt;
+        yt.addItem ("Ver ahora", [this, v = *video] { if (onYouTubePlay) onYouTubePlay (v); });
+        yt.addItem ("Anadir al automix de YouTube", [this, v = *video] { if (onYouTubeQueue) onYouTubeQueue (v, false); });
+        yt.addItem ("Anadir al automix de YouTube como el siguiente", [this, v = *video] { if (onYouTubeQueue) onYouTubeQueue (v, true); });
+        yt.showMenuAsync (juce::PopupMenu::Options());
+        return;
+    }
     enum { addToAutomix = 1, playNext, loadA, loadB, prepareStems, favorite, removeFromList, moveUp, moveDown,
            newList = 999, listBase = 1000 };
     juce::PopupMenu menu;
@@ -1022,8 +1147,8 @@ void LibraryBrowser::showTrackMenu (int row)
 
 juce::var LibraryBrowser::getDragSourceDescription (const juce::SparseSet<int>& rows)
 {
-    if (rows.isEmpty() || rows[0] >= (int) tracks.size())
-        return {};
+    if (rows.isEmpty() || rows[0] >= (int) tracks.size() || isYouTube (tracks[(size_t) rows[0]]))
+        return {};   // un video de YouTube no se arrastra a un deck
     return juce::String (dragPrefix) + tracks[(size_t) rows[0]].path;
 }
 
@@ -1073,9 +1198,14 @@ void LibraryBrowser::paint (juce::Graphics& g)
     g.setColour (DarkLookAndFeel::textQuiet);
     g.setFont (DarkLookAndFeel::sans (12.0f));
     const int n = (int) tracks.size();
-    g.drawText (juce::String (n) + (n == 1 ? " archivo" : " archivos") + " en \"" + selectionName() + "\"" + juce::String::fromUTF8 ("  \xc2\xb7  ")
-                    + "A / B cargan en el deck, + anade al automix",
-                footerArea, juce::Justification::centredLeft, true);
+    const auto dot = juce::String::fromUTF8 ("  \xc2\xb7  ");
+    if (filterKind == 6)
+        g.drawText (youtubeStatus + dot + "Ver: suena ya" + dot + "+: al automix de YouTube",
+                    footerArea, juce::Justification::centredLeft, true);
+    else
+        g.drawText (juce::String (n) + (n == 1 ? " archivo" : " archivos") + " en \"" + selectionName() + "\"" + dot
+                        + "A / B cargan en el deck, + anade al automix",
+                    footerArea, juce::Justification::centredLeft, true);
     if (library.isBusy())
         g.drawText (library.getStatusText(), footerArea, juce::Justification::centredRight, false);
 }
@@ -1124,7 +1254,11 @@ void LibraryBrowser::resized()
 
 void LibraryBrowser::returnKeyPressed (int row)
 {
-    if (row >= 0 && row < (int) tracks.size() && onReturnKey)
+    if (const auto video = youTubeAt (row))
+    {
+        if (onYouTubePlay) onYouTubePlay (*video);
+    }
+    else if (row >= 0 && row < (int) tracks.size() && onReturnKey)
         onReturnKey (tracks[(size_t) row]);
 }
 }

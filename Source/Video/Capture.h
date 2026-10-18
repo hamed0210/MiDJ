@@ -40,7 +40,8 @@ namespace ScreenCapture
     // La ventana guardada de un elemento, como OBS: el mismo titulo, clase y programa; si no, el
     // mismo titulo y programa; si no, la misma clase y programa (el titulo cambia, p. ej. en un
     // navegador); si no, el mismo programa.
-    void* findWindow (const juce::String& title, const juce::String& className, const juce::String& exe);
+    // exact: solo la ventana con ese titulo y esa clase (el reproductor de YouTube de MiDJ).
+    void* findWindow (const juce::String& title, const juce::String& className, const juce::String& exe, bool exact = false);
 }
 
 // Una captura de pantalla o ventana. Si se pierde (la ventana se cierra, cambia la resolucion...)

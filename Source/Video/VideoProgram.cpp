@@ -5,6 +5,19 @@ namespace midj
 namespace
 {
     constexpr int itemSlotBase = 1000;   // ranuras del compositor de imagenes y textos: 1000 + id del elemento
+
+    // La fuente YouTube es una captura de la ventana del reproductor de MiDJ (sin cursor).
+    SceneItem youTubeCapture (const SceneItem& item)
+    {
+        auto w = item;
+        w.type = SourceType::window;
+        w.windowTitle = YouTubeWindow::title;
+        w.windowClass = YouTubeWindow::className;
+        w.windowExe = juce::File::getSpecialLocation (juce::File::currentExecutableFile).getFileName();
+        w.cursor = false;
+        w.clientArea = false;
+        return w;
+    }
 }
 
 VideoProgram::VideoProgram (VideoMix& m, int w, int h) : mix (m), width (w), height (h)
@@ -62,8 +75,9 @@ VideoProgram::Prepared VideoProgram::prepare (const SceneItem& item)
             break;
         case SourceType::screen:
         case SourceType::window:
+        case SourceType::youtube:
             if (captures != nullptr)
-                p.capture = captures->get (item);
+                p.capture = captures->get (item.type == SourceType::youtube ? youTubeCapture (item) : item);
             p.natural = naturalSize (item);
             return p;   // la imagen la pone la captura en la GPU en cada fotograma
         case SourceType::media:
@@ -421,6 +435,7 @@ void VideoProgram::sceneLayers (const PreparedScene& scene, std::vector<Composit
             }
             case SourceType::screen:
             case SourceType::window:
+            case SourceType::youtube:
             {
                 if (p.capture == nullptr)
                     break;

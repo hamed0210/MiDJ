@@ -4,7 +4,7 @@ namespace midj
 {
 namespace
 {
-    const char* typeIds[] = { "decks", "deckA", "deckB", "image", "text", "colour", "screen", "window", "visualizer", "media", "captureDevice" };
+    const char* typeIds[] = { "decks", "deckA", "deckB", "image", "text", "colour", "screen", "window", "visualizer", "media", "captureDevice", "youtube" };
     const char* visualizerIds[] = { "spectrum", "wave", "pulse" };
     const char* transitionIds[] = { "cut", "fade", "fadeToBlack", "slide", "swipe" };
     const char* customKindIds[] = { "stinger", "luma", "colour" };
@@ -149,6 +149,7 @@ juce::String SceneCollection::typeName (SourceType type)
         case SourceType::visualizer: return "Visualizador";
         case SourceType::media: return "Multimedia";
         case SourceType::captureDevice: return "Dispositivo de captura de video";
+        case SourceType::youtube: return "YouTube";
     }
     return {};
 }
@@ -203,7 +204,8 @@ std::unique_ptr<juce::XmlElement> SceneCollection::toXml() const
         se->setAttribute ("id", s.id);
         se->setAttribute ("name", s.name);
         if (s.autoWhen != SceneAuto::none)
-            se->setAttribute ("auto", s.autoWhen == SceneAuto::audio ? "audio" : s.autoWhen == SceneAuto::video ? "video" : "idle");
+            se->setAttribute ("auto", s.autoWhen == SceneAuto::audio ? "audio" : s.autoWhen == SceneAuto::video ? "video"
+                                    : s.autoWhen == SceneAuto::youtube ? "youtube" : "idle");
         for (const auto& i : s.items)
         {
             auto* e = se->createNewChildElement ("ITEM");
@@ -299,7 +301,7 @@ SceneCollection SceneCollection::fromXml (const juce::XmlElement& xml, int w, in
         s.name = se->getStringAttribute ("name", "Escena");
         const auto when = se->getStringAttribute ("auto");
         s.autoWhen = when == "audio" ? SceneAuto::audio : when == "video" ? SceneAuto::video
-                   : when == "idle" ? SceneAuto::idle : SceneAuto::none;
+                   : when == "idle" ? SceneAuto::idle : when == "youtube" ? SceneAuto::youtube : SceneAuto::none;
         c.lastId = juce::jmax (c.lastId, s.id);
         for (auto* e : se->getChildWithTagNameIterator ("ITEM"))
         {
