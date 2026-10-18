@@ -19,8 +19,9 @@ public:
 
     void prepare (double sampleRate, int maxBlockSize);
     void reset();   // borra el estado de los filtros y salta a los valores actuales
-    // Procesa en el sitio las muestras [start, start + n) de los 2 primeros canales.
-    void process (juce::AudioBuffer<float>& buffer, int start, int n);
+    // Procesa en el sitio las muestras [start, start + n) de los 2 primeros canales. preFader
+    // (opcional, 2 canales, desde 0): la senal antes del volumen, para la pre-escucha.
+    void process (juce::AudioBuffer<float>& buffer, int start, int n, juce::AudioBuffer<float>* preFader = nullptr);
 
     void setGain (float k)   { gainKnob = k; }
     void setLow (float k)    { lowKnob = k; }

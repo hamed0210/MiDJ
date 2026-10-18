@@ -68,6 +68,7 @@ add_library(MiDJEngine STATIC
     Source/Engine/Deck.cpp
     Source/Engine/Effects.cpp
     Source/Engine/AuxAudio.cpp
+    Source/Engine/HeadphoneOutput.cpp
     Source/Engine/MasterTap.cpp
     Source/Engine/Mixer.cpp
     Source/Engine/MixPoints.cpp

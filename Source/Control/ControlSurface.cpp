@@ -46,6 +46,8 @@ void ControlSurface::pressButton (const juce::String& action)
         deck.setVocalsOn (! deck.isVocalsOn());
     else if (verb == "instrumental")
         deck.setInstrumentalOn (! deck.isInstrumentalOn());
+    else if (verb == "pfl")
+        mixer.setPfl (d, ! mixer.getPfl (d));
     else if (verb == "load")
         juce::MessageManager::callAsync ([this, d, flag = alive] { if (flag->load() && onLoadSelected) onLoadSelected (d); });
     else if (verb.startsWith ("loop"))

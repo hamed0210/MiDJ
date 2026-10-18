@@ -43,6 +43,21 @@ MixerComponent::MixerComponent (Mixer& m) : mixer (m)
     addChildComponent (masterLeft);
     addChildComponent (masterRight);
 
+    // Audifonos: mezcla pre-escucha / master y volumen (solo con audifonos configurados).
+    cueMixKnob.slider.setColour (juce::Slider::rotarySliderFillColourId, DarkLookAndFeel::text);
+    cueMixKnob.formatValue = [] (double v)
+    {
+        return v < 0.02 ? juce::String ("cue") : v > 0.98 ? juce::String ("master") : juce::String (juce::roundToInt (v * 100.0)) + " % mst";
+    };
+    cueMixKnob.slider.setTooltip ("Audifonos: a la izquierda solo la pre-escucha, a la derecha solo el master");
+    cueMixKnob.slider.onValueChange = [this] { mixer.setCueMix ((float) cueMixKnob.slider.getValue()); };
+    headphoneKnob.slider.setColour (juce::Slider::rotarySliderFillColourId, DarkLookAndFeel::text);
+    headphoneKnob.formatValue = [] (double v) { return juce::String (juce::roundToInt (v * 100.0)) + " %"; };
+    headphoneKnob.slider.setTooltip ("Volumen de los audifonos");
+    headphoneKnob.slider.onValueChange = [this] { mixer.setHeadphoneVolume ((float) headphoneKnob.slider.getValue()); };
+    addChildComponent (cueMixKnob);
+    addChildComponent (headphoneKnob);
+
     noVideoLabel.setJustificationType (juce::Justification::centred);
     noVideoLabel.setColour (juce::Label::textColourId, DarkLookAndFeel::textQuiet);
     addChildComponent (noVideoLabel);
@@ -131,6 +146,31 @@ void MixerComponent::setUpChannel (int index)
     v.onValueChange = [this, index, &v, &strip] { strip.setVolume ((float) v.getValue()); repaint (faderLabelArea[(size_t) index]); };
     addAndMakeVisible (v);
     addAndMakeVisible (channel.faderMeter);
+
+    // Pre-escucha: escuchar el deck en los audifonos (antes de su volumen).
+    channel.pfl = std::make_unique<IconButton> (Icons::Glyph::headphones,
+                                                juce::String ("Pre-escucha del deck ") + (index == 0 ? "A" : "B") + " en los audifonos");
+    channel.pfl->onClick = [this, index]
+    {
+        mixer.setPfl (index, ! mixer.getPfl (index));
+        updatePflButtons();
+    };
+    addChildComponent (*channel.pfl);
+}
+
+void MixerComponent::setHeadphonesAvailable (bool available)
+{
+    headphonesAvailable = available;
+    for (auto& c : channels)
+        c.pfl->setVisible (available);
+    updatePflButtons();
+    showVideoTab (videoTab);   // los mandos de los audifonos van en la pagina AUDIO
+}
+
+void MixerComponent::updatePflButtons()
+{
+    for (size_t c = 0; c < channels.size(); ++c)
+        channels[c].pfl->setBordered (true, mixer.getPfl ((int) c) ? deckColour (c) : juce::Colour());
 }
 
 void MixerComponent::setVideoStage (VideoStage* s)
@@ -273,6 +313,10 @@ void MixerComponent::showVideoTab (bool video)
     master.setVisible (! video);
     masterLeft.setVisible (! video);
     masterRight.setVisible (! video);
+    cueMixKnob.setVisible (! video && headphonesAvailable);
+    headphoneKnob.setVisible (! video && headphonesAvailable);
+    cueMixKnob.slider.setValue (mixer.getCueMix(), juce::dontSendNotification);
+    headphoneKnob.slider.setValue (mixer.getHeadphoneVolume(), juce::dontSendNotification);
     const bool hasVideo = stage != nullptr && stage->isReady();
     noVideoLabel.setText (stage != nullptr ? "Sin Direct3D 11: " + stage->getError() : juce::String ("Video no disponible"),
                           juce::dontSendNotification);
@@ -297,6 +341,8 @@ void MixerComponent::addLearnTargets (std::vector<LearnTarget>& out)
         for (size_t i = 0; i < verbs.size(); ++i)
             out.push_back ({ &channels[c].knobs[i]->slider, prefix + verbs[i] });
         out.push_back ({ &channels[c].volume, prefix + "volume" });
+        if (channels[c].pfl->isVisible())
+            out.push_back ({ channels[c].pfl.get(), prefix + "pfl" });
     }
     out.push_back ({ &crossfader, "crossfader" });
 }
@@ -326,6 +372,21 @@ void MixerComponent::timerCallback()
         channels[c].meter.setPeak (peak);
         channels[c].faderMeter.setPeak (peak);
     }
+    // Limitador: se ve 0,6 s despues de recortar mas de 0,5 dB. Pre-escucha: sigue al MIDI.
+    const auto now = juce::Time::getMillisecondCounter();
+    if (mixer.takeLimiterGain() < 0.944f)
+        limiterUntil = now + 600;
+    if (const bool shown = now < limiterUntil; shown != limiterShown)
+    {
+        limiterShown = shown;
+        repaint (faderLabelArea[0].getUnion (faderLabelArea[1]));
+    }
+    for (size_t c = 0; c < channels.size(); ++c)
+        if (channels[c].pfl->isVisible() && (channels[c].pfl->getProperties()["on"].operator bool()) != mixer.getPfl ((int) c))
+        {
+            channels[c].pfl->getProperties().set ("on", mixer.getPfl ((int) c));
+            updatePflButtons();
+        }
     masterLeft.setPeak (mixer.takeMasterPeak (0));
     masterRight.setPeak (mixer.takeMasterPeak (1));
     // El crossfader sigue a la controladora y al automix.
@@ -373,9 +434,10 @@ void MixerComponent::paint (juce::Graphics& g)
         g.setColour (deckColour (c));
         g.setFont (DarkLookAndFeel::sans (11.0f, true));
         g.drawText (c == 0 ? "VOL A" : "VOL B", faderTitleArea[c], juce::Justification::centred, false);
-        g.setColour (DarkLookAndFeel::textQuiet);
-        g.setFont (DarkLookAndFeel::mono (11.0f));
-        g.drawText (juce::String (juce::roundToInt (channels[c].volume.getValue() * 100.0)) + " %", faderLabelArea[c], juce::Justification::centred, false);
+        g.setColour (limiterShown ? DarkLookAndFeel::danger : DarkLookAndFeel::textQuiet);
+        g.setFont (DarkLookAndFeel::mono (11.0f, limiterShown));
+        g.drawText (limiterShown ? juce::String ("LIM") : juce::String (juce::roundToInt (channels[c].volume.getValue() * 100.0)) + " %",
+                    faderLabelArea[c], juce::Justification::centred, false);
     }
 
     // Franja: A y B junto al crossfader, el texto del centro, separador y la duracion de la transicion.
@@ -393,6 +455,7 @@ void MixerComponent::paint (juce::Graphics& g)
         g.fillRect (separatorArea);
     }
 }
+
 
 void MixerComponent::resized()
 {
@@ -474,6 +537,11 @@ void MixerComponent::resized()
         auto col = c == 0 ? inner.removeFromLeft (46) : inner.removeFromRight (46);
         faderTitleArea[c] = col.removeFromTop (14);
         col.removeFromTop (6);
+        if (headphonesAvailable)
+        {
+            channels[c].pfl->setBounds (col.removeFromBottom (26).withSizeKeepingCentre (36, 26));
+            col.removeFromBottom (4);
+        }
         faderLabelArea[c] = col.removeFromBottom (14);
         col.removeFromBottom (6);
         auto meter = c == 0 ? col.removeFromRight (6) : col.removeFromLeft (6);
@@ -494,7 +562,18 @@ void MixerComponent::resized()
         masterLeft.setBounds (meters.removeFromLeft (9));
         meters.removeFromLeft (4);
         masterRight.setBounds (meters.removeFromLeft (9));
-        master.setBounds (centre.removeFromTop (juce::jmin (centre.getHeight(), 88)));
+        if (headphonesAvailable)
+        {
+            // Master arriba y, debajo, los dos mandos de los audifonos lado a lado.
+            const int knobH = juce::jmin (88, centre.getHeight() / 2);
+            master.setBounds (centre.removeFromTop (knobH));
+            centre.removeFromTop (4);
+            auto row = centre.removeFromTop (juce::jmin (centre.getHeight(), 76));
+            cueMixKnob.setBounds (row.removeFromLeft (row.getWidth() / 2));
+            headphoneKnob.setBounds (row);
+        }
+        else
+            master.setBounds (centre.removeFromTop (juce::jmin (centre.getHeight(), 88)));
 
         for (size_t c = 0; c < channels.size(); ++c)
         {

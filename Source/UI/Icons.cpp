@@ -239,6 +239,13 @@ void Icons::draw (juce::Graphics& g, R area, Glyph glyph, juce::Colour colour)
             }
             stroke (g, p, w * 0.9f);
             break;
+        case Glyph::headphones:   // arco y dos almohadillas
+            p.startNewSubPath (at (0.14f, 0.62f));
+            p.cubicTo (at (0.14f, 0.1f), at (0.86f, 0.1f), at (0.86f, 0.62f));
+            stroke (g, p, w);
+            g.fillRoundedRectangle (R (at (0.08f, 0.55f), at (0.3f, 0.9f)), s * 0.06f);
+            g.fillRoundedRectangle (R (at (0.7f, 0.55f), at (0.92f, 0.9f)), s * 0.06f);
+            break;
     }
 }
 

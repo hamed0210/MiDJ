@@ -86,7 +86,7 @@ void ChannelStrip::updateFilter (float knob)
     filter.setCutoffFrequency (juce::jmin (setting.cutoffHz, (float) (sampleRate * 0.45)));
 }
 
-void ChannelStrip::process (juce::AudioBuffer<float>& buffer, int start, int n)
+void ChannelStrip::process (juce::AudioBuffer<float>& buffer, int start, int n, juce::AudioBuffer<float>* preFader)
 {
     gain.setTargetValue (gainFromKnob (gainKnob.load()));
     low.setTargetValue (bandGainFromKnob (lowKnob.load()));
@@ -97,6 +97,10 @@ void ChannelStrip::process (juce::AudioBuffer<float>& buffer, int start, int n)
 
     const int channels = juce::jmin (2, buffer.getNumChannels());
     float* data[2] = { buffer.getWritePointer (0), buffer.getWritePointer (channels > 1 ? 1 : 0) };
+    float* pre[2] = { nullptr, nullptr };
+    if (preFader != nullptr)
+        for (int ch = 0; ch < 2; ++ch)
+            pre[ch] = preFader->getWritePointer (juce::jmin (ch, channels - 1));
 
     for (int i = 0; i < n; ++i)
     {
@@ -120,8 +124,12 @@ void ChannelStrip::process (juce::AudioBuffer<float>& buffer, int start, int n)
             float y = lo * gl + md * gm + hi * gh;
             if (filterActive)
                 y = filter.processSample (ch, y);
+            if (pre[ch] != nullptr)
+                pre[ch][i] = y;
             data[ch][start + i] = y * v;
         }
+        if (preFader != nullptr && channels == 1)
+            pre[1][i] = pre[0][i];
     }
     lowSplit.snapToZero();
     highSplit.snapToZero();

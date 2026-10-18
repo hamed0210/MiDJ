@@ -47,6 +47,10 @@ void Mixer::prepareToPlay (int samplesPerBlockExpected, double sampleRate)
     tap.prepare (sampleRate);
     aux.prepare (sampleRate, samplesPerBlockExpected);
     scratch.setSize (2, samplesPerBlockExpected);
+    for (auto* b : { &preA, &preB, &cue })
+        b->setSize (2, samplesPerBlockExpected);
+    limiterRelease = (float) std::exp (-1.0 / (0.15 * sampleRate));
+    limiterGain = 1.0f;
 }
 
 void Mixer::releaseResources()
@@ -58,8 +62,9 @@ void Mixer::releaseResources()
 void Mixer::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
 {
     const int n = info.numSamples;
-    if (scratch.getNumSamples() < n)
-        scratch.setSize (2, n, false, false, true);   // solo crece si el driver cambia el tamano de bloque
+    for (auto* b : { &scratch, &preA, &preB, &cue })
+        if (b->getNumSamples() < n)
+            b->setSize (2, n, false, false, true);   // solo crece si el driver cambia el tamano de bloque
 
     // Deck A directamente en la salida, deck B en un bufer temporal; cada uno por sus efectos
     // y su canal. El tempo se toma antes de que el deck avance: es el del inicio del bloque.
@@ -74,8 +79,8 @@ void Mixer::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
     // El sampler graba lo que sale de cada deck con sus efectos (antes del EQ y el volumen).
     sampler.capture (0, outBuffer.getReadPointer (0, info.startSample), outBuffer.getReadPointer (juce::jmin (1, lastOut), info.startSample), n, tempoA);
     sampler.capture (1, scratch.getReadPointer (0), scratch.getReadPointer (1), n, tempoB);
-    stripA.process (*info.buffer, info.startSample, n);
-    stripB.process (scratch, 0, n);
+    stripA.process (*info.buffer, info.startSample, n, &preA);
+    stripB.process (scratch, 0, n, &preB);
     raisePeak (peakA, info.buffer->getMagnitude (info.startSample, n));
     raisePeak (peakB, scratch.getMagnitude (0, n));
 
@@ -117,6 +122,52 @@ void Mixer::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
     for (int ch = 0; ch < out.getNumChannels(); ++ch)
         out.applyGainRamp (ch, info.startSample, n, lastMasterGain, masterGain);
     lastMasterGain = masterGain;
+
+    // Limitador: si un pico pasa del techo, la ganancia baja al momento lo justo y vuelve
+    // despacio. Los dos canales con la misma ganancia (la imagen estereo no se mueve).
+    if (limiterOn.load())
+    {
+        float* l = out.getWritePointer (0, info.startSample);
+        float* r = out.getNumChannels() > 1 ? out.getWritePointer (1, info.startSample) : nullptr;
+        float lowest = 1.0f;
+        for (int i = 0; i < n; ++i)
+        {
+            const float peak = juce::jmax (std::abs (l[i]), r != nullptr ? std::abs (r[i]) : 0.0f);
+            const float needed = peak > limiterCeiling ? limiterCeiling / peak : 1.0f;
+            limiterGain = needed < limiterGain ? needed : 1.0f - (1.0f - limiterGain) * limiterRelease;
+            limiterGain = juce::jmin (limiterGain, needed);
+            l[i] *= limiterGain;
+            if (r != nullptr)
+                r[i] *= limiterGain;
+            lowest = juce::jmin (lowest, limiterGain);
+        }
+        float current = limiterMin.load();
+        while (lowest < current && ! limiterMin.compare_exchange_weak (current, lowest)) {}
+    }
+    else
+        limiterGain = 1.0f;
+
+    // Audifonos: los decks con pre-escucha (antes de su volumen) mezclados con el master.
+    {
+        const float wantA = pflA.load() ? 1.0f : 0.0f, wantB = pflB.load() ? 1.0f : 0.0f;
+        const bool none = wantA == 0.0f && wantB == 0.0f && lastPflA == 0.0f && lastPflB == 0.0f;
+        const float mix = none ? 1.0f : cueMix.load();
+        const float hp = masterGainFromKnob (headphoneKnob.load());
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            cue.clear (ch, 0, n);
+            cue.addFromWithRamp (ch, 0, preA.getReadPointer (ch), n, lastPflA * (1.0f - lastCueMix), wantA * (1.0f - mix));
+            cue.addFromWithRamp (ch, 0, preB.getReadPointer (ch), n, lastPflB * (1.0f - lastCueMix), wantB * (1.0f - mix));
+            cue.addFromWithRamp (ch, 0, out.getReadPointer (juce::jmin (ch, out.getNumChannels() - 1), info.startSample), n, lastCueMix, mix);
+            cue.applyGainRamp (ch, 0, n, lastHeadphoneGain, hp);
+            juce::FloatVectorOperations::clip (cue.getWritePointer (ch), cue.getReadPointer (ch), -1.0f, 1.0f, n);
+        }
+        lastPflA = wantA;
+        lastPflB = wantB;
+        lastCueMix = mix;
+        lastHeadphoneGain = hp;
+    }
+
     raisePeak (peakL, out.getMagnitude (0, info.startSample, n));
     raisePeak (peakR, out.getMagnitude (juce::jmin (1, out.getNumChannels() - 1), info.startSample, n));
 

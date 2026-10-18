@@ -10,6 +10,7 @@
 #include "Engine/ChannelStrip.h"
 #include "Engine/Deck.h"
 #include "Engine/Effects.h"
+#include "Engine/HeadphoneOutput.h"
 #include "Engine/Mixer.h"
 #include "Engine/Sampler.h"
 #include "Engine/StemSeparator.h"
@@ -3414,6 +3415,116 @@ int videoInfo (const juce::File& file)
     return 0;
 }
 
+// --- Limitador del master, pre-escucha y audifonos por otra tarjeta -----------------------------
+
+void testLimiterAndHeadphones()
+{
+    std::printf ("== Limitador, pre-escucha y audifonos ==\n");
+    juce::AudioFormatManager formats;
+    midj::Deck a (formats), b (formats);
+    midj::Mixer mixer (a, b);
+    mixer.prepareToPlay (blockSize, sr);
+    auto sine = [] (double hz, float amplitude)
+    {
+        juce::AudioBuffer<float> s (1, (int) (sr * 10.0));
+        for (int i = 0; i < s.getNumSamples(); ++i)
+            s.setSample (0, i, amplitude * (float) std::sin (2.0 * juce::MathConstants<double>::pi * hz * i / sr));
+        return s;
+    };
+    a.loadBuffer (sine (100.0, 0.5f), sr, "A", { 120.0, 0.0 });
+    b.loadBuffer (sine (1000.0, 0.5f), sr, "B", { 120.0, 0.0 });
+    a.play();
+    b.play();
+
+    // Medio segundo de audio: pico del master y RMS del master y de los audifonos (ultimo cuarto).
+    struct Result { float masterPeak; double masterRms, cueRms; };
+    auto run = [&]
+    {
+        juce::AudioBuffer<float> out (2, blockSize);
+        Result r { 0.0f, 0.0, 0.0 };
+        double m = 0.0, c = 0.0;
+        int count = 0;
+        const int blocks = (int) (sr * 0.5) / blockSize;
+        for (int k = 0; k < blocks; ++k)
+        {
+            juce::AudioSourceChannelInfo info (&out, 0, blockSize);
+            mixer.getNextAudioBlock (info);
+            if (k >= 2)
+                r.masterPeak = juce::jmax (r.masterPeak, out.getMagnitude (0, blockSize));
+            if (k >= blocks * 3 / 4)
+                for (int i = 0; i < blockSize; ++i, ++count)
+                {
+                    m += (double) out.getSample (0, i) * out.getSample (0, i);
+                    c += (double) mixer.getCueBuffer().getSample (0, i) * mixer.getCueBuffer().getSample (0, i);
+                }
+        }
+        r.masterRms = std::sqrt (m / count);
+        r.cueRms = std::sqrt (c / count);
+        return r;
+    };
+
+    // Limitador: A con +12 dB de ganancia daria picos de 2,0; con el limitador no pasan del techo.
+    mixer.setCrossfader (0.0f);
+    mixer.getStrip (0).setGain (1.0f);
+    mixer.setLimiterEnabled (false);
+    const auto loud = run();
+    check (loud.masterPeak > 1.5f, "limitador apagado: el master pasa de 1", loud.masterPeak, 2.0);
+    mixer.setLimiterEnabled (true);
+    const auto limited = run();
+    check (limited.masterPeak <= midj::Mixer::limiterCeiling + 0.001f, "limitador: el master no pasa de -0,3 dBFS",
+           limited.masterPeak, midj::Mixer::limiterCeiling);
+    check (mixer.takeLimiterGain() < 0.6f, "limitador: avisa de que esta recortando", 0.5, 0.5);
+    mixer.getStrip (0).setGain (midj::ChannelStrip::defaultKnob);
+    run();
+    const auto normal = run();
+    check (normal.masterPeak > 0.45f && normal.masterPeak < 0.52f, "limitador: sin picos altos no toca la senal", normal.masterPeak, 0.5);
+
+    // Sin pre-escucha los audifonos oyen el master.
+    mixer.setHeadphoneVolume (midj::Mixer::defaultMasterVolume);   // ganancia 1
+    const auto plain = run();
+    check (std::abs (plain.cueRms - plain.masterRms) < 0.01, "audifonos sin pre-escucha = master", plain.cueRms, plain.masterRms);
+
+    // Pre-escucha de B con el crossfader en A y el volumen de B abajo: B solo en los audifonos.
+    mixer.setPfl (1, true);
+    mixer.setCueMix (0.0f);
+    mixer.getStrip (1).setVolume (0.0f);
+    run();
+    const auto cued = run();
+    check (std::abs (cued.cueRms - 0.3536) < 0.02, "pre-escucha: B en los audifonos (antes de su volumen)", cued.cueRms, 0.3536);
+    check (std::abs (cued.masterRms - 0.3536) < 0.02, "pre-escucha: el master sigue siendo solo A", cued.masterRms, 0.3536);
+    // Mezcla cue / master a la mitad: las dos senales a la mitad (100 Hz y 1 kHz no se anulan).
+    mixer.setCueMix (0.5f);
+    run();
+    const auto half = run();
+    check (std::abs (half.cueRms - 0.25) < 0.02, "pre-escucha: mezcla cue/master a la mitad", half.cueRms, 0.25);
+    mixer.setPfl (1, false);
+
+    // Audifonos por otra tarjeta: 44,1 kHz entran, 48 kHz salen; un La de 440 Hz sigue en 440.
+    midj::HeadphoneOutput hp;
+    hp.prepare (sr);
+    const int outBlock = 480;
+    juce::AudioBuffer<float> in (2, blockSize), out (2, (int) (48000 * 2.0));
+    int written = 0, outDone = 0;
+    double phase = 0.0;
+    while (outDone + outBlock <= out.getNumSamples())
+    {
+        // La entrada va por delante lo justo (como dos tarjetas con su propio ritmo).
+        while (written * 48000.0 / sr < outDone + outBlock * 2)
+        {
+            for (int i = 0; i < blockSize; ++i, phase += 440.0 / sr)
+                in.setSample (0, i, 0.5f * (float) std::sin (2.0 * juce::MathConstants<double>::pi * phase)),
+                in.setSample (1, i, in.getSample (0, i));
+            hp.push (in.getReadPointer (0), in.getReadPointer (1), blockSize);
+            written += blockSize;
+        }
+        hp.pullForTest (out.getWritePointer (0, outDone), out.getWritePointer (1, outDone), outBlock, 48000.0);
+        outDone += outBlock;
+    }
+    const double freq = sineFrequency (out, 48000, out.getNumSamples()) * 48000.0 / sr;   // sineFrequency cuenta a 44,1 kHz
+    check (std::abs (freq - 440.0) < 2.0, "audifonos por otra tarjeta: 440 Hz siguen en 440 Hz", freq, 440.0);
+    check (out.getMagnitude (0, 48000, 48000) > 0.45f, "audifonos por otra tarjeta: sin cortes tras llenarse", out.getMagnitude (0, 48000, 48000), 0.5);
+}
+
 }
 
 #if JUCE_WINDOWS
@@ -3526,6 +3637,7 @@ int main (int argc, char* argv[])
     std::printf ("== Canal: ganancia, EQ de 3 bandas, filtro y volumen ==\n");
     testChannelStrip();
     testMixerChannels();
+    testLimiterAndHeadphones();
 
     std::printf ("== Video ==\n");
     testVideo();

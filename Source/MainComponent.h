@@ -3,6 +3,7 @@
 #include "Control/ControlSurface.h"
 #include "Control/MidiController.h"
 #include "Engine/Deck.h"
+#include "Engine/HeadphoneOutput.h"
 #include "Engine/Mixer.h"
 #include "Engine/StemsService.h"
 #include "Library/Library.h"
@@ -61,6 +62,15 @@ public:
     PanelSettings& getPanels() { return panels; }
     void panelsChanged();
 
+    // Audifonos: por donde sale la pre-escucha.
+    //  - off: no hay audifonos;
+    //  - channels34: salidas 3 y 4 de la tarjeta (las de 4 canales);
+    //  - splitMono: la misma salida estereo partida con un cable en Y: izquierda = master en
+    //    mono, derecha = audifonos en mono;
+    //  - otherDevice: otra tarjeta de sonido (p. ej. un adaptador USB de audifonos).
+    enum class HeadphoneMode { off = 0, channels34, splitMono, otherDevice };
+    void showAudioSettings();
+
 private:
     // Carga usando el analisis guardado en la biblioteca si lo hay (carga mucho mas rapida).
     bool loadIntoDeck (Deck& deck, const juce::File& file);
@@ -86,6 +96,13 @@ private:
     void keepFocusForShortcuts (juce::Component& root);
     void saveLayout();
     void loadLayout();
+    // Tarjeta de sonido, audifonos y limitador: %APPDATA%\MiDJ\audio.xml.
+    void saveAudioSettings();
+    std::unique_ptr<juce::XmlElement> loadAudioSettings();   // devuelve lo de la tarjeta para abrirla
+    void setHeadphoneMode (HeadphoneMode mode, const juce::String& device);
+    std::atomic<int> headphoneMode { (int) HeadphoneMode::off };
+    juce::String headphoneDevice;
+    HeadphoneOutput headphones;
 
     DarkLookAndFeel lookAndFeel;
     juce::AudioFormatManager formatManager;

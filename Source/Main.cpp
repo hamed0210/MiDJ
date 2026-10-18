@@ -11,6 +11,26 @@ public:
 
     void initialise (const juce::String&) override
     {
+        // Textos de JUCE en espanol (ajustes de la tarjeta de sonido y dialogos).
+        juce::LocalisedStrings::setCurrentMappings (new juce::LocalisedStrings (juce::String::fromUTF8 (
+            "language: Spanish\n"
+            "\"Audio device type:\" = \"Tipo de audio:\"\n"
+            "\"Output:\" = \"Salida:\"\n"
+            "\"Input:\" = \"Entrada:\"\n"
+            "\"Sample rate:\" = \"Frecuencia:\"\n"
+            "\"Audio buffer size:\" = \"Tamaño del bloque:\"\n"
+            "\"samples\" = \"muestras\"\n"
+            "\"Test\" = \"Probar\"\n"
+            "\"Active output channels:\" = \"Salidas activas:\"\n"
+            "\"Active input channels:\" = \"Entradas activas:\"\n"
+            "\"Control Panel\" = \"Panel de control\"\n"
+            "\"Reset Device\" = \"Reiniciar\"\n"
+            "\"Show advanced settings...\" = \"Ver más ajustes...\"\n"
+            "\"Hide advanced settings\" = \"Ocultar ajustes\"\n"
+            "\"<< none >>\" = \"<< ninguna >>\"\n"
+            "\"(no device)\" = \"(sin tarjeta)\"\n"
+            "\"OK\" = \"Aceptar\"\n"
+            "\"Cancel\" = \"Cancelar\"\n"), false));
         mainWindow = std::make_unique<MainWindow>();
     }
 
@@ -29,11 +49,26 @@ private:
             setContentOwned (new midj::MainComponent(), true);
             setResizable (true, true);
             setResizeLimits (900, 500, 4000, 3000);
-            centreWithSize (getWidth(), getHeight());
+            // Tamano, posicion y maximizada como se dejo la ultima vez (si no, centrada).
+            const auto saved = stateFile().loadFileAsString().trim();
+            if (saved.isEmpty() || ! restoreWindowStateFromString (saved))
+                centreWithSize (getWidth(), getHeight());
             setVisible (true);
         }
 
-        void closeButtonPressed() override { juce::JUCEApplication::getInstance()->systemRequestedQuit(); }
+        ~MainWindow() override { saveState(); }
+
+        void closeButtonPressed() override
+        {
+            saveState();
+            juce::JUCEApplication::getInstance()->systemRequestedQuit();
+        }
+
+    private:
+        static juce::File stateFile() { return midj::Library::getDefaultFile().getSiblingFile ("window.txt"); }
+        void saveState() { if (isShowing()) stateFile().replaceWithText (getWindowStateAsString()); }
+
+    public:
 
     private:
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainWindow)

@@ -173,12 +173,18 @@ MainComponent::MainComponent()
 
     loadLayout();
     setSize (1366, 720);
-    setAudioChannels (0, 2);   // sin entradas, salida estereo
+    // Sin entradas; hasta 4 salidas (las 3 y 4, para los audifonos si la tarjeta las tiene),
+    // con la tarjeta, frecuencia y bloque guardados.
+    const auto savedDevice = loadAudioSettings();
+    setAudioChannels (0, 4, savedDevice.get());
+    setHeadphoneMode ((HeadphoneMode) headphoneMode.load(), headphoneDevice);
 }
 
 MainComponent::~MainComponent()
 {
     saveLayout();
+    saveAudioSettings();
+    headphones.close();
     removeKeyListener (this);
     mixerView.setVideoStage (nullptr);
     scenesPanel.reset();
@@ -563,6 +569,7 @@ void MainComponent::startMidiSimulation (const juce::File& script)
 void MainComponent::prepareToPlay (int samplesPerBlockExpected, double sampleRate)
 {
     mixer.prepareToPlay (samplesPerBlockExpected, sampleRate);
+    headphones.prepare (sampleRate);
     // El visualizador muestra lo que se oye: lo calculado hace la latencia de la tarjeta y un bloque.
     if (auto* device = deviceManager.getCurrentAudioDevice())
         mixer.getTap().setOutputLatency (device->getOutputLatencyInSamples() + samplesPerBlockExpected);
@@ -570,7 +577,174 @@ void MainComponent::prepareToPlay (int samplesPerBlockExpected, double sampleRat
 
 void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
 {
-    mixer.getNextAudioBlock (info);
+    // El mezclador escribe el master en las salidas 1 y 2; despues, los audifonos donde toque.
+    auto& buffer = *info.buffer;
+    const int channels = buffer.getNumChannels(), n = info.numSamples;
+    if (channels <= 0)
+        return;
+    float* masterChannels[2] = { buffer.getWritePointer (0, info.startSample),
+                                 buffer.getWritePointer (juce::jmin (1, channels - 1), info.startSample) };
+    juce::AudioBuffer<float> master (masterChannels, channels > 1 ? 2 : 1, n);
+    mixer.getNextAudioBlock (juce::AudioSourceChannelInfo (&master, 0, n));
+    for (int ch = 2; ch < channels; ++ch)
+        buffer.clear (ch, info.startSample, n);
+
+    const auto& cue = mixer.getCueBuffer();
+    switch ((HeadphoneMode) headphoneMode.load())
+    {
+        case HeadphoneMode::channels34:
+            if (channels >= 4)
+            {
+                buffer.copyFrom (2, info.startSample, cue, 0, 0, n);
+                buffer.copyFrom (3, info.startSample, cue, 1, 0, n);
+            }
+            break;
+        case HeadphoneMode::splitMono:
+            if (channels >= 2)
+            {
+                // Izquierda: el master en mono; derecha: los audifonos en mono.
+                float* l = masterChannels[0];
+                float* r = masterChannels[1];
+                const float* cl = cue.getReadPointer (0);
+                const float* cr = cue.getReadPointer (1);
+                for (int i = 0; i < n; ++i)
+                {
+                    l[i] = 0.5f * (l[i] + r[i]);
+                    r[i] = 0.5f * (cl[i] + cr[i]);
+                }
+            }
+            break;
+        case HeadphoneMode::otherDevice:
+            headphones.push (cue.getReadPointer (0), cue.getReadPointer (1), n);
+            break;
+        case HeadphoneMode::off:
+            break;
+    }
+}
+
+void MainComponent::setHeadphoneMode (HeadphoneMode mode, const juce::String& device)
+{
+    headphoneMode = (int) mode;
+    headphoneDevice = device;
+    if (mode == HeadphoneMode::otherDevice && device.isNotEmpty())
+    {
+        juce::String error;
+        if (! headphones.open (device, error))
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "MiDJ",
+                                                    "No se pudieron abrir los audifonos:\n" + error);
+    }
+    else
+        headphones.close();
+    mixerView.setHeadphonesAvailable (mode != HeadphoneMode::off);
+}
+
+void MainComponent::saveAudioSettings()
+{
+    juce::XmlElement xml ("AUDIO");
+    xml.setAttribute ("headphones", headphoneMode.load());
+    xml.setAttribute ("headphoneDevice", headphoneDevice);
+    xml.setAttribute ("limiter", mixer.isLimiterEnabled());
+    xml.setAttribute ("cueMix", (double) mixer.getCueMix());
+    xml.setAttribute ("headphoneVolume", (double) mixer.getHeadphoneVolume());
+    if (auto device = deviceManager.createStateXml())
+        xml.addChildElement (device.release());
+    xml.writeTo (getDataFolder().getChildFile ("audio.xml"));
+}
+
+std::unique_ptr<juce::XmlElement> MainComponent::loadAudioSettings()
+{
+    const auto xml = juce::XmlDocument::parse (getDataFolder().getChildFile ("audio.xml"));
+    if (xml == nullptr)
+        return nullptr;
+    headphoneMode = juce::jlimit (0, 3, xml->getIntAttribute ("headphones", 0));
+    headphoneDevice = xml->getStringAttribute ("headphoneDevice");
+    mixer.setLimiterEnabled (xml->getBoolAttribute ("limiter", true));
+    mixer.setCueMix ((float) xml->getDoubleAttribute ("cueMix", 0.0));
+    mixer.setHeadphoneVolume ((float) xml->getDoubleAttribute ("headphoneVolume", Mixer::defaultMasterVolume));
+    if (auto* device = xml->getChildByName ("DEVICESETUP"))
+        return std::make_unique<juce::XmlElement> (*device);
+    return nullptr;
+}
+
+void MainComponent::showAudioSettings()
+{
+    // Tarjeta de sonido (la de JUCE: tipo, salida, canales, frecuencia y bloque), audifonos y limitador.
+    class Content : public juce::Component
+    {
+    public:
+        explicit Content (MainComponent& o)
+            : owner (o), selector (o.deviceManager, 0, 0, 2, 4, false, false, true, false)
+        {
+            addAndMakeVisible (selector);
+            modeBox.addItem ("Sin audifonos", 1 + (int) HeadphoneMode::off);
+            modeBox.addItem ("Salidas 3 y 4 de esta tarjeta (tarjetas de 4 canales)", 1 + (int) HeadphoneMode::channels34);
+            modeBox.addItem ("Partir esta salida con un cable en Y (master y audifonos en mono)", 1 + (int) HeadphoneMode::splitMono);
+            modeBox.addItem ("Otra tarjeta de sonido (p. ej. adaptador USB)", 1 + (int) HeadphoneMode::otherDevice);
+            modeBox.setSelectedId (1 + owner.headphoneMode.load(), juce::dontSendNotification);
+            modeBox.onChange = [this] { apply(); };
+            addAndMakeVisible (modeBox);
+            deviceBox.addItemList (HeadphoneOutput::outputNames(), 1);
+            deviceBox.setText (owner.headphoneDevice, juce::dontSendNotification);
+            deviceBox.setTextWhenNothingSelected ("Elige la tarjeta de los audifonos");
+            deviceBox.onChange = [this] { apply(); };
+            addAndMakeVisible (deviceBox);
+            limiter.setButtonText ("Limitador del master (evita que la salida sature)");
+            limiter.setToggleState (owner.mixer.isLimiterEnabled(), juce::dontSendNotification);
+            limiter.onClick = [this] { owner.mixer.setLimiterEnabled (limiter.getToggleState()); owner.saveAudioSettings(); };
+            addAndMakeVisible (limiter);
+            updateEnabled();
+            setSize (560, 430);
+        }
+
+        ~Content() override { owner.saveAudioSettings(); }
+
+        void paint (juce::Graphics& g) override
+        {
+            g.fillAll (DarkLookAndFeel::panel);
+            g.setColour (DarkLookAndFeel::textQuiet);
+            g.setFont (DarkLookAndFeel::sans (11.0f, true).withKerningFactor (0.08f));
+            g.drawText ("AUDIFONOS (PRE-ESCUCHA)", 16, headphonesY, getWidth() - 32, 16, juce::Justification::centredLeft);
+        }
+
+        void resized() override
+        {
+            auto r = getLocalBounds().reduced (8);
+            selector.setBounds (r.removeFromTop (r.getHeight() - 150));
+            headphonesY = r.getY() + 6;
+            r.removeFromTop (26);
+            r.reduce (8, 0);
+            modeBox.setBounds (r.removeFromTop (30));
+            r.removeFromTop (6);
+            deviceBox.setBounds (r.removeFromTop (30));
+            r.removeFromTop (10);
+            limiter.setBounds (r.removeFromTop (30));
+        }
+
+    private:
+        void apply()
+        {
+            const auto mode = (HeadphoneMode) (modeBox.getSelectedId() - 1);
+            owner.setHeadphoneMode (mode, deviceBox.getText());
+            owner.saveAudioSettings();
+            updateEnabled();
+        }
+        void updateEnabled() { deviceBox.setEnabled (modeBox.getSelectedId() - 1 == (int) HeadphoneMode::otherDevice); }
+
+        MainComponent& owner;
+        juce::AudioDeviceSelectorComponent selector;
+        juce::ComboBox modeBox, deviceBox;
+        juce::ToggleButton limiter;
+        int headphonesY = 0;
+    };
+
+    juce::DialogWindow::LaunchOptions options;
+    options.content.setOwned (new Content (*this));
+    options.dialogTitle = "Audio y audifonos";
+    options.dialogBackgroundColour = DarkLookAndFeel::panel;
+    options.useNativeTitleBar = true;
+    options.resizable = false;
+    options.componentToCentreAround = this;
+    options.launchAsync();
 }
 
 void MainComponent::releaseResources()
@@ -737,7 +911,9 @@ void MainComponent::showSettings()
                 repaint();
             };
             addAndMakeVisible (reset);
-            setSize (320, widthsY + 58 + 34 + 14);
+            audioButton.onClick = [this] { owner.showAudioSettings(); };
+            addAndMakeVisible (audioButton);
+            setSize (320, widthsY + 58 + 34 + 8 + 34 + 14);
         }
 
         void paint (juce::Graphics& g) override
@@ -767,13 +943,14 @@ void MainComponent::showSettings()
                 toggles[(size_t) i].setBounds (16, y, getWidth() - 32, step - 2);
             }
             reset.setBounds (16, widthsY + 58, 220, 34);
+            audioButton.setBounds (16, widthsY + 58 + 42, 220, 34);
         }
 
     private:
         enum { numPanels = 7, numToggles = 12, step = 30, widthsY = 64 + numToggles * step + 28 + 8 };
         MainComponent& owner;
         std::array<juce::ToggleButton, numToggles> toggles;
-        juce::TextButton reset { "Mostrar todo y restablecer anchos" };
+        juce::TextButton reset { "Mostrar todo y restablecer anchos" }, audioButton { "Audio y audifonos..." };
     };
 
     juce::CallOutBox::launchAsynchronously (std::make_unique<Content> (*this), settingsButton.getScreenBounds(), nullptr);

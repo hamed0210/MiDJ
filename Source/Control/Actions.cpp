@@ -16,6 +16,7 @@ const std::vector<ActionInfo>& all()
             v.push_back ({ p + "keylock", "KEY" + n, ActionType::button });
             v.push_back ({ p + "vocals", "Voz" + n, ActionType::button });
             v.push_back ({ p + "instrumental", "Instrumental" + n, ActionType::button });
+            v.push_back ({ p + "pfl", "Pre-escucha" + n, ActionType::button });
             v.push_back ({ p + "load", "Cargar" + n, ActionType::button });
             for (int beats : { 1, 2, 4, 8 })
                 v.push_back ({ p + "loop" + juce::String (beats), "Loop " + juce::String (beats) + n, ActionType::button });

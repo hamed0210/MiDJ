@@ -12,7 +12,7 @@ namespace Icons
 {
     enum class Glyph { plus, minus, trash, gear, up, down, pencil, eye, eyeOff, lock, unlock,
                        play, pause, stop, restart, film, note,
-                       mix, skip, folder, folderPlus, sync, drive, computer, star, chevron, close, monitor, sliders };
+                       mix, skip, folder, folderPlus, sync, drive, computer, star, chevron, close, monitor, sliders, headphones };
 
     void draw (juce::Graphics& g, juce::Rectangle<float> area, Glyph glyph, juce::Colour colour);
     // El icono de un tipo de fuente (como los del dialogo Anadir fuente de OBS).

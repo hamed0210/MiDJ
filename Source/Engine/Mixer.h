@@ -43,6 +43,24 @@ public:
     // si no, un pulso libre de 0,5 s.
     static TempoInfo tempoFor (const Deck& deck, double sampleRate);
 
+    // Pre-escucha (audifonos): cada deck con su boton (la senal tras el EQ y el filtro, antes
+    // del volumen). Mezcla 0 = solo la pre-escucha, 1 = solo el master; sin ningun deck
+    // marcado se oye el master. getCueBuffer(): lo de los audifonos del ultimo bloque (2 canales).
+    void setPfl (int deckIndex, bool on) { (deckIndex == 0 ? pflA : pflB) = on; }
+    bool getPfl (int deckIndex) const    { return (deckIndex == 0 ? pflA : pflB).load(); }
+    void setCueMix (float m)              { cueMix = juce::jlimit (0.0f, 1.0f, m); }
+    float getCueMix() const               { return cueMix.load(); }
+    void setHeadphoneVolume (float knob)  { headphoneKnob = juce::jlimit (0.0f, 1.0f, knob); }
+    float getHeadphoneVolume() const      { return headphoneKnob.load(); }
+    const juce::AudioBuffer<float>& getCueBuffer() const { return cue; }
+
+    // Limitador del master: no deja pasar de -0,3 dBFS (ataque inmediato, suelta en 150 ms).
+    // takeLimiterGain(): la ganancia mas baja aplicada desde la ultima lectura (1 = no actuo).
+    void setLimiterEnabled (bool on) { limiterOn = on; }
+    bool isLimiterEnabled() const    { return limiterOn.load(); }
+    float takeLimiterGain()          { return limiterMin.exchange (1.0f); }
+    static constexpr float limiterCeiling = 0.966f;   // -0,3 dBFS
+
     static float leftGain (float x);
     static float rightGain (float x) { return leftGain (1.0f - x); }
 
@@ -65,6 +83,10 @@ private:
     std::atomic<float> peakA { 0.0f }, peakB { 0.0f }, peakL { 0.0f }, peakR { 0.0f };
     static void raisePeak (std::atomic<float>& peak, float value);
     float lastGainA = 1.0f, lastGainB = 1.0f;   // para suavizar el cambio dentro del bloque
-    juce::AudioBuffer<float> scratch;
+    juce::AudioBuffer<float> scratch, preA, preB, cue;
+    std::atomic<bool> pflA { false }, pflB { false }, limiterOn { true };
+    std::atomic<float> cueMix { 0.0f }, headphoneKnob { defaultMasterVolume }, limiterMin { 1.0f };
+    float lastPflA = 0.0f, lastPflB = 0.0f, lastCueMix = 0.0f, lastHeadphoneGain = 1.0f;
+    float limiterGain = 1.0f, limiterRelease = 0.9999f;
 };
 }
