@@ -31,7 +31,11 @@ juce::Point<int> VideoProgram::naturalSize (const SceneItem& item) const
         case SourceType::image:
         case SourceType::text:
             if (auto it = cache.find (item.id); it != cache.end() && it->second.image.isValid())
-                return { it->second.image.getWidth(), it->second.image.getHeight() };
+            {
+                const float d = item.type == SourceType::text ? it->second.density : 1.0f;
+                return { juce::jmax (1, juce::roundToInt ((float) it->second.image.getWidth() / d)),
+                         juce::jmax (1, juce::roundToInt ((float) it->second.image.getHeight() / d)) };
+            }
             return { width / 4, height / 4 };
         case SourceType::colour:
         case SourceType::visualizer:
@@ -68,7 +72,8 @@ VideoProgram::Prepared VideoProgram::prepare (const SceneItem& item)
             break;
         case SourceType::text:
             key = "txt|" + SceneGeometry::resolveText (item.text, now) + "|" + juce::String (item.fontSize) + "|"
-                  + juce::String ((int) item.bold) + juce::String ((int) item.shadow) + "|" + item.colour.toString();
+                  + juce::String ((int) item.bold) + juce::String ((int) item.shadow) + "|" + item.colour.toString()
+                  + "|" + juce::String (SceneGeometry::textDensity (item), 2);
             break;
         case SourceType::colour:
             key = "col|" + item.colour.toString();
@@ -109,7 +114,8 @@ VideoProgram::Prepared VideoProgram::prepare (const SceneItem& item)
         }
         else if (item.type == SourceType::text)
         {
-            cached.image = SceneGeometry::renderText (item, SceneGeometry::resolveText (item.text, now));
+            cached.density = SceneGeometry::textDensity (item);
+            cached.image = SceneGeometry::renderText (item, SceneGeometry::resolveText (item.text, now), cached.density);
         }
         else
         {

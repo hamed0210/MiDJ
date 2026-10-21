@@ -2672,6 +2672,24 @@ void testScenes()
                && img.getPixelAt (520, 360).getBrightness() < 0.02f,
            "escenas: imagen PNG a su tamano donde se coloca", natural.x, 200.0);
     png.deleteFile();
+
+    // Un texto agrandado se dibuja a la escala a la que se ve (no se estira ni se pixela) y su
+    // lienzo no cambia: al triple, la imagen tiene el triple de pixeles y el recuadro es el mismo.
+    {
+        auto label = col.makeItem (SourceType::text, 1280, 720);
+        label.text = "MiDJ";
+        label.fontSize = 48.0f;
+        const auto plain = SceneGeometry::renderText (label, label.text);
+        label.scaleX = label.scaleY = 3.0f;
+        const float density = SceneGeometry::textDensity (label);
+        const auto sharp = SceneGeometry::renderText (label, label.text, density);
+        col.addScene ("Texto").items.push_back (label);
+        videoProgram.setScenes (col);
+        const auto canvas = videoProgram.naturalSize (label);
+        check (density == 3.0f && std::abs (sharp.getWidth() - 3 * plain.getWidth()) <= 3
+                   && std::abs (canvas.x - plain.getWidth()) <= 1 && std::abs (canvas.y - plain.getHeight()) <= 1,
+               "escenas: texto agrandado dibujado a su escala, mismo lienzo", sharp.getWidth(), 3.0 * plain.getWidth());
+    }
 }
 
 

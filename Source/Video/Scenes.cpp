@@ -517,15 +517,24 @@ namespace SceneGeometry
         return lines.joinIntoString ("\n");
     }
 
-    juce::Image renderText (const SceneItem& item, const juce::String& text)
+    float textDensity (const SceneItem& item)
     {
-        const juce::Font font (juce::FontOptions (juce::jlimit (6.0f, 400.0f, item.fontSize), item.bold ? juce::Font::bold : juce::Font::plain));
+        const float scale = juce::jmax (std::abs (item.scaleX), std::abs (item.scaleY));
+        const float stepped = std::round (scale * 4.0f) / 4.0f;
+        const float maxForFont = 1000.0f / juce::jlimit (6.0f, 400.0f, item.fontSize);
+        return juce::jlimit (0.25f, juce::jmax (0.25f, juce::jmin (4.0f, maxForFont)), stepped);
+    }
+
+    juce::Image renderText (const SceneItem& item, const juce::String& text, float density)
+    {
+        density = juce::jlimit (0.1f, 8.0f, density);
+        const juce::Font font (juce::FontOptions (juce::jlimit (6.0f, 400.0f, item.fontSize) * density, item.bold ? juce::Font::bold : juce::Font::plain));
         const auto lines = juce::StringArray::fromLines (text);
         float width = 0.0f;
         for (const auto& line : lines)
             width = juce::jmax (width, juce::GlyphArrangement::getStringWidth (font, line));
         const float lineHeight = font.getHeight();
-        const float pad = item.shadow ? juce::jmax (2.0f, item.fontSize * 0.06f) : 1.0f;
+        const float pad = (item.shadow ? juce::jmax (2.0f, item.fontSize * 0.06f) : 1.0f) * density;
         const int w = juce::jmax (1, (int) std::ceil (width + pad * 2.0f));
         const int h = juce::jmax (1, (int) std::ceil (lineHeight * (float) juce::jmax (1, lines.size()) + pad * 2.0f));
         juce::Image image (juce::Image::ARGB, w, h, true, juce::SoftwareImageType());

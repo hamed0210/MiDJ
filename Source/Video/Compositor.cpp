@@ -111,6 +111,7 @@ float4 psCopy (VsOut i) : SV_Target
         ComPtr<ID3D11RenderTargetView> target;
         ComPtr<ID3D11ShaderResourceView> srgbView;    // se lee en lineal (para copiar a las salidas)
         ComPtr<ID3D11ShaderResourceView> plainView;   // se lee tal cual (como las imagenes, para el shader de capas)
+        bool mips = false;                            // con mipmaps: se ve bien tambien en una vista pequena
     };
 
     struct SlotTexture
@@ -226,8 +227,13 @@ struct Compositor::Impl
         if (FAILED (hr = device->CreateRasterizerState (&rd, &rasterizer)))
             return fail ("CreateRasterizerState", hr);
 
-        if (! createRenderTexture (program) || ! createRenderTexture (sceneTextures[0]) || ! createRenderTexture (sceneTextures[1])
-            || ! createRenderTexture (soloTexture))
+        // El programa y la vista de una fuente, con mipmaps: al reducirlos (la vista previa del mezclador
+        // es un tercio del programa) el texto y las lineas finas no salen dentados.
+        UINT support = 0;
+        const bool canMip = SUCCEEDED (device->CheckFormatSupport (DXGI_FORMAT_B8G8R8A8_UNORM_SRGB, &support))
+                            && (support & D3D11_FORMAT_SUPPORT_MIP_AUTOGEN) != 0;
+        if (! createRenderTexture (program, canMip) || ! createRenderTexture (sceneTextures[0]) || ! createRenderTexture (sceneTextures[1])
+            || ! createRenderTexture (soloTexture, canMip))
             return false;
 
         // Color de la seleccion de la vista previa (rojo, como OBS).
@@ -248,12 +254,14 @@ struct Compositor::Impl
     }
 
     // Sin tipo para verla como sRGB (mezcla en lineal), tal cual (para el shader de capas) y copiarla a la CPU.
-    bool createRenderTexture (RenderTexture& rt)
+    bool createRenderTexture (RenderTexture& rt, bool withMips = false)
     {
         D3D11_TEXTURE2D_DESC td {};
         td.Width = (UINT) settings.width;
         td.Height = (UINT) settings.height;
-        td.MipLevels = td.ArraySize = 1;
+        td.MipLevels = withMips ? 0 : 1;   // 0 = la cadena entera
+        td.ArraySize = 1;
+        td.MiscFlags = withMips ? D3D11_RESOURCE_MISC_GENERATE_MIPS : 0;
         td.Format = DXGI_FORMAT_B8G8R8A8_TYPELESS;
         td.SampleDesc.Count = 1;
         td.Usage = D3D11_USAGE_DEFAULT;
@@ -267,15 +275,19 @@ struct Compositor::Impl
         D3D11_SHADER_RESOURCE_VIEW_DESC srv {};
         srv.Format = DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
         srv.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-        srv.Texture2D.MipLevels = 1;
+        srv.Texture2D.MipLevels = withMips ? (UINT) -1 : 1;
         D3D11_SHADER_RESOURCE_VIEW_DESC plain = srv;
         plain.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        plain.Texture2D.MipLevels = 1;
         if (FAILED (hr = device->CreateRenderTargetView (rt.texture.Get(), &rtv, &rt.target))
             || FAILED (hr = device->CreateShaderResourceView (rt.texture.Get(), &srv, &rt.srgbView))
             || FAILED (hr = device->CreateShaderResourceView (rt.texture.Get(), &plain, &rt.plainView)))
             return fail ("Vistas de composicion", hr);
         const float black[4] = { 0, 0, 0, 1 };
         context->ClearRenderTargetView (rt.target.Get(), black);
+        rt.mips = withMips;
+        if (withMips)
+            context->GenerateMips (rt.srgbView.Get());
         return true;
     }
 
@@ -654,8 +666,14 @@ struct Compositor::Impl
             if (frame.useScene[s])
                 compose (sceneTextures[s], frame.scenes[s]);
         compose (program, frame.layers);
+        if (program.mips)
+            context->GenerateMips (program.srgbView.Get());   // en luz lineal (vista sRGB)
         if (hasSoloOutput())
+        {
             compose (soloTexture, frame.solo);
+            if (soloTexture.mips)
+                context->GenerateMips (soloTexture.srgbView.Get());
+        }
         // Las texturas de capas que ya no estan se sueltan (p. ej. al quitar un video).
         for (auto it = slots.begin(); it != slots.end();)
             it = it->second.used ? std::next (it) : slots.erase (it);
@@ -823,11 +841,13 @@ juce::Image Compositor::readProgram()
         impl->program.texture->GetDesc (&td);
         td.Usage = D3D11_USAGE_STAGING;
         td.BindFlags = 0;
+        td.MiscFlags = 0;
+        td.MipLevels = 1;   // solo la imagen entera
         td.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
         if (FAILED (impl->device->CreateTexture2D (&td, nullptr, &impl->staging)))
             return {};
     }
-    impl->context->CopyResource (impl->staging.Get(), impl->program.texture.Get());
+    impl->context->CopySubresourceRegion (impl->staging.Get(), 0, 0, 0, 0, impl->program.texture.Get(), 0, nullptr);
     D3D11_MAPPED_SUBRESOURCE mapped {};
     if (FAILED (impl->context->Map (impl->staging.Get(), 0, D3D11_MAP_READ, 0, &mapped)))
         return {};

@@ -372,6 +372,51 @@ namespace
         worker.join();
     }
 
+    // Ejecuta algo en otro hilo MTA y espera como mucho timeoutMs; si no acaba, el hilo sigue solo
+    // (con lo suyo: 'fn' se copia) y este continua. Para cerrar una captura de Windows Graphics
+    // Capture: GraphicsCaptureSession::Close a veces no vuelve (tras cerrarse la ventana capturada)
+    // y no debe congelar la interfaz. Mientras se espera se atienden los mensajes enviados a este
+    // hilo (SendMessage, p. ej. a la ventana del reproductor de YouTube); los de la cola no se tocan.
+    // Devuelve false si se dejo de esperar.
+    bool inMtaWithTimeout (std::function<void()> fn, DWORD timeoutMs)
+    {
+        struct Shared
+        {
+            HANDLE finished = CreateEventW (nullptr, TRUE, FALSE, nullptr);
+            ~Shared() { if (finished != nullptr) CloseHandle (finished); }
+        };
+        auto shared = std::make_shared<Shared>();
+        if (shared->finished == nullptr)
+        {
+            inMta (fn);
+            return true;
+        }
+        std::thread worker ([shared, fn = std::move (fn)]() mutable
+        {
+            const HRESULT hr = CoInitializeEx (nullptr, COINIT_MULTITHREADED);
+            fn();
+            fn = nullptr;   // lo que capturaba se suelta aqui, en este hilo MTA
+            if (SUCCEEDED (hr))
+                CoUninitialize();
+            SetEvent (shared->finished);
+        });
+        const auto until = GetTickCount64() + timeoutMs;
+        bool done = false;
+        for (;;)
+        {
+            const auto now = GetTickCount64();
+            const DWORD wait = now < until ? (DWORD) (until - now) : 0;
+            const DWORD r = MsgWaitForMultipleObjects (1, &shared->finished, FALSE, wait, QS_SENDMESSAGE);
+            if (r == WAIT_OBJECT_0) { done = true; break; }
+            if (r != WAIT_OBJECT_0 + 1) break;   // tiempo agotado o error
+            MSG msg;
+            PeekMessageW (&msg, nullptr, 0, 0, PM_NOREMOVE | PM_QS_SENDMESSAGE);   // atiende los enviados
+        }
+        if (done) worker.join();
+        else      worker.detach();
+        return done;
+    }
+
     template <typename T>
     ComPtr<T> dxgiInterfaceFrom (const winrt::Windows::Foundation::IInspectable& object)
     {
@@ -508,7 +553,8 @@ namespace
         wgc::GraphicsCaptureSession session { nullptr };
         winrt::Windows::Graphics::DirectX::Direct3D11::IDirect3DDevice winrtDevice { nullptr };
         winrt::event_token closedToken {};
-        std::atomic<bool> closed { false };
+        // Compartida con el aviso de Windows (que puede llegar mientras se cierra en otro hilo).
+        std::shared_ptr<std::atomic<bool>> closed = std::make_shared<std::atomic<bool>> (false);
         winrt::Windows::Graphics::SizeInt32 poolSize {};
         HWND window = nullptr;
         bool clientArea = true;
@@ -518,21 +564,27 @@ namespace
 
         ~GraphicsCaptureBackend() override
         {
-            inMta ([this]
+            // Se cierra en otro hilo con lo suyo (no depende de este objeto): si Windows no vuelve
+            // de Close, como mucho se pierde esa sesion, pero MiDJ no se congela.
+            auto parts = std::make_shared<std::tuple<wgc::GraphicsCaptureItem, winrt::event_token, wgc::GraphicsCaptureSession,
+                                                     wgc::Direct3D11CaptureFramePool, winrt::Windows::Graphics::DirectX::Direct3D11::IDirect3DDevice>> (
+                std::move (item), closedToken, std::move (session), std::move (pool), std::move (winrtDevice));
+            item = nullptr;
+            session = nullptr;
+            pool = nullptr;
+            winrtDevice = nullptr;
+            inMtaWithTimeout ([parts]() mutable
             {
+                auto& [capturedItem, token, capturedSession, capturedPool, device] = *parts;
                 try
                 {
-                    if (item != nullptr)
-                        item.Closed (closedToken);
-                    if (session != nullptr) session.Close();
-                    if (pool != nullptr)    pool.Close();
+                    if (capturedItem != nullptr) capturedItem.Closed (token);
+                    if (capturedSession != nullptr) capturedSession.Close();
+                    if (capturedPool != nullptr) capturedPool.Close();
                 }
                 catch (...) {}
-                session = nullptr;
-                pool = nullptr;
-                item = nullptr;
-                winrtDevice = nullptr;
-            });
+                parts.reset();
+            }, 2000);
         }
 
         // Se crea en un hilo MTA: asi el hilo del compositor (MTA) puede usarla; creada en el hilo
@@ -580,7 +632,7 @@ namespace
                 session = pool.CreateCaptureSession (item);
                 try { session.IsCursorCaptureEnabled (cursor); } catch (...) {}   // Windows 10 2004+
                 try { session.IsBorderRequired (false); } catch (...) {}          // Windows 11: sin borde amarillo
-                closedToken = item.Closed ([this] (auto&&, auto&&) { closed = true; });
+                closedToken = item.Closed ([flag = closed] (auto&&, auto&&) { *flag = true; });
                 session.StartCapture();
                 size = { poolSize.Width, poolSize.Height };
                 return true;
@@ -636,17 +688,21 @@ namespace
                         step = "Recreate";
                         poolSize = content;
                         pool.Recreate (winrtDevice, wgd::DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, poolSize);
+                        // Esta imagen llego recortada (el grupo era del tamano anterior) y Windows solo
+                        // manda otra cuando la ventana se vuelve a pintar: se le pide que lo haga (sin esperar).
+                        if (window != nullptr)
+                            RedrawWindow (window, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN);
                     }
                 }
             }
             catch (const winrt::hresult_error& e)
             {
-                closed = true;
+                *closed = true;
                 note = juce::String (step) + " 0x" + juce::String::toHexString ((int) e.code().value);
             }
             catch (...)
             {
-                closed = true;
+                *closed = true;
                 note = "error";
             }
             if (! hasImage)
@@ -658,7 +714,7 @@ namespace
             return pic;
         }
 
-        bool isLost() const override { return closed.load() || (window != nullptr && ! IsWindow (window)); }
+        bool isLost() const override { return closed->load() || (window != nullptr && ! IsWindow (window)); }
     };
 }
 

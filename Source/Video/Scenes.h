@@ -205,7 +205,12 @@ namespace SceneGeometry
 
     // Texto de un elemento con {titulo}, {artista} y {bpm} sustituidos.
     juce::String resolveText (const juce::String& text, const NowPlaying& now);
-    // Imagen del texto (ARGB, con margen para la sombra).
-    juce::Image renderText (const SceneItem& item, const juce::String& text);
+    // Imagen del texto (ARGB, con margen para la sombra) a 'density' pixeles por pixel del lienzo:
+    // el texto se dibuja a la escala a la que se ve, asi no se pixela al agrandarlo ni se dentea
+    // al achicarlo. Su lienzo (tamano natural) es la imagen entre density.
+    juce::Image renderText (const SceneItem& item, const juce::String& text, float density = 1.0f);
+    // La densidad para un texto: su escala (en pasos de 0,25 para no rehacerlo a cada movimiento
+    // del raton), de 0,25 a 4 y sin pasar de unos 1000 px de letra.
+    float textDensity (const SceneItem& item);
 }
 }

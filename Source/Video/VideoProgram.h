@@ -81,6 +81,7 @@ private:
         juce::String key;
         juce::Image image;
         juce::uint64 version = 0;
+        float density = 1.0f;   // texto: pixeles de la imagen por pixel de su lienzo
     };
 
     Prepared prepare (const SceneItem& item);
