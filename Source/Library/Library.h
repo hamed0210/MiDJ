@@ -61,6 +61,24 @@ public:
     };
     Removal removeFromLibrary (const juce::File& folder);
     void undoRemoval (const Removal& removal);
+    // Lo contrario: lo quitado de esa carpeta (o de una que la contiene) vuelve, sin anadirla
+    // como carpeta de la biblioteca (para las que ya estan dentro de otra).
+    void includeFolder (const juce::File& folder);
+
+    // Duracion de lo que se ve (para que no entren sonidos de juegos, avisos o notas de voz):
+    // minimo y maximo en segundos para musica y para video (0 = sin limite). Lo que queda fuera
+    // sigue en la base (con su analisis) pero no se ve ni se analiza; al cambiarlo, vuelve.
+    // Por defecto, al menos 1 minuto.
+    struct DurationLimits
+    {
+        double minAudio = 0.0, maxAudio = 0.0, minVideo = 0.0, maxVideo = 0.0;
+        bool accepts (double seconds, bool video) const;
+        bool operator== (const DurationLimits&) const = default;
+    };
+    DurationLimits getDurationLimits() const;
+    void setDurationLimits (const DurationLimits& limits);
+    // Lee la duracion del archivo y mira si entra (abre el archivo: no en el hilo de la interfaz).
+    bool acceptsFile (const juce::File& file) const;
     // Rutas de todas las canciones (para el arbol de carpetas).
     juce::StringArray getTrackPaths() const;
 
@@ -71,6 +89,9 @@ public:
     {
         juce::Array<juce::File> roots;   // discos o carpetas donde buscar
         bool audio = true, video = true;
+        // Si esta, una carpeta solo cuenta si tiene al menos un archivo que lo cumpla (p. ej. la
+        // duracion: acceptsFile). Se mira hasta encontrar uno por carpeta.
+        std::function<bool (const juce::File&)> accept;
     };
     static juce::Array<juce::File> findMediaFolders (const SyncOptions& options,
                                                      const std::function<void (const juce::File&, int)>& progress,
@@ -134,6 +155,8 @@ private:
     class Worker;
     bool exec (const char* sql) const;
     juce::StringArray getExclusions() const;   // carpetas quitadas (con la barra final)
+    // "hidden = 0 AND (la duracion entra)": lo que se ve de la tabla tracks.
+    juce::String visibleClause() const;
     void scanFolder (const juce::File& folder, juce::Thread* thread);   // thread: para poder parar
     bool analyseOne (juce::Thread* thread);                              // false = no quedaba nada
     void startPendingCount();
@@ -144,5 +167,6 @@ private:
     std::unique_ptr<Worker> worker;
     std::atomic<int> pendingTotal { 0 }, pendingDone { 0 };
     std::atomic<bool> scanning { false };
+    DurationLimits durations;            // con el cerrojo
 };
 }

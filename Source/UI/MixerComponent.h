@@ -38,6 +38,10 @@ public:
     // Con audifonos configurados: boton de pre-escucha bajo cada volumen y, en AUDIO, los mandos
     // de los audifonos (mezcla cue / master y volumen).
     void setHeadphonesAvailable (bool available);
+    // Boton LIM bajo el master: poner y quitar el limitador. onLimiterChanged, para guardarlo;
+    // limiterSettingChanged(), si se cambio desde Ajustes de audio.
+    std::function<void()> onLimiterChanged;
+    void limiterSettingChanged() { updateLimiterButton(); }
     // Las transiciones cambiaron (p. ej. se anadio una personalizada): rehacer los botones.
     void refreshTransitions();
     void addCustomTransition();   // boton "+ Personalizada": abre la ventana para crearla
@@ -75,6 +79,8 @@ private:
     juce::uint32 limiterUntil = 0;   // "LIM" en rojo bajo los volumenes mientras el limitador actua
     bool limiterShown = false;
     void updatePflButtons();
+    juce::TextButton limiterButton;   // LIM ON / LIM OFF bajo el master
+    void updateLimiterButton();
     std::array<Channel, 2> channels;
     LabelledKnob master { "Master", 0.0, 1.0, Mixer::defaultMasterVolume };
     LevelMeter masterLeft, masterRight;

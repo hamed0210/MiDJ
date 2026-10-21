@@ -54,7 +54,14 @@ namespace
   document.addEventListener('DOMContentLoaded', addCss);
 
   const post = (o) => { try { window.chrome.webview.postMessage(JSON.stringify(o)); } catch (e) {} };
-  let wantedVolume = -1, appliedVolume = -1, qualityAsked = false, lastKick = 0, endedSent = false, userPaused = false;
+  // El video de esta pagina: MiDJ descarta los avisos que no son del que pidio (los de la pagina
+  // anterior llegan un rato despues de cargar el siguiente).
+  const query = new URLSearchParams(location.search);
+  let pageId = (query.get('v') || '') + '|' + (query.get('midj') || '');   // el video y que vez se abrio
+  if (query.get('midj')) sessionStorage.setItem('midjPage', pageId);
+  else { const saved = sessionStorage.getItem('midjPage') || ''; if (saved.startsWith((query.get('v') || '') + '|')) pageId = saved; }   // recargada sin &midj
+  let wantedVolume = -1, appliedVolume = -1, lastKick = 0, userPaused = false, finished = false;
+  let wantedQuality = 'hd720', appliedQuality = '', skipAds = false, inAd = false;
   let stuckSince = 0, reloaded = sessionStorage.getItem('midjReloaded') === location.href;
   setInterval(() => {
     addCss();
@@ -64,36 +71,59 @@ namespace
     let state = 'opening';
     if (p && v) {
       const now = performance.now();
-      // 720p: solo con el video ya sonando (pedirlo durante un anuncio deja el video sin cargar).
-      if (!qualityAsked && !ad && v.currentTime > 1 && p.setPlaybackQualityRange) { qualityAsked = true; try { p.setPlaybackQualityRange('hd720', 'hd720'); } catch (e) {} }
-      if (wantedVolume >= 0 && wantedVolume !== appliedVolume) { appliedVolume = wantedVolume; try { p.setVolume(Math.round(wantedVolume * 100)); p.unMute(); } catch (e) {} }
-      // Parado al principio (sin autoplay, o tras los anuncios): pedirle play cada 4 s (salvo pausa de MiDJ).
-      if (!ad && !userPaused && v.paused && v.currentTime < 0.5 && now - lastKick > 4000 && now > 4000) { lastKick = now; try { p.playVideo(); } catch (e) {} }
-      // Atascado sin datos (tras un anuncio): a los 8 s, play otra vez; a los 16 s, recargar (una vez).
-      const stuck = !ad && !userPaused && v.readyState < 2 && v.currentTime < 0.5;
-      if (!stuck) stuckSince = 0;
-      else if (stuckSince === 0) stuckSince = now;
-      else if (now - stuckSince > 16000 && !reloaded) { reloaded = true; sessionStorage.setItem('midjReloaded', location.href); location.reload(); }
-      else if (now - stuckSince > 8000 && now - lastKick > 4000) { lastKick = now; try { p.playVideo(); } catch (e) {} }
-      const ended = !ad && (v.ended || (p.getPlayerState && p.getPlayerState() === 0));
-      state = ad ? 'ad' : ended ? 'ended' : v.paused ? (v.currentTime > 0 ? 'paused' : 'opening') : 'playing';
-      if (ended && !endedSent) { endedSent = true; try { p.pauseVideo(); } catch (e) {} }   // que YouTube no ponga el siguiente
+      // Saltar anuncios (si MiDJ lo pide): el boton Omitir si esta; si no, sin sonido y al final.
+      if (ad && skipAds) {
+        inAd = true;
+        const skip = document.querySelector('.ytp-skip-ad-button, .ytp-ad-skip-button, .ytp-ad-skip-button-modern, .videoAdUiSkipButton');
+        if (skip) { try { skip.click(); } catch (e) {} }
+        try { v.muted = true; v.playbackRate = 16; if (isFinite(v.duration) && v.duration > 0 && v.currentTime < v.duration - 0.3) v.currentTime = v.duration - 0.1; } catch (e) {}
+      } else if (inAd && !ad) {
+        inAd = false;   // termino el anuncio: velocidad y sonido normales
+        try { v.playbackRate = 1; v.muted = false; } catch (e) {}
+        appliedVolume = -1;
+      }
+      // Calidad: solo con el video ya sonando (pedirla durante un anuncio deja el video sin cargar).
+      if (wantedQuality !== appliedQuality && !ad && v.currentTime > 1 && p.setPlaybackQualityRange) {
+        appliedQuality = wantedQuality;
+        try { p.setPlaybackQualityRange(wantedQuality, wantedQuality); if (p.setPlaybackQuality) p.setPlaybackQuality(wantedQuality); } catch (e) {}
+      }
+      if (wantedVolume >= 0 && wantedVolume !== appliedVolume && !(ad && skipAds)) { appliedVolume = wantedVolume; try { p.setVolume(Math.round(wantedVolume * 100)); p.unMute(); } catch (e) {} }
+      // Otro video en la misma pagina (la reproduccion automatica de YouTube): este ya termino.
+      const otherVideo = location.pathname === '/watch' && new URLSearchParams(location.search).get('v') !== query.get('v');
+      const ended = !ad && (v.ended || otherVideo || (p.getPlayerState && p.getPlayerState() === 0));
+      if (ended) finished = true;
+      // Terminado se queda terminado: ni play automatico ni el siguiente de YouTube (ni repetirlo).
+      if (finished) {
+        if (!v.paused) { try { p.pauseVideo(); v.pause(); } catch (e) {} }
+        state = 'ended';
+      } else {
+        // Parado al principio (sin autoplay, o tras los anuncios): pedirle play cada 4 s (salvo pausa de MiDJ).
+        if (!ad && !userPaused && v.paused && v.currentTime < 0.5 && now - lastKick > 4000 && now > 4000) { lastKick = now; try { p.playVideo(); } catch (e) {} }
+        // Atascado sin datos (tras un anuncio): a los 8 s, play otra vez; a los 16 s, recargar (una vez).
+        const stuck = !ad && !userPaused && v.readyState < 2 && v.currentTime < 0.5;
+        if (!stuck) stuckSince = 0;
+        else if (stuckSince === 0) stuckSince = now;
+        else if (now - stuckSince > 16000 && !reloaded) { reloaded = true; sessionStorage.setItem('midjReloaded', location.href); location.reload(); }
+        else if (now - stuckSince > 8000 && now - lastKick > 4000) { lastKick = now; try { p.playVideo(); } catch (e) {} }
+        state = ad ? 'ad' : v.paused ? (v.currentTime > 0 ? 'paused' : 'opening') : 'playing';
+      }
     }
     const errEl = document.querySelector('.ytp-error-content-wrap-reason, yt-playability-error-supported-renderers #reason, .ytp-error');
     const err = errEl ? errEl.innerText.trim().slice(0, 200) : '';
-    if (err) state = 'error';
-    post({ state, err, t: v ? v.currentTime : 0, d: v && !ad && isFinite(v.duration) ? v.duration : 0 });
+    if (err && !finished) state = 'error';
+    post({ id: pageId, state, err, t: v ? v.currentTime : 0, d: v && !ad && isFinite(v.duration) ? v.duration : 0 });
   }, 250);
 
   window.chrome.webview.addEventListener('message', (e) => {
     const p = document.getElementById('movie_player');
     const m = e.data;
     if (m.cmd === 'volume') { wantedVolume = m.value; return; }
+    if (m.cmd === 'settings') { wantedQuality = m.quality || 'auto'; skipAds = !!m.skipAds; return; }
     if (!p) return;
     try {
-      if (m.cmd === 'play') { userPaused = false; p.playVideo(); }
+      if (m.cmd === 'play') { userPaused = false; if (!finished) p.playVideo(); }
       else if (m.cmd === 'pause') { userPaused = true; p.pauseVideo(); }
-      else if (m.cmd === 'seek') p.seekTo(m.value, true);
+      else if (m.cmd === 'seek') { if (!finished) p.seekTo(m.value, true); }
     } catch (err) {}
   });
 })();
@@ -123,6 +153,7 @@ struct YouTubePlayer::Impl
     ComPtr<ICoreWebView2> webView;
     bool creatingEnvironment = false, creatingController = false;
     juce::String pendingId;   // el video a cargar en cuanto este listo
+    int loadCount = 0;        // va en la direccion (&midj=): los avisos de una pagina anterior se descartan
     std::shared_ptr<bool> alive = std::make_shared<bool> (true);   // para los avisos de WebView2 que llegan tarde
 
     static void registerClass()
@@ -219,13 +250,14 @@ void YouTubePlayer::open (const YouTubeVideo& v)
     status.duration = v.seconds;
     sendChangeMessage();
     impl->pendingId = v.id;
+    ++impl->loadCount;
     impl->createWindow (width, height);
 
     auto navigate = [this]
     {
         if (impl->webView == nullptr || impl->pendingId.isEmpty())
             return;
-        impl->webView->Navigate (wide ("https://www.youtube.com/watch?v=" + impl->pendingId).c_str());
+        impl->webView->Navigate (wide ("https://www.youtube.com/watch?v=" + impl->pendingId + "&midj=" + juce::String (impl->loadCount)).c_str());
         impl->pendingId.clear();
     };
     if (impl->webView != nullptr)
@@ -314,7 +346,9 @@ void YouTubePlayer::open (const YouTubeVideo& v)
 void YouTubePlayer::handleMessage (const juce::String& json)
 {
     const auto v = juce::JSON::parse (json);
-    if (! v.isObject() || status.state == State::closed)
+    // Solo los avisos de la pagina del video pedido: los de la anterior siguen llegando un rato
+    // (su "termino" saltaba otro video de la lista, y otro, hasta el ultimo).
+    if (! v.isObject() || status.state == State::closed || v["id"].toString() != video.id + "|" + juce::String (impl->loadCount))
         return;
     const auto previous = status.state;
     const auto newState = stateFromText (v["state"].toString());
@@ -325,8 +359,11 @@ void YouTubePlayer::handleMessage (const juce::String& json)
     if (newState != previous)
     {
         status.state = newState;
-        if (newState == State::playing || newState == State::ad)
+        if (newState == State::playing || newState == State::ad || newState == State::opening)
+        {
             send ("{\"cmd\":\"volume\",\"value\":" + juce::String (volume) + "}");
+            sendSettings();
+        }
     }
     sendChangeMessage();   // el tiempo cambia en cada aviso
     if (newState == State::ended && previous != State::ended && onEnded)
@@ -348,6 +385,34 @@ void YouTubePlayer::setVolume (float v)
 {
     volume = juce::jlimit (0.0f, 1.0f, v);
     send ("{\"cmd\":\"volume\",\"value\":" + juce::String (volume) + "}");
+}
+
+void YouTubePlayer::setQuality (const juce::String& q)
+{
+    quality = q;
+    sendSettings();
+}
+
+void YouTubePlayer::setSkipAds (bool skip)
+{
+    skipAds = skip;
+    sendSettings();
+}
+
+void YouTubePlayer::sendSettings()
+{
+    send ("{\"cmd\":\"settings\",\"quality\":\"" + quality + "\",\"skipAds\":" + (skipAds ? "true" : "false") + "}");
+}
+
+juce::StringArray YouTubePlayer::getQualities() { return { "auto", "medium", "large", "hd720", "hd1080" }; }
+
+juce::String YouTubePlayer::qualityName (const juce::String& q)
+{
+    if (q == "medium") return "360p";
+    if (q == "large")  return "480p";
+    if (q == "hd720")  return "720p";
+    if (q == "hd1080") return "1080p";
+    return "Auto";
 }
 
 void YouTubePlayer::close()

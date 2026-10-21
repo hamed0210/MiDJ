@@ -41,6 +41,16 @@ public:
     float getVolume() const { return volume; }
     void close();
 
+    // Calidad pedida a YouTube ("auto", "medium" 360p, "large" 480p, "hd720", "hd1080"; se
+    // aplica con el video ya sonando) y saltar anuncios (Omitir en cuanto se puede; si no, el
+    // anuncio sin sonido y al final). Valen para el video actual y los siguientes.
+    void setQuality (const juce::String& quality);
+    const juce::String& getQuality() const { return quality; }
+    void setSkipAds (bool skip);
+    bool getSkipAds() const { return skipAds; }
+    static juce::StringArray getQualities();
+    static juce::String qualityName (const juce::String& quality);   // "720p", "Auto"...
+
     const Status& getStatus() const { return status; }
     const YouTubeVideo& getVideo() const { return video; }
     // Suena algo (el video o un anuncio): la escena automatica de YouTube.
@@ -56,6 +66,7 @@ private:
     struct Impl;
     void handleMessage (const juce::String& json);
     void send (const juce::String& json);
+    void sendSettings();
     void setState (State s);
 
     std::unique_ptr<Impl> impl;
@@ -64,5 +75,7 @@ private:
     YouTubeVideo video;
     Status status;
     float volume = 0.8f;
+    juce::String quality { "hd720" };
+    bool skipAds = false;
 };
 }

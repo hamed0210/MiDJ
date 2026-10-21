@@ -2,6 +2,7 @@
 
 #include "UI/Icons.h"
 #include "UI/YouTubePlayer.h"
+#include "UI/YouTubeThumbnails.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -26,6 +27,10 @@ public:
 
     void save (const juce::File& file) const;
     void load (const juce::File& file);
+
+    // Ajustes del reproductor que se guardan con la lista: calidad y saltar anuncios.
+    juce::String quality { "hd720" };
+    bool skipAds = false;
 
 private:
     std::vector<YouTubeVideo> items;
@@ -60,6 +65,8 @@ private:
     void listBoxItemDoubleClicked (int row, const juce::MouseEvent&) override;
     void deleteKeyPressed (int row) override { queue.remove (row); }
     void updateButtons();
+    juce::String getTooltipForRow (int row) override;
+    void showSettingsMenu();
 
     YouTubePlayer& player;
     YouTubeQueue& queue;
@@ -69,6 +76,8 @@ private:
                nextButton { Icons::Glyph::skip, "Siguiente video de la lista" },
                clearButton { Icons::Glyph::trash, "Vaciar la lista de YouTube" };
     juce::Slider volume;
+    juce::TextButton settingsButton;   // "720p": calidad y saltar anuncios
+    juce::SharedResourcePointer<YouTubeThumbnails> thumbnails;
     juce::Rectangle<int> nowArea, progressArea, timeArea;
     bool errorPending = false;
 

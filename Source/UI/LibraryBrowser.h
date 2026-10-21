@@ -5,6 +5,7 @@
 #include "UI/Icons.h"
 #include "UI/MidiLearnOverlay.h"
 #include "UI/Widgets.h"
+#include "UI/YouTubeThumbnails.h"
 #include "Video/YouTubeSearch.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -109,6 +110,7 @@ private:
     void cellClicked (int row, int column, const juce::MouseEvent&) override;
     void returnKeyPressed (int row) override;
     juce::var getDragSourceDescription (const juce::SparseSet<int>& rows) override;
+    juce::String getCellTooltip (int row, int column) override;   // el titulo y el artista enteros
 
     Library& library;
     std::vector<TrackInfo> tracks;
@@ -145,7 +147,11 @@ private:
     juce::TextButton stopSyncButton { "Detener" };
 
     juce::TextEditor searchBox;
+    IconButton clearSearchButton { Icons::Glyph::close, "Limpiar el buscador (Esc)" };
+    void clearSearch();
     juce::TableListBox table { "canciones", this };
+    juce::SharedResourcePointer<YouTubeThumbnails> thumbnails;
+    bool youtubeLayout = false;   // la lista con miniaturas (filas mas altas)
     ResizeHandle treeHandle;
     int treeWidth = defaultTreeWidth, dragStartWidth = 0;
     juce::Rectangle<int> treeHeaderArea, syncArea, toastArea, footerArea, listArea;

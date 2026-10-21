@@ -1,6 +1,7 @@
 #include "UI/LibraryBrowser.h"
 #include "UI/DarkLookAndFeel.h"
 
+#include <array>
 #include <map>
 
 namespace midj
@@ -49,6 +50,7 @@ public:
 
     void paintItem (juce::Graphics& g, int width, int height) override
     {
+        paintedWidth = width;
         auto r = juce::Rectangle<float> (0.0f, 0.0f, (float) width, (float) height).reduced (0.0f, 1.0f);
         if (isSelected())
         {
@@ -97,7 +99,9 @@ public:
     {
         if (e.mods.isPopupMenu() && (kind == Kind::playlists || kind == Kind::playlist))
             owner.showPlaylistMenu (kind == Kind::playlist ? playlistId : 0, label);
-        else if (removable() && e.x >= getItemWidth() - 26)
+        // Solo la x (los ultimos 26 px de lo pintado). getItemWidth() es -1 (todo el ancho): con
+        // el, cualquier clic en la carpeta la quitaba.
+        else if (removable() && ! e.mods.isPopupMenu() && paintedWidth > 0 && e.x >= paintedWidth - 26)
             owner.removeNode (*this);
     }
 
@@ -134,6 +138,7 @@ public:
     juce::File file;
     int count;
     juce::int64 playlistId;
+    int paintedWidth = 0;   // el ancho de la fila al pintarla (donde esta la x)
 };
 
 // --- Botones de cada fila: A, B y + -------------------------------------------------------------
@@ -256,6 +261,7 @@ private:
 LibraryBrowser::LibraryBrowser (Library& l) : library (l)
 {
     library.addChangeListener (this);
+    thumbnails->addChangeListener (this);
 
     tree.setRootItemVisible (false);
     tree.setIndentSize (14);
@@ -300,8 +306,14 @@ LibraryBrowser::LibraryBrowser (Library& l) : library (l)
     searchBox.setColour (juce::TextEditor::outlineColourId, DarkLookAndFeel::line);
     searchBox.setFont (DarkLookAndFeel::sans (14.0f));
     searchBox.setIndents (10, 8);
-    searchBox.onTextChange = [this] { if (filterKind != 6) startTimer (200); };   // espera a que se deje de teclear (YouTube: con Intro)
-    searchBox.onEscapeKey = [this] { searchBox.clear(); refresh(); unfocusAllComponents(); };
+    searchBox.setBorder ({ 1, 1, 1, 32 });   // sitio para la x de limpiar
+    searchBox.onTextChange = [this]
+    {
+        clearSearchButton.setVisible (searchBox.getTotalNumChars() > 0);
+        if (filterKind != 6)
+            startTimer (200);   // espera a que se deje de teclear (YouTube: con Intro)
+    };
+    searchBox.onEscapeKey = [this] { clearSearch(); unfocusAllComponents(); };
     searchBox.onReturnKey = [this]
     {
         if (filterKind == 6)
@@ -309,6 +321,9 @@ LibraryBrowser::LibraryBrowser (Library& l) : library (l)
         unfocusAllComponents();   // Intro: a la lista (las flechas y el espacio vuelven a ser atajos)
     };
     addAndMakeVisible (searchBox);
+    clearSearchButton.setMouseClickGrabsKeyboardFocus (false);
+    clearSearchButton.onClick = [this] { clearSearch(); };
+    addChildComponent (clearSearchButton);
 
     auto& header = table.getHeader();
     const int columnFlags = juce::TableHeaderComponent::defaultFlags;
@@ -350,6 +365,7 @@ LibraryBrowser::~LibraryBrowser()
     }
     tree.setRootItem (nullptr);
     library.removeChangeListener (this);
+    thumbnails->removeChangeListener (this);
 }
 
 void LibraryBrowser::addLearnTargets (std::vector<LearnTarget>& out)
@@ -555,6 +571,20 @@ void LibraryBrowser::startYouTubeSearch (const juce::String& text)
     });
 }
 
+void LibraryBrowser::clearSearch()
+{
+    searchBox.clear();
+    clearSearchButton.setVisible (false);
+    if (filterKind == 6)
+    {
+        // YouTube: tambien los resultados (y una busqueda en marcha ya no los trae).
+        ++youtubeSearchId;
+        youtubeResults.clear();
+        youtubeStatus = "Escribe y pulsa Intro para buscar en YouTube (o pega un enlace)";
+    }
+    refresh();
+}
+
 std::optional<YouTubeVideo> LibraryBrowser::youTubeAt (int row) const
 {
     if (! juce::isPositiveAndBelow (row, (int) tracks.size()) || ! isYouTube (tracks[(size_t) row]))
@@ -636,7 +666,25 @@ void LibraryBrowser::showSyncOptions()
             };
             addAndMakeVisible (cancel);
             addAndMakeVisible (start);
-            setSize (320, 150 + 38 * (drives.size() + 2));
+
+            // Duracion (en minutos, vacio = sin limite): se aplica al momento a toda la biblioteca.
+            const auto limits = owner.library.getDurationLimits();
+            auto minutes = [] (double s) { return s > 0.0 ? juce::String (s / 60.0, 1).trimCharactersAtEnd ("0").trimCharactersAtEnd (".") : juce::String(); };
+            const std::array<double, 4> values { limits.minAudio, limits.maxAudio, limits.minVideo, limits.maxVideo };
+            for (size_t i = 0; i < durations.size(); ++i)
+            {
+                auto& e = durations[i];
+                e.setInputRestrictions (5, "0123456789.,");
+                e.setSelectAllWhenFocused (true);
+                e.setJustification (juce::Justification::centred);
+                e.setTextToShowWhenEmpty (i % 2 == 0 ? "0" : "sin", DarkLookAndFeel::textFaint);
+                e.setText (minutes (values[i]), juce::dontSendNotification);
+                e.setColour (juce::TextEditor::backgroundColourId, DarkLookAndFeel::background);
+                e.setColour (juce::TextEditor::outlineColourId, DarkLookAndFeel::line);
+                e.onTextChange = [this] { applyDurations(); };
+                addAndMakeVisible (e);
+            }
+            setSize (340, 150 + 38 * (drives.size() + 2) + 150);
             update();
         }
 
@@ -649,9 +697,22 @@ void LibraryBrowser::showSyncOptions()
             g.setFont (DarkLookAndFeel::sans (11.0f, true).withKerningFactor (0.08f));
             g.drawText ("DISCOS", 16, 42, 200, 16, juce::Justification::centredLeft);
             g.drawText ("TIPOS DE ARCHIVO", 16, 70 + 38 * drives.size(), 200, 16, juce::Justification::centredLeft);
+            g.drawText ("DURACION EN MINUTOS (TODA LA BIBLIOTECA)", 16, durationsTop - 22, getWidth() - 32, 16, juce::Justification::centredLeft);
+            g.setColour (DarkLookAndFeel::text);
+            g.setFont (DarkLookAndFeel::sans (13.0f));
+            for (int row = 0; row < 2; ++row)
+            {
+                const int y = durationsTop + row * 34;
+                g.drawText (row == 0 ? "Musica" : "Video", 16, y, 70, 28, juce::Justification::centredLeft);
+                g.drawText ("de", durations[(size_t) row * 2].getX() - 26, y, 22, 28, juce::Justification::centredRight);
+                g.drawText ("a", durations[(size_t) row * 2 + 1].getX() - 26, y, 22, 28, juce::Justification::centredRight);
+                g.drawText ("min", durations[(size_t) row * 2 + 1].getRight() + 6, y, 30, 28, juce::Justification::centredLeft);
+            }
+            g.setColour (DarkLookAndFeel::textQuiet);
             g.setFont (DarkLookAndFeel::sans (11.0f));
-            g.drawFittedText ("Se saltan Windows, Archivos de programa y AppData. Lo nuevo se analiza en segundo plano.",
-                              16, getHeight() - 92, getWidth() - 32, 30, juce::Justification::topLeft, 2);
+            g.drawFittedText ("Se saltan Windows, Archivos de programa, AppData y juegos; lo que dura menos (avisos, sonidos) no entra. "
+                              "Lo nuevo se analiza en segundo plano.",
+                              16, durationsTop + 2 * 34 + 8, getWidth() - 32, 42, juce::Justification::topLeft, 3);
         }
 
         void resized() override
@@ -665,6 +726,12 @@ void LibraryBrowser::showSyncOptions()
             y += 28;
             audio.setBounds (16, y, getWidth() - 32, 34);
             video.setBounds (16, y + 38, getWidth() - 32, 34);
+            durationsTop = y + 38 + 34 + 30;
+            for (int row = 0; row < 2; ++row)
+            {
+                durations[(size_t) row * 2].setBounds (16 + 70 + 28, durationsTop + row * 34, 54, 28);
+                durations[(size_t) row * 2 + 1].setBounds (16 + 70 + 28 + 54 + 28, durationsTop + row * 34, 54, 28);
+            }
             auto buttons = juce::Rectangle<int> (16, getHeight() - 50, getWidth() - 32, 34);
             start.setBounds (buttons.removeFromRight (150));
             buttons.removeFromRight (8);
@@ -679,6 +746,11 @@ void LibraryBrowser::showSyncOptions()
                 anyDrive = anyDrive || t->getToggleState();
             start.setEnabled (anyDrive && (audio.getToggleState() || video.getToggleState()));
         }
+        void applyDurations()
+        {
+            auto seconds = [this] (size_t i) { return juce::jmax (0.0, durations[i].getText().replaceCharacter (',', '.').getDoubleValue() * 60.0); };
+            owner.library.setDurationLimits ({ seconds (0), seconds (1), seconds (2), seconds (3) });
+        }
         void close()
         {
             if (auto* box = findParentComponentOfClass<juce::CallOutBox>())
@@ -689,6 +761,8 @@ void LibraryBrowser::showSyncOptions()
         juce::OwnedArray<juce::ToggleButton> drives;
         juce::ToggleButton audio { "Musica  (mp3, wav, flac, m4a...)" }, video { "Video  (mp4, mov, m4v, wmv)" };
         juce::TextButton cancel { "Cancelar" }, start { "Buscar y anadir" };
+        std::array<juce::TextEditor, 4> durations;   // musica de / a, video de / a
+        int durationsTop = 0;
     };
 
     juce::CallOutBox::launchAsynchronously (std::make_unique<Options> (*this), syncButton.getScreenBounds(), nullptr);
@@ -699,7 +773,10 @@ void LibraryBrowser::startSync (const Library::SyncOptions& options)
     if (syncJob != nullptr || options.roots.isEmpty())
         return;
     showToast ({}, false);
-    syncJob = std::make_unique<SyncJob> (*this, options);
+    auto opts = options;
+    if (! opts.accept)
+        opts.accept = [&lib = library] (const juce::File& f) { return lib.acceptsFile (f); };   // la duracion elegida
+    syncJob = std::make_unique<SyncJob> (*this, opts);
     syncJob->startThread (juce::Thread::Priority::low);
     syncButton.setEnabled (false);
     stopSyncButton.setVisible (true);
@@ -722,7 +799,8 @@ void LibraryBrowser::finishSync (juce::Array<juce::File> folders, int files, boo
         showToast ("Busqueda detenida: no se anadio nada.", false);
         return;
     }
-    // Solo las carpetas que no estaban ya en la biblioteca (ni dentro de otra).
+    // Se anaden las carpetas que no estaban ya en la biblioteca (ni dentro de otra); las que ya
+    // estaban, vuelven si se habian quitado del arbol (si no, sus canciones no se verian nunca).
     const auto existing = library.getFolders();
     int added = 0;
     for (const auto& f : folders)
@@ -733,12 +811,14 @@ void LibraryBrowser::finishSync (juce::Array<juce::File> folders, int files, boo
             library.addFolder (f);
             ++added;
         }
+        else
+            library.includeFolder (f);
     }
-    if (added > 0)
-        library.startBackgroundWork();
+    library.startBackgroundWork();
     showToast (added > 0 ? "Listo: " + juce::String (added) + (added == 1 ? " carpeta nueva" : " carpetas nuevas") + " con musica o video ("
                                + juce::String (files) + " archivos encontrados). Se anaden y analizan en segundo plano."
-                         : "Listo: no hay carpetas nuevas (" + juce::String (files) + " archivos ya estaban).",
+                         : folders.isEmpty() ? juce::String ("Listo: no se encontro musica ni video (con la duracion elegida).")
+                         : "Listo: no hay carpetas nuevas (" + juce::String (files) + " archivos ya estaban; lo que se habia quitado vuelve).",
                false);
 }
 
@@ -787,7 +867,15 @@ void LibraryBrowser::refresh()
         tracks.erase (std::remove_if (tracks.begin(), tracks.end(),
                                       [this] (const TrackInfo& t) { return Library::isVideoFile (t.getFile()) != (filterKind == 2); }),
                       tracks.end());
+    // YouTube: filas mas altas (la miniatura va al principio del titulo).
+    if (const bool yt = filterKind == 6; yt != youtubeLayout)
+    {
+        youtubeLayout = yt;
+        table.setRowHeight (yt ? 56 : 38);
+    }
     table.updateContent();
+    // Con muchas filas sale la barra vertical: las columnas, al ancho que queda (sin barra horizontal).
+    table.getHeader().resizeAllColumnsToFit (table.getVisibleContentWidth());
     table.repaint();
     for (size_t i = 0; i < tracks.size(); ++i)
         if (tracks[i].id == selectedId)
@@ -827,8 +915,13 @@ void LibraryBrowser::chooseFolder()
                           });
 }
 
-void LibraryBrowser::changeListenerCallback (juce::ChangeBroadcaster*)
+void LibraryBrowser::changeListenerCallback (juce::ChangeBroadcaster* source)
 {
+    if (source == &thumbnails.get())
+    {
+        table.repaint();   // llego una miniatura de YouTube
+        return;
+    }
     // La biblioteca avisa a menudo mientras escanea o analiza: se agrupan los avisos.
     if (! isTimerRunning())
         startTimer (400);
@@ -872,7 +965,7 @@ void LibraryBrowser::paintCell (juce::Graphics& g, int row, int column, int widt
     const auto& t = tracks[(size_t) row];
     if (column == typeCol)
     {
-        // Video o audio en una pastilla.
+        // Video, audio o YouTube en una pastilla.
         const auto chip = juce::Rectangle<float> (6.0f, (float) height / 2.0f - 12.0f, 30.0f, 24.0f);
         g.setColour (DarkLookAndFeel::raised);
         g.fillRoundedRectangle (chip, 5.0f);
@@ -925,7 +1018,31 @@ void LibraryBrowser::paintCell (juce::Graphics& g, int row, int column, int widt
             break;
         default: break;
     }
+    int x = 6;
+    if (column == titleCol && isYouTube (t))
+    {
+        // La miniatura del video (16:9) delante del titulo.
+        const int h = height - 8, w = h * 16 / 9;
+        YouTubeThumbnails::draw (g, thumbnails->get (t.path.fromFirstOccurrenceOf ("youtube:", false, false)),
+                                 juce::Rectangle<int> (x, 4, w, h).toFloat(), 5.0f);
+        x += w + 10;
+    }
+    if (column == titleCol || column == artistCol)
+    {
+        // Entero: si no cabe, en dos lineas (y un poco estrecho); el raton encima lo muestra todo.
+        g.drawFittedText (text, x, 1, width - x - 6, height - 2, justification, 2, 0.85f);
+        return;
+    }
     g.drawText (text, 6, 0, width - 12, height, justification, true);
+}
+
+juce::String LibraryBrowser::getCellTooltip (int row, int column)
+{
+    if (! juce::isPositiveAndBelow (row, (int) tracks.size()) || (column != titleCol && column != artistCol && column != typeCol))
+        return {};
+    const auto& t = tracks[(size_t) row];
+    const auto title = t.title.isNotEmpty() ? t.title : t.getFile().getFileNameWithoutExtension();
+    return title + (t.artist.isNotEmpty() ? "\n" + t.artist : juce::String()) + (isYouTube (t) ? juce::String() : "\n" + t.path);
 }
 
 juce::Component* LibraryBrowser::refreshComponentForCell (int row, int column, bool, juce::Component* existing)
@@ -1246,6 +1363,7 @@ void LibraryBrowser::resized()
 
     // Lista: buscador, canciones y pie.
     searchBox.setBounds (r.removeFromTop (34));
+    clearSearchButton.setBounds (searchBox.getBounds().removeFromRight (34).reduced (5));
     r.removeFromTop (8);
     footerArea = r.removeFromBottom (22);
     r.removeFromBottom (4);

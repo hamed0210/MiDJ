@@ -46,6 +46,7 @@ private:
     void paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool selected) override;
     void listBoxItemClicked (int row, const juce::MouseEvent& e) override;
     void deleteKeyPressed (int row) override;
+    juce::String getTooltipForRow (int row) override;   // el titulo entero
     void showListsMenu();
 
     Automix& automix;

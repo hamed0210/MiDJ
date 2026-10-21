@@ -267,6 +267,36 @@ void DeckComponent::timerCallback()
 {
     updateLabels();
     repaint (waveformArea);
+    if (titleScrolls)
+        repaint (titleArea);
+}
+
+void DeckComponent::paintTitle (juce::Graphics& g, const juce::String& text, juce::Rectangle<int> area)
+{
+    // Cabe (o casi: un poco estrecho): quieto. Si no, se desplaza a 30 px/s con 2 s de pausa al
+    // principio de cada vuelta, para leerlo entero.
+    titleArea = area;
+    const float width = juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), text);
+    const bool scrolls = width * 0.85f > (float) area.getWidth();
+    if (scrolls != titleScrolls || text != scrolledTitle)   // otra cancion: desde el principio
+    {
+        titleScrolls = scrolls;
+        scrolledTitle = text;
+        titleScrollStart = juce::Time::getMillisecondCounter();
+    }
+    if (! scrolls)
+    {
+        g.drawFittedText (text, area, juce::Justification::centredLeft, 1, 0.85f);
+        return;
+    }
+    constexpr float gap = 40.0f, speed = 0.03f, pauseMs = 2000.0f;
+    const float loop = width + gap;
+    const float t = (float) ((juce::Time::getMillisecondCounter() - titleScrollStart) % (juce::uint32) (pauseMs + loop / speed));
+    const float offset = juce::jmax (0.0f, t - pauseMs) * speed;
+    juce::Graphics::ScopedSaveState s (g);
+    g.reduceClipRegion (area);
+    for (float x = (float) area.getX() - offset; x < (float) area.getRight(); x += loop)
+        g.drawText (text, juce::Rectangle<float> (x, (float) area.getY(), width + 2.0f, (float) area.getHeight()), juce::Justification::centredLeft, false);
 }
 
 float DeckComponent::timeToX (double seconds) const
@@ -448,8 +478,8 @@ void DeckComponent::paint (juce::Graphics& g)
     auto bottomRow = compact ? juce::Rectangle<int>() : info.removeFromBottom (34);
     g.setColour (DarkLookAndFeel::text);
     g.setFont (DarkLookAndFeel::sans (compact ? 15.0f : 16.0f, true));
-    g.drawText (deck.isLoading() ? juce::String ("Cargando...") : deck.hasTrack() ? title : juce::String ("Sin cancion"),
-                info.removeFromTop (22), juce::Justification::centredLeft, true);
+    paintTitle (g, deck.isLoading() ? juce::String ("Cargando...") : deck.hasTrack() ? title : juce::String ("Sin cancion"),
+                info.removeFromTop (22));
     g.setColour (DarkLookAndFeel::textQuiet);
     g.setFont (DarkLookAndFeel::sans (13.0f));
     g.drawText (deck.hasTrack() ? artist : juce::String ("Arrastrala o pulsa ") + deckName + " en la biblioteca",

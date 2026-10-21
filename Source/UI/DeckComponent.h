@@ -107,6 +107,12 @@ private:
 
     // Textos que se pintan (no son Labels: asi no roban clics ni el foco).
     juce::String title, artist, stateText, bpmText, timeText, pitchText;
+    // Titulo que no cabe: se desplaza (pausa al principio de cada vuelta). Lo pone paint().
+    juce::Rectangle<int> titleArea;
+    bool titleScrolls = false;
+    juce::String scrolledTitle;
+    juce::uint32 titleScrollStart = 0;
+    void paintTitle (juce::Graphics& g, const juce::String& text, juce::Rectangle<int> area);
     juce::File describedFile;
     juce::File posterFile;
     juce::Image poster;

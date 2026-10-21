@@ -17,7 +17,7 @@ AutomixPanel::AutomixPanel (Automix& a, Library& l) : automix (a), library (l)
     addAndMakeVisible (status);
 
     list.setModel (this);
-    list.setRowHeight (40);
+    list.setRowHeight (50);
     list.setColour (juce::ListBox::backgroundColourId, DarkLookAndFeel::panel);
     addAndMakeVisible (list);
 
@@ -204,16 +204,28 @@ void AutomixPanel::paintListBoxItem (int row, juce::Graphics& g, int w, int h, b
     Icons::draw (g, r.removeFromRight (16.0f).withSizeKeepingCentre (12.0f, 12.0f), Icons::Glyph::close, DarkLookAndFeel::textQuiet);   // quitar
     r.removeFromRight (6.0f);
 
+    // El titulo entero (hasta dos lineas) y debajo artista y BPM.
     const auto name = item.title.isNotEmpty() ? item.title : item.file.getFileNameWithoutExtension();
+    const auto subArea = r.removeFromBottom (16.0f);
     g.setColour (DarkLookAndFeel::text);
-    g.setFont (DarkLookAndFeel::sans (13.0f, true));
-    g.drawText (name, r.removeFromTop (r.getHeight() / 2.0f + 1.0f), juce::Justification::bottomLeft, true);
+    g.setFont (DarkLookAndFeel::sans (12.5f, true));
+    g.drawFittedText (name, r.toNearestInt(), juce::Justification::bottomLeft, 2, 0.85f);
     juce::String sub = item.artist;
     if (item.bpm > 0.0)
         sub << (sub.isNotEmpty() ? "  " : "") << juce::String (item.bpm, 0) << " BPM";
     g.setColour (DarkLookAndFeel::textQuiet);
-    g.setFont (DarkLookAndFeel::sans (12.0f));
-    g.drawText (sub, r, juce::Justification::topLeft, true);
+    g.setFont (DarkLookAndFeel::sans (11.5f));
+    g.drawText (sub, subArea, juce::Justification::topLeft, true);
+}
+
+juce::String AutomixPanel::getTooltipForRow (int row)
+{
+    const auto& queue = automix.getQueue();
+    if (! juce::isPositiveAndBelow (row, (int) queue.size()))
+        return {};
+    const auto& item = queue[(size_t) row];
+    return (item.title.isNotEmpty() ? item.title : item.file.getFileNameWithoutExtension())
+           + (item.artist.isNotEmpty() ? "\n" + item.artist : juce::String());
 }
 
 void AutomixPanel::listBoxItemClicked (int row, const juce::MouseEvent& e)

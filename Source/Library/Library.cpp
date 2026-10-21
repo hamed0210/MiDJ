@@ -79,6 +79,9 @@ namespace
             track_id    INTEGER NOT NULL,
             position    INTEGER NOT NULL,
             PRIMARY KEY (playlist_id, track_id));
+        CREATE TABLE IF NOT EXISTS settings (       -- ajustes de la biblioteca (duraciones)
+            key   TEXT PRIMARY KEY,
+            value TEXT);
     )sql";
 
     constexpr const char* trackColumns = "id, path, title, artist, album, genre, duration, bpm, first_beat, analysed, favorite, plays";
@@ -193,7 +196,69 @@ bool Library::open (const juce::File& file)
         if (! check.next())
             exec ((juce::String ("ALTER TABLE tracks ADD COLUMN ") + definition).toRawUTF8());
     }
+    // Duraciones: "minAudio maxAudio minVideo maxVideo"; sin guardar, al menos 1 minuto.
+    durations = { 60.0, 0.0, 60.0, 0.0 };
+    Statement s (db, "SELECT value FROM settings WHERE key = 'durations'");
+    if (s.next())
+    {
+        juce::StringArray v;
+        v.addTokens (s.text (0), " ", "");
+        if (v.size() == 4)
+            durations = { v[0].getDoubleValue(), v[1].getDoubleValue(), v[2].getDoubleValue(), v[3].getDoubleValue() };
+    }
     return true;
+}
+
+bool Library::DurationLimits::accepts (double seconds, bool video) const
+{
+    const double low = video ? minVideo : minAudio, high = video ? maxVideo : maxAudio;
+    return seconds >= low && (high <= 0.0 || seconds <= high);
+}
+
+Library::DurationLimits Library::getDurationLimits() const
+{
+    const juce::ScopedLock sl (lock);
+    return durations;
+}
+
+void Library::setDurationLimits (const DurationLimits& limits)
+{
+    {
+        const juce::ScopedLock sl (lock);
+        if (limits == durations)
+            return;
+        durations = limits;
+        Statement (db, "INSERT OR REPLACE INTO settings (key, value) VALUES ('durations', ?)")
+            .bind (1, juce::String (limits.minAudio) + " " + juce::String (limits.maxAudio) + " "
+                          + juce::String (limits.minVideo) + " " + juce::String (limits.maxVideo)).run();
+    }
+    startPendingCount();   // lo que vuelve a verse puede estar sin analizar
+    if (worker != nullptr)
+        worker->notify();
+    sendChangeMessage();
+}
+
+bool Library::acceptsFile (const juce::File& file) const
+{
+    std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
+    if (reader == nullptr || reader->sampleRate <= 0.0)
+        return false;
+    return getDurationLimits().accepts ((double) reader->lengthInSamples / reader->sampleRate, isVideoFile (file));
+}
+
+juce::String Library::visibleClause() const
+{
+    const auto d = getDurationLimits();
+    // Los videos son los de isVideoFile (todas sus extensiones tienen 3 letras).
+    auto range = [] (double low, double high)
+    {
+        juce::String r = "duration >= " + juce::String (low);
+        if (high > 0.0)
+            r << " AND duration <= " << juce::String (high);
+        return r;
+    };
+    return "hidden = 0 AND (CASE WHEN lower (substr (path, -4)) IN ('.mp4', '.mov', '.m4v', '.wmv', '.3gp') THEN "
+           + range (d.minVideo, d.maxVideo) + " ELSE " + range (d.minAudio, d.maxAudio) + " END)";
 }
 
 void Library::close()
@@ -256,10 +321,19 @@ void Library::addFolder (const juce::File& folder)
     {
         const juce::ScopedLock sl (lock);
         Statement (db, "INSERT OR IGNORE INTO folders (path) VALUES (?)").bind (1, folder.getFullPathName()).run();
-        // Si estaba quitada (entera o en parte), vuelve con su analisis.
+    }
+    includeFolder (folder);
+}
+
+void Library::includeFolder (const juce::File& folder)
+{
+    {
+        const juce::ScopedLock sl (lock);
+        // Si estaba quitada (entera, en parte o dentro de una carpeta quitada), vuelve con su analisis.
         const auto prefix = folderPrefix (folder);
         Statement (db, "UPDATE tracks SET hidden = 0 WHERE substr (path, 1, length (?1)) = ?1").bind (1, prefix).run();
-        Statement (db, "DELETE FROM excluded WHERE substr (path, 1, length (?1)) = ?1").bind (1, prefix).run();
+        Statement (db, "DELETE FROM excluded WHERE substr (path, 1, length (?1)) = ?1 OR substr (?1, 1, length (path)) = path")
+            .bind (1, prefix).run();
     }
     sendChangeMessage();
 }
@@ -321,7 +395,7 @@ juce::String Library::getStatusText() const
 void Library::startPendingCount()
 {
     const juce::ScopedLock sl (lock);
-    Statement s (db, "SELECT COUNT(*) FROM tracks WHERE analysed = 0 AND hidden = 0");
+    Statement s (db, ("SELECT COUNT(*) FROM tracks WHERE analysed = 0 AND " + visibleClause()).toRawUTF8());
     pendingTotal = s.next() ? (int) s.integer (0) : 0;
     pendingDone = 0;
 }
@@ -419,7 +493,7 @@ bool Library::analyseOne (juce::Thread* thread)
     juce::String path;
     {
         const juce::ScopedLock sl (lock);
-        Statement s (db, "SELECT id, path FROM tracks WHERE analysed = 0 AND hidden = 0 ORDER BY added LIMIT 1");
+        Statement s (db, ("SELECT id, path FROM tracks WHERE analysed = 0 AND " + visibleClause() + " ORDER BY added LIMIT 1").toRawUTF8());
         if (! s.next())
         {
             pendingDone = pendingTotal.load();   // lo que quedaba lo analizo otro (p. ej. un deck)
@@ -460,7 +534,7 @@ bool Library::analyseOne (juce::Thread* thread)
 std::vector<TrackInfo> Library::search (const juce::String& text, const juce::File& folder,
                                         SortColumn sort, bool ascending) const
 {
-    juce::String sql = juce::String ("SELECT ") + trackColumns + " FROM tracks WHERE hidden = 0";
+    juce::String sql = juce::String ("SELECT ") + trackColumns + " FROM tracks WHERE " + visibleClause();
     juce::StringArray words;
     words.addTokens (normalise (text), " \t", "\"");
     words.removeEmptyStrings();
@@ -507,7 +581,7 @@ std::optional<TrackInfo> Library::findByFile (const juce::File& file) const
 int Library::getNumTracks() const
 {
     const juce::ScopedLock sl (lock);
-    Statement s (db, "SELECT COUNT(*) FROM tracks WHERE hidden = 0");
+    Statement s (db, ("SELECT COUNT(*) FROM tracks WHERE " + visibleClause()).toRawUTF8());
     return s.next() ? (int) s.integer (0) : 0;
 }
 
@@ -561,7 +635,7 @@ juce::StringArray Library::getTrackPaths() const
 {
     juce::StringArray result;
     const juce::ScopedLock sl (lock);
-    Statement s (db, "SELECT path FROM tracks WHERE hidden = 0");
+    Statement s (db, ("SELECT path FROM tracks WHERE " + visibleClause()).toRawUTF8());
     while (s.next())
         result.add (s.text (0));
     return result;
@@ -597,7 +671,10 @@ juce::Array<juce::File> Library::findMediaFolders (const SyncOptions& options,
     static const juce::StringArray skipNames { "windows", "program files", "program files (x86)", "programdata", "appdata",
                                                "system volume information", "recovery", "perflogs", "msocache", "config.msi",
                                                "node_modules", "$recycle.bin", "$windows.~bt", "$windows.~ws", "windowsapps",
-                                               "intel", "amd", "nvidia", "drivers", "boot", "efi" };
+                                               "intel", "amd", "nvidia", "drivers", "boot", "efi",
+                                               // juegos y sus sonidos
+                                               "steamapps", "steamlibrary", "epic games", "riot games", "xboxgames",
+                                               "origin games", "ea games", "gog games", "ubisoft game launcher" };
     juce::Array<juce::File> found;
     filesFound = 0;
     std::function<void (const juce::File&, bool)> visit = [&] (const juce::File& dir, bool isRoot)
@@ -607,6 +684,7 @@ juce::Array<juce::File> Library::findMediaFolders (const SyncOptions& options,
         if (progress)
             progress (dir, filesFound);
         int here = 0;
+        bool accepted = ! options.accept;   // sin filtro, cualquier archivo vale
         juce::Array<juce::File> subdirs;
         for (const auto& entry : juce::RangedDirectoryIterator (dir, false, "*", juce::File::findFilesAndDirectories | juce::File::ignoreHiddenFiles))
         {
@@ -618,10 +696,15 @@ juce::Array<juce::File> Library::findMediaFolders (const SyncOptions& options,
                     subdirs.add (f);
             }
             else if (isAudioFile (f) && (isVideoFile (f) ? options.video : options.audio))
+            {
                 ++here;
+                // Con filtro (duracion): se abren archivos hasta que uno valga.
+                if (! accepted && ! isRoot && ! shouldStop())
+                    accepted = options.accept (f);
+            }
         }
         // Los archivos sueltos en la raiz de un disco no cuentan (seria escanear el disco entero).
-        if (here > 0 && ! isRoot)
+        if (here > 0 && accepted && ! isRoot)
         {
             found.add (dir);
             filesFound += here;
@@ -675,7 +758,7 @@ std::vector<TrackInfo> Library::getFavorites() const
     std::vector<TrackInfo> result;
     const juce::ScopedLock sl (lock);
     Statement s (db, (juce::String ("SELECT ") + trackColumns
-                      + " FROM tracks WHERE hidden = 0 AND favorite = 1 ORDER BY artist COLLATE NOCASE, title COLLATE NOCASE").toRawUTF8());
+                      + " FROM tracks WHERE " + visibleClause() + " AND favorite = 1 ORDER BY artist COLLATE NOCASE, title COLLATE NOCASE").toRawUTF8());
     while (s.next())
         result.push_back (readTrack (s));
     return result;
@@ -686,7 +769,7 @@ std::vector<TrackInfo> Library::getMostPlayed (int limit) const
     std::vector<TrackInfo> result;
     const juce::ScopedLock sl (lock);
     Statement s (db, (juce::String ("SELECT ") + trackColumns
-                      + " FROM tracks WHERE hidden = 0 AND plays > 0 ORDER BY plays DESC, last_played DESC LIMIT ?").toRawUTF8());
+                      + " FROM tracks WHERE " + visibleClause() + " AND plays > 0 ORDER BY plays DESC, last_played DESC LIMIT ?").toRawUTF8());
     s.bind (1, (juce::int64) limit);
     while (s.next())
         result.push_back (readTrack (s));
@@ -696,14 +779,14 @@ std::vector<TrackInfo> Library::getMostPlayed (int limit) const
 int Library::countFavorites() const
 {
     const juce::ScopedLock sl (lock);
-    Statement s (db, "SELECT COUNT(*) FROM tracks WHERE hidden = 0 AND favorite = 1");
+    Statement s (db, ("SELECT COUNT(*) FROM tracks WHERE " + visibleClause() + " AND favorite = 1").toRawUTF8());
     return s.next() ? (int) s.integer (0) : 0;
 }
 
 int Library::countPlayed() const
 {
     const juce::ScopedLock sl (lock);
-    Statement s (db, "SELECT COUNT(*) FROM tracks WHERE hidden = 0 AND plays > 0");
+    Statement s (db, ("SELECT COUNT(*) FROM tracks WHERE " + visibleClause() + " AND plays > 0").toRawUTF8());
     return s.next() ? juce::jmin (50, (int) s.integer (0)) : 0;
 }
 

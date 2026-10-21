@@ -206,6 +206,8 @@ MainComponent::MainComponent()
     // Sin entradas; hasta 4 salidas (las 3 y 4, para los audifonos si la tarjeta las tiene),
     // con la tarjeta, frecuencia y bloque guardados.
     const auto savedDevice = loadAudioSettings();
+    mixerView.limiterSettingChanged();
+    mixerView.onLimiterChanged = [this] { saveAudioSettings(); };
     setAudioChannels (0, 4, savedDevice.get());
     setHeadphoneMode ((HeadphoneMode) headphoneMode.load(), headphoneDevice);
 }
@@ -753,7 +755,7 @@ void MainComponent::showAudioSettings()
             addAndMakeVisible (deviceBox);
             limiter.setButtonText ("Limitador del master (evita que la salida sature)");
             limiter.setToggleState (owner.mixer.isLimiterEnabled(), juce::dontSendNotification);
-            limiter.onClick = [this] { owner.mixer.setLimiterEnabled (limiter.getToggleState()); owner.saveAudioSettings(); };
+            limiter.onClick = [this] { owner.mixer.setLimiterEnabled (limiter.getToggleState()); owner.mixerView.limiterSettingChanged(); owner.saveAudioSettings(); };
             addAndMakeVisible (limiter);
             updateEnabled();
             setSize (560, 430);

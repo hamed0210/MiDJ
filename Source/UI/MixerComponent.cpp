@@ -94,6 +94,19 @@ MixerComponent::MixerComponent (Mixer& m) : mixer (m)
     };
     addAndMakeVisible (transitionMs);
 
+    // Limitador del master: encender y apagar (tambien en Ajustes de audio).
+    limiterButton.setClickingTogglesState (true);
+    limiterButton.setTooltip ("Limitador del master: no deja que la salida sature (clic: poner / quitar)");
+    limiterButton.onClick = [this]
+    {
+        mixer.setLimiterEnabled (limiterButton.getToggleState());
+        updateLimiterButton();
+        if (onLimiterChanged)
+            onLimiterChanged();
+    };
+    addAndMakeVisible (limiterButton);
+    updateLimiterButton();
+
     refreshTransitions();
     showVideoTab (false);
     startTimerHz (30);
@@ -165,6 +178,16 @@ void MixerComponent::setHeadphonesAvailable (bool available)
         c.pfl->setVisible (available);
     updatePflButtons();
     showVideoTab (videoTab);   // los mandos de los audifonos van en la pagina AUDIO
+}
+
+void MixerComponent::updateLimiterButton()
+{
+    const bool on = mixer.isLimiterEnabled();
+    limiterButton.setToggleState (on, juce::dontSendNotification);
+    limiterButton.setButtonText (on ? "LIM ON" : "LIM OFF");
+    limiterButton.setColour (juce::TextButton::buttonOnColourId, DarkLookAndFeel::selection);
+    limiterButton.setColour (juce::TextButton::textColourOnId, DarkLookAndFeel::good);
+    limiterButton.setColour (juce::TextButton::textColourOffId, DarkLookAndFeel::textQuiet);
 }
 
 void MixerComponent::updatePflButtons()
@@ -311,6 +334,7 @@ void MixerComponent::showVideoTab (bool video)
         c.meter.setVisible (! video);
     }
     master.setVisible (! video);
+    limiterButton.setVisible (! video);
     masterLeft.setVisible (! video);
     masterRight.setVisible (! video);
     cueMixKnob.setVisible (! video && headphonesAvailable);
@@ -562,6 +586,8 @@ void MixerComponent::resized()
         masterLeft.setBounds (meters.removeFromLeft (9));
         meters.removeFromLeft (4);
         masterRight.setBounds (meters.removeFromLeft (9));
+        limiterButton.setBounds (centre.removeFromBottom (24).reduced (2, 0));
+        centre.removeFromBottom (4);
         if (headphonesAvailable)
         {
             // Master arriba y, debajo, los dos mandos de los audifonos lado a lado.

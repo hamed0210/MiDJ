@@ -127,7 +127,8 @@ target_sources(MiDJ PRIVATE
     Source/UI/TransitionDialog.cpp
     Source/UI/DarkLookAndFeel.cpp
     Source/UI/YouTubePlayer.cpp
-    Source/UI/YouTubePanel.cpp)
+    Source/UI/YouTubePanel.cpp
+    Source/UI/YouTubeThumbnails.cpp)
 # WebView2 (Microsoft, motor de Edge) para el reproductor de YouTube: el cargador estatico; el
 # motor lo pone Windows (WebView2 Runtime).
 set(WEBVIEW2_DIR "D:/Tools/WebView2" CACHE PATH "Carpeta del SDK de WebView2 (include y x64)")

@@ -32,6 +32,8 @@ bool YouTubeQueue::takeNext (YouTubeVideo& out)
 void YouTubeQueue::save (const juce::File& file) const
 {
     juce::XmlElement xml ("YOUTUBE");
+    xml.setAttribute ("quality", quality);
+    xml.setAttribute ("skipAds", skipAds);
     for (const auto& v : items)
     {
         auto* e = xml.createNewChildElement ("VIDEO");
@@ -47,9 +49,13 @@ void YouTubeQueue::load (const juce::File& file)
 {
     items.clear();
     if (const auto xml = juce::XmlDocument::parse (file))
+    {
+        quality = xml->getStringAttribute ("quality", "hd720");
+        skipAds = xml->getBoolAttribute ("skipAds", false);
         for (auto* e : xml->getChildWithTagNameIterator ("VIDEO"))
             items.push_back ({ e->getStringAttribute ("id"), e->getStringAttribute ("title"), e->getStringAttribute ("channel"),
                                e->getDoubleAttribute ("seconds") });
+    }
     sendChangeMessage();
 }
 
@@ -58,7 +64,7 @@ void YouTubeQueue::load (const juce::File& file)
 YouTubePanel::YouTubePanel (YouTubePlayer& p, YouTubeQueue& q) : player (p), queue (q)
 {
     list.setModel (this);
-    list.setRowHeight (40);
+    list.setRowHeight (50);
     list.setColour (juce::ListBox::backgroundColourId, DarkLookAndFeel::panel);
     addAndMakeVisible (list);
 
@@ -81,8 +87,16 @@ YouTubePanel::YouTubePanel (YouTubePlayer& p, YouTubeQueue& q) : player (p), que
     volume.onValueChange = [this] { player.setVolume ((float) volume.getValue()); };
     addAndMakeVisible (volume);
 
+    // Calidad y anuncios: lo guardado con la lista.
+    player.setQuality (queue.quality);
+    player.setSkipAds (queue.skipAds);
+    settingsButton.setTooltip ("Calidad del video de YouTube y saltar anuncios");
+    settingsButton.onClick = [this] { showSettingsMenu(); };
+    addAndMakeVisible (settingsButton);
+
     player.addChangeListener (this);
     queue.addChangeListener (this);
+    thumbnails->addChangeListener (this);
     updateButtons();
 }
 
@@ -90,6 +104,7 @@ YouTubePanel::~YouTubePanel()
 {
     player.removeChangeListener (this);
     queue.removeChangeListener (this);
+    thumbnails->removeChangeListener (this);
     list.setModel (nullptr);
 }
 
@@ -116,8 +131,46 @@ void YouTubePanel::setAutomix (bool on)
         next();
 }
 
+void YouTubePanel::showSettingsMenu()
+{
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("Calidad del video");
+    for (const auto& q : YouTubePlayer::getQualities())
+        menu.addItem (YouTubePlayer::qualityName (q) + (q == "auto" ? " (la que elija YouTube)" : juce::String()), true, q == player.getQuality(),
+                      [this, q]
+                      {
+                          queue.quality = q;
+                          player.setQuality (q);
+                          updateButtons();
+                          resized();
+                      });
+    menu.addSeparator();
+    menu.addItem ("Saltar anuncios", true, player.getSkipAds(), [this]
+    {
+        queue.skipAds = ! player.getSkipAds();
+        player.setSkipAds (queue.skipAds);
+        updateButtons();
+        resized();
+    });
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&settingsButton));
+}
+
+juce::String YouTubePanel::getTooltipForRow (int row)
+{
+    const auto& items = queue.getItems();
+    if (! juce::isPositiveAndBelow (row, (int) items.size()))
+        return {};
+    return items[(size_t) row].title + "\n" + items[(size_t) row].channel;
+}
+
 void YouTubePanel::changeListenerCallback (juce::ChangeBroadcaster* source)
 {
+    if (source == &thumbnails.get())
+    {
+        list.repaint();   // llego una miniatura
+        repaint (nowArea);
+        return;
+    }
     if (source == &queue)
     {
         list.updateContent();
@@ -148,6 +201,7 @@ void YouTubePanel::updateButtons()
     stopButton.setEnabled (player.isOpen());
     nextButton.setEnabled (! queue.getItems().empty());
     clearButton.setEnabled (! queue.getItems().empty());
+    settingsButton.setButtonText (YouTubePlayer::qualityName (player.getQuality()) + (player.getSkipAds() ? " | sin anuncios" : ""));
 }
 
 void YouTubePanel::paint (juce::Graphics& g)
@@ -158,17 +212,26 @@ void YouTubePanel::paint (juce::Graphics& g)
     g.setColour (DarkLookAndFeel::raised);
     g.fillRoundedRectangle (r.toFloat(), 8.0f);
     r.reduce (10, 6);
-    Icons::drawSource (g, r.removeFromLeft (22).withSizeKeepingCentre (20, 20).toFloat(), SourceType::youtube,
-                       player.isOpen() ? youTubeRed : DarkLookAndFeel::textFaint);
-    r.removeFromLeft (8);
     const auto& v = player.getVideo();
+    // La miniatura del video que suena (sin video, el logo).
+    if (player.isOpen() && v.id.isNotEmpty())
+    {
+        YouTubeThumbnails::draw (g, thumbnails->get (v.id), r.removeFromLeft (60).withSizeKeepingCentre (60, 34).toFloat(), 4.0f);
+        r.removeFromLeft (8);
+    }
+    else
+    {
+        Icons::drawSource (g, r.removeFromLeft (22).withSizeKeepingCentre (20, 20).toFloat(), SourceType::youtube, DarkLookAndFeel::textFaint);
+        r.removeFromLeft (8);
+    }
     g.setColour (DarkLookAndFeel::text);
     g.setFont (DarkLookAndFeel::sans (13.0f, true));
-    g.drawText (player.isOpen() ? v.title : juce::String ("Nada de YouTube sonando"), r.removeFromTop (18), juce::Justification::centredLeft, true);
+    g.drawFittedText (player.isOpen() ? v.title : juce::String ("Nada de YouTube sonando"), r.removeFromTop (18), juce::Justification::centredLeft, 1, 0.75f);
     g.setColour (s.state == YouTubePlayer::State::error ? DarkLookAndFeel::danger
                  : s.state == YouTubePlayer::State::ad ? DarkLookAndFeel::accentB : DarkLookAndFeel::textQuiet);
     g.setFont (DarkLookAndFeel::sans (11.5f));
-    const auto line = player.isOpen() ? YouTubePlayer::stateText (s) + (v.channel.isNotEmpty() ? juce::String::fromUTF8 ("  \xc2\xb7  ") + v.channel : juce::String())
+    const auto state = s.state == YouTubePlayer::State::ad && player.getSkipAds() ? juce::String ("Saltando el anuncio...") : YouTubePlayer::stateText (s);
+    const auto line = player.isOpen() ? state + (v.channel.isNotEmpty() ? juce::String::fromUTF8 ("  \xc2\xb7  ") + v.channel : juce::String())
                                       : juce::String ("Busca en la biblioteca > YouTube");
     g.drawText (line, r.removeFromTop (16), juce::Justification::centredLeft, true);
 
@@ -218,6 +281,8 @@ void YouTubePanel::resized()
     nextButton.setBounds (bottom.removeFromLeft (44));
     bottom.removeFromLeft (6);
     clearButton.setBounds (bottom.removeFromLeft (44));
+    bottom.removeFromLeft (6);
+    settingsButton.setBounds (bottom.removeFromRight (juce::jmin (bottom.getWidth(), player.getSkipAds() ? 140 : 64)));
 }
 
 void YouTubePanel::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool selected)
@@ -236,14 +301,18 @@ void YouTubePanel::paintListBoxItem (int row, juce::Graphics& g, int w, int h, b
     g.setColour (DarkLookAndFeel::textQuiet);
     g.setFont (DarkLookAndFeel::mono (12.0f));
     g.drawText (juce::String (row + 1), r.removeFromLeft (18.0f), juce::Justification::centredLeft, false);
+    YouTubeThumbnails::draw (g, thumbnails->get (v.id), r.removeFromLeft (64.0f).withSizeKeepingCentre (64.0f, 36.0f), 4.0f);
+    r.removeFromLeft (8.0f);
     Icons::draw (g, r.removeFromRight (16.0f).withSizeKeepingCentre (12.0f, 12.0f), Icons::Glyph::close, DarkLookAndFeel::textQuiet);
     r.removeFromRight (6.0f);
+    // El titulo entero (hasta dos lineas) y debajo canal y duracion.
+    const auto sub = r.removeFromBottom (16.0f);
     g.setColour (DarkLookAndFeel::text);
-    g.setFont (DarkLookAndFeel::sans (13.0f, true));
-    g.drawText (v.title, r.removeFromTop (r.getHeight() / 2.0f + 1.0f), juce::Justification::bottomLeft, true);
+    g.setFont (DarkLookAndFeel::sans (12.5f, true));
+    g.drawFittedText (v.title, r.toNearestInt(), juce::Justification::bottomLeft, 2, 0.85f);
     g.setColour (DarkLookAndFeel::textQuiet);
-    g.setFont (DarkLookAndFeel::sans (12.0f));
-    g.drawText (v.channel + (v.seconds > 0.0 ? "  " + YouTubeSearch::formatDuration (v.seconds) : juce::String()), r,
+    g.setFont (DarkLookAndFeel::sans (11.5f));
+    g.drawText (v.channel + (v.seconds > 0.0 ? "  " + YouTubeSearch::formatDuration (v.seconds) : juce::String()), sub,
                 juce::Justification::topLeft, true);
 }
 

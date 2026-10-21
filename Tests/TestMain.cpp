@@ -759,6 +759,8 @@ void testLibrary()
     {
         Library library (formats);
         check (library.open (dbFile), "biblioteca: crear la base de datos", 1.0, 1.0);
+        check (library.getDurationLimits().minAudio == 60.0, "duracion: por defecto al menos 1 minuto", library.getDurationLimits().minAudio, 60.0);
+        library.setDurationLimits ({});   // los archivos de prueba duran 20 s
         library.addFolder (music);
         library.scanNow();
         check (library.getNumTracks() == 4, "escaneo: 4 canciones (subcarpetas si, .txt no)", library.getNumTracks(), 4);
@@ -859,6 +861,50 @@ void testLibrary()
         library.addFolder (music);
         const auto again = library.findByFile (maria);
         check (library.getNumTracks() == 3 && again && again->analysed, "volver a anadirla: vuelve con su analisis", library.getNumTracks(), 3);
+
+        // Duracion (quedan dos de 20 s y una de 25 s): lo que no entra no se ve ni cuenta, y vuelve.
+        library.setDurationLimits ({ 22.0, 0.0, 0.0, 0.0 });
+        check (library.getNumTracks() == 1 && library.search ("").size() == 1 && library.getTrackPaths().size() == 1,
+               "duracion: minimo 22 s deja solo la de 25 s", library.getNumTracks(), 1);
+        library.setDurationLimits ({ 0.0, 22.0, 0.0, 0.0 });
+        check (library.getNumTracks() == 2 && library.search ("lenta").empty(), "duracion: maximo 22 s quita la de 25 s", library.getNumTracks(), 2);
+        check (! library.acceptsFile (slow) && library.acceptsFile (maria), "duracion: mirar un archivo", 0.0, 0.0);
+        {
+            Library reopened (formats);   // (otra conexion a la misma base: el ajuste esta guardado)
+            reopened.open (dbFile);
+            check (reopened.getDurationLimits().maxAudio == 22.0, "duracion: se guarda", reopened.getDurationLimits().maxAudio, 22.0);
+        }
+        library.setDurationLimits ({ 30.0, 0.0, 30.0, 0.0 });
+        Library::SyncOptions shortOnly;
+        shortOnly.roots.add (root);
+        shortOnly.accept = [&library] (const juce::File& f) { return library.acceptsFile (f); };
+        check (Library::findMediaFolders (shortOnly, nullptr, [] { return false; }, files).isEmpty(),
+               "sincronizar: carpetas solo con audios cortos no entran", (double) files, 0.0);
+        library.setDurationLimits ({});
+        check (library.getNumTracks() == 3, "duracion: sin limite vuelven todas", library.getNumTracks(), 3);
+
+        // Quitar el disco (por error) y sincronizar: la carpeta vuelve y lo nuevo tambien entra (la
+        // exclusion del disco ya no la tapa).
+        removal = library.removeFromLibrary (root);
+        library.addFolder (music);
+        const auto fresh = music.getChildFile ("Nueva - Cancion.wav");
+        writeClickWav (fresh, 115.0);
+        library.scanNow();
+        check (library.getNumTracks() == 4 && library.findByFile (fresh).has_value(), "sincronizar tras quitar el disco: entra lo nuevo",
+               library.getNumTracks(), 4);
+        // Una subcarpeta quitada que ya esta dentro de otra: includeFolder la trae (y lo nuevo de dentro).
+        library.removeFromLibrary (sub);
+        const auto freshSub = sub.getChildFile ("Otra - Nueva.wav");
+        writeClickWav (freshSub, 125.0);
+        library.scanNow();
+        check (library.getNumTracks() == 3, "subcarpeta quitada: lo nuevo de dentro no entra", library.getNumTracks(), 3);
+        library.includeFolder (sub);
+        library.scanNow();
+        check (library.getNumTracks() == 5 && library.getFolders().size() == 1, "includeFolder: vuelve sin ser carpeta propia",
+               library.getNumTracks(), 5);
+        fresh.deleteFile();
+        freshSub.deleteFile();
+        library.scanNow();
         library.removeFolder (music);
     }
     {
@@ -866,6 +912,7 @@ void testLibrary()
         const auto dbFile2 = root.getChildFile ("library2.db");
         Library library (formats);
         library.open (dbFile2);
+        library.setDurationLimits ({});
         library.addFolder (music);
         library.startBackgroundWork();
         const auto deadline = juce::Time::getMillisecondCounter() + 60000;
@@ -3435,6 +3482,7 @@ void testLibraryLists()
     {
         Library library (formats);
         library.open (dbFile);
+        library.setDurationLimits ({});
         library.addFolder (music);
         library.scanNow();
 
