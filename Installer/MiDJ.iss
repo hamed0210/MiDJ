@@ -9,7 +9,7 @@
 ; escenas, ajustes) no se tocan al instalar ni al desinstalar.
 
 #define AppName "MiDJ"
-#define AppVersion "0.2.0"
+#define AppVersion "0.3.0"
 #define Release "..\build\MiDJ_artefacts\Release"
 #define VcRuntime "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Redist\MSVC\14.44.35112\x64\Microsoft.VC143.CRT"
 
