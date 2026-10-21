@@ -525,6 +525,9 @@ void LibraryBrowser::rebuildTree (bool force)
 
 void LibraryBrowser::selectNode (Node* node)
 {
+    const auto previousKind = filterKind;
+    const auto previousFolder = filterFolder;
+    const auto previousPlaylist = filterPlaylist;
     filterFolder = {};
     filterKind = 0;
     filterLabel = node->label;
@@ -539,6 +542,13 @@ void LibraryBrowser::selectNode (Node* node)
         case Node::Kind::youtube: filterKind = 6; break;
         case Node::Kind::myFolder: case Node::Kind::drive: case Node::Kind::folder: filterFolder = node->file; break;
         default: break;
+    }
+    // Otra carpeta: el buscador se limpia (lo buscado en YouTube no filtra la musica, ni al reves).
+    // Los resultados de YouTube se quedan para cuando se vuelva alli.
+    if (filterKind != previousKind || filterFolder != previousFolder || (filterKind == 5 && filterPlaylist != previousPlaylist))
+    {
+        searchBox.clear();
+        clearSearchButton.setVisible (false);
     }
     // En YouTube el buscador busca en YouTube (con Intro).
     searchBox.setTextToShowWhenEmpty (filterKind == 6 ? "Buscar en YouTube o pegar un enlace (Intro)"
