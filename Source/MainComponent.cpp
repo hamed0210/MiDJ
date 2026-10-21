@@ -154,6 +154,12 @@ MainComponent::MainComponent()
     };
     scenesSplitHandle.onReset = [this] { panels.scenesShare = PanelSettings::defaultScenesShare; resized(); };
     addAndMakeVisible (scenesSplitHandle);
+    // Barrita entre lo de arriba (decks y centro) y los paneles de abajo: reparte el alto.
+    topHandle.setTooltip ("Arrastra para repartir el alto entre los decks y los paneles de abajo (doble clic: el de siempre)");
+    topHandle.onStart = [this] { dragStartWidth = topShownHeight; };
+    topHandle.onDrag = [this] (int dy) { panels.topHeight = juce::jmax (1, dragStartWidth + dy); resized(); };
+    topHandle.onReset = [this] { panels.topHeight = 0; resized(); };
+    addAndMakeVisible (topHandle);
 
     // Barra de arriba: proyector (menu de monitores), MIDI, atajos y ajustes.
     projectorButton.setTooltip ("Proyectar la salida de video a pantalla completa en un monitor");
@@ -556,7 +562,7 @@ void MainComponent::updateAutoScene()
     pendingAutoKind = 0;
     const auto wanted = kind == 4 ? SceneAuto::youtube : kind == 2 ? SceneAuto::video : kind == 1 ? SceneAuto::audio : SceneAuto::idle;
     for (const auto& scene : videoStage->getScenes().scenes)
-        if (scene.autoWhen == wanted)
+        if (scene.switchesOn (wanted))
         {
             if (scene.id != videoStage->getScenes().currentScene)
                 videoStage->switchToScene (scene.id);
@@ -890,10 +896,13 @@ void MainComponent::resized()
     // Arriba los decks y el centro, con el alto que piden los decks (al ocultar partes de los
     // decks crece lo de abajo); abajo los paneles (si hay alguno a la vista).
     const bool anyBottom = panels.library || panels.automix || panels.scenes || panels.sources;
-    const int deckH = juce::jmax (300, deckViewA.getPreferredHeight());
+    // La barrita de en medio cambia ese alto (0: el que piden los decks).
+    const int deckH = panels.topHeight > 0 ? panels.topHeight : juce::jmax (300, deckViewA.getPreferredHeight());
     auto top = anyBottom ? area.removeFromTop (juce::jlimit (240, juce::jmax (240, area.getHeight() - 160), deckH)) : area;
+    topShownHeight = top.getHeight();
+    topHandle.setVisible (anyBottom);
     if (anyBottom)
-        area.removeFromTop (gap);
+        topHandle.setBounds (area.removeFromTop (gap + 4));
 
     const int deckWidth = juce::jlimit (330, 480, (top.getWidth() - 2 * gap) * 26 / 100);
     deckViewA.setBounds (top.removeFromLeft (deckWidth));
@@ -1060,6 +1069,7 @@ void MainComponent::saveLayout()
     xml.setAttribute ("showTransitions", panels.transitions);
     xml.setAttribute ("autoCrossfader", panels.autoCrossfader);
     xml.setAttribute ("scenesShare", (double) panels.scenesShare);
+    xml.setAttribute ("topHeight", panels.topHeight);
     xml.setAttribute ("showSampler", panels.sampler);
     xml.setAttribute ("deckWaveform", panels.deck.waveform);
     xml.setAttribute ("deckPitch", panels.deck.pitch);
@@ -1088,6 +1098,7 @@ void MainComponent::loadLayout()
     panels.transitions = xml->getBoolAttribute ("showTransitions", true);
     panels.autoCrossfader = xml->getBoolAttribute ("autoCrossfader", true);
     panels.scenesShare = juce::jlimit (0.15f, 0.85f, (float) xml->getDoubleAttribute ("scenesShare", PanelSettings::defaultScenesShare));
+    panels.topHeight = juce::jmax (0, xml->getIntAttribute ("topHeight", 0));
     mixerView.setShowTransitions (panels.transitions);
     panels.sampler = xml->getBoolAttribute ("showSampler", true);
     panels.deck.waveform = xml->getBoolAttribute ("deckWaveform", true);

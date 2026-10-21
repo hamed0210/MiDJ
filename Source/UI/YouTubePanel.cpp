@@ -33,7 +33,7 @@ void YouTubeQueue::save (const juce::File& file) const
 {
     juce::XmlElement xml ("YOUTUBE");
     xml.setAttribute ("quality", quality);
-    xml.setAttribute ("skipAds", skipAds);
+    xml.setAttribute ("autoSkipAds", skipAds);   // (el antiguo "skipAds" venia apagado por defecto)
     for (const auto& v : items)
     {
         auto* e = xml.createNewChildElement ("VIDEO");
@@ -51,7 +51,7 @@ void YouTubeQueue::load (const juce::File& file)
     if (const auto xml = juce::XmlDocument::parse (file))
     {
         quality = xml->getStringAttribute ("quality", "hd720");
-        skipAds = xml->getBoolAttribute ("skipAds", false);
+        skipAds = xml->getBoolAttribute ("autoSkipAds", true);
         for (auto* e : xml->getChildWithTagNameIterator ("VIDEO"))
             items.push_back ({ e->getStringAttribute ("id"), e->getStringAttribute ("title"), e->getStringAttribute ("channel"),
                                e->getDoubleAttribute ("seconds") });
@@ -93,6 +93,16 @@ YouTubePanel::YouTubePanel (YouTubePlayer& p, YouTubeQueue& q) : player (p), que
     settingsButton.setTooltip ("Calidad del video de YouTube y saltar anuncios");
     settingsButton.onClick = [this] { showSettingsMenu(); };
     addAndMakeVisible (settingsButton);
+
+    actionButton.onClick = [this]
+    {
+        const auto state = player.getStatus().state;
+        if (state == YouTubePlayer::State::ad)
+            player.skipAd();
+        else if (state == YouTubePlayer::State::verify || player.isVerifying())
+            player.isVerifying() ? player.hideVerification() : player.showVerification();
+    };
+    addChildComponent (actionButton);
 
     player.addChangeListener (this);
     queue.addChangeListener (this);
@@ -202,6 +212,26 @@ void YouTubePanel::updateButtons()
     nextButton.setEnabled (! queue.getItems().empty());
     clearButton.setEnabled (! queue.getItems().empty());
     settingsButton.setButtonText (YouTubePlayer::qualityName (player.getQuality()) + (player.getSkipAds() ? " | sin anuncios" : ""));
+
+    // Durante un anuncio: saltarlo a mano. Con verificacion: mostrar (u ocultar) la ventana.
+    juce::String action;
+    if (state == YouTubePlayer::State::ad)
+        action = "Saltar anuncio";
+    else if (player.isVerifying())
+        action = "Ocultar ventana";
+    else if (state == YouTubePlayer::State::verify)
+        action = "Resolver verificacion";
+    actionButton.setButtonText (action);
+    actionButton.setTooltip (state == YouTubePlayer::State::ad ? "Saltar el anuncio ahora"
+                             : "YouTube pide demostrar que no eres un robot: se abre su ventana para resolverlo "
+                               "(captcha o iniciar sesion). Al volver a sonar se esconde sola.");
+    actionButton.setColour (juce::TextButton::buttonColourId, state == YouTubePlayer::State::verify && ! player.isVerifying()
+                                                                  ? DarkLookAndFeel::danger : DarkLookAndFeel::raised);
+    if (actionButton.isVisible() != action.isNotEmpty())
+    {
+        actionButton.setVisible (action.isNotEmpty());
+        resized();
+    }
 }
 
 void YouTubePanel::paint (juce::Graphics& g)
@@ -227,7 +257,7 @@ void YouTubePanel::paint (juce::Graphics& g)
     g.setColour (DarkLookAndFeel::text);
     g.setFont (DarkLookAndFeel::sans (13.0f, true));
     g.drawFittedText (player.isOpen() ? v.title : juce::String ("Nada de YouTube sonando"), r.removeFromTop (18), juce::Justification::centredLeft, 1, 0.75f);
-    g.setColour (s.state == YouTubePlayer::State::error ? DarkLookAndFeel::danger
+    g.setColour (s.state == YouTubePlayer::State::error || s.state == YouTubePlayer::State::verify ? DarkLookAndFeel::danger
                  : s.state == YouTubePlayer::State::ad ? DarkLookAndFeel::accentB : DarkLookAndFeel::textQuiet);
     g.setFont (DarkLookAndFeel::sans (11.5f));
     const auto state = s.state == YouTubePlayer::State::ad && player.getSkipAds() ? juce::String ("Saltando el anuncio...") : YouTubePlayer::stateText (s);
@@ -272,7 +302,13 @@ void YouTubePanel::resized()
     controls.removeFromLeft (4);
     stopButton.setBounds (controls.removeFromLeft (36));
     controls.removeFromLeft (8);
-    timeArea = controls.removeFromRight (86);
+    if (actionButton.isVisible())
+    {
+        // En el sitio del tiempo (durante un anuncio o una verificacion no se ve).
+        actionButton.setBounds (controls.removeFromRight (juce::jmin (150, controls.getWidth() / 2)));
+        controls.removeFromRight (6);
+    }
+    timeArea = controls.removeFromRight (actionButton.isVisible() ? 0 : 86);
     volume.setBounds (controls.removeFromLeft (juce::jmin (110, controls.getWidth())));
     r.removeFromTop (6);
     auto bottom = r.removeFromBottom (32);

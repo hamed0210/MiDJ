@@ -54,14 +54,14 @@ namespace
 
 // --- Superficie --------------------------------------------------------------------------------
 
-ProjectorView::ProjectorView (Compositor& c) : compositor (c)
+ProjectorView::ProjectorView (Compositor& c, bool solo) : compositor (c)
 {
     setOpaque (true);
     surface.setInterceptsMouseClicks (false, false);
     if (auto* hwnd = createSurface())
     {
         surface.setHWND (hwnd);
-        compositor.addOutput (hwnd);
+        compositor.addOutput (hwnd, solo);
     }
     addAndMakeVisible (surface);
 }
@@ -666,7 +666,7 @@ void VideoStage::closeProjectors()
 
 void VideoStage::updateRunning()
 {
-    const bool anyOpen = isReady() && (previewShowing || bigPreview != nullptr || ! projectors.empty());
+    const bool anyOpen = isReady() && (previewShowing || bigPreview != nullptr || propertiesWindow != nullptr || ! projectors.empty());
     if (anyOpen == running)
         return;
     running = anyOpen;
@@ -778,6 +778,8 @@ void VideoStage::showMenu()
 void VideoStage::showAddSource()
 {
     propertiesWindow.reset();
+    program.setSoloItem (0);
+    updateRunning();
     addSourceWindow = std::make_unique<AddSourceWindow> (*this);
 }
 
@@ -786,12 +788,25 @@ void VideoStage::showProperties (int itemId)
     if (scenes.findItem (itemId) == nullptr)
         return;
     addSourceWindow.reset();
+    propertiesWindow.reset();
+    program.setSoloItem (itemId);
     propertiesWindow = std::make_unique<SourcePropertiesWindow> (*this, itemId);
+    updateRunning();   // la vista de la fuente se ve aunque no este abierta la pestana VIDEO
 }
 
 void VideoStage::closeDialogs()
 {
     addSourceWindow.reset();
     propertiesWindow.reset();
+    program.setSoloItem (0);
+    updateRunning();
+}
+
+std::unique_ptr<ProjectorView> VideoStage::createSourceView (int itemId)
+{
+    if (! isReady())
+        return nullptr;
+    program.setSoloItem (itemId);
+    return std::make_unique<ProjectorView> (compositor, true);
 }
 }

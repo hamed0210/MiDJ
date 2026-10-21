@@ -24,6 +24,7 @@ private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override { refresh(); }
     void refresh();
     void rename (int sceneId);
+    void editAuto (int sceneId);   // nombre y cambios automaticos de una escena
     void moveCurrent (int delta);
 
     int getNumRows() override;

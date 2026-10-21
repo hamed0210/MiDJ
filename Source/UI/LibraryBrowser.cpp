@@ -295,6 +295,14 @@ LibraryBrowser::LibraryBrowser (Library& l) : library (l)
             lastRemoval.reset();
             showToast ("Restaurado.", false);
         }
+        else if (! lastHidden.isEmpty())
+        {
+            library.setHidden (lastHidden, false);
+            lastHidden.clear();
+            rebuildTree (false);
+            refresh();
+            showToast ("Restaurado.", false);
+        }
     };
     closeToastButton.onClick = [this] { showToast ({}, false); };
     addChildComponent (toastLabel);
@@ -613,7 +621,10 @@ void LibraryBrowser::removeNode (Node& node)
 void LibraryBrowser::showToast (const juce::String& text, bool canUndo)
 {
     if (! canUndo)
+    {
         lastRemoval.reset();
+        lastHidden.clear();
+    }
     toastLabel.setText (text, juce::dontSendNotification);
     const bool show = text.isNotEmpty();
     toastLabel.setVisible (show);
@@ -965,15 +976,12 @@ void LibraryBrowser::paintCell (juce::Graphics& g, int row, int column, int widt
     const auto& t = tracks[(size_t) row];
     if (column == typeCol)
     {
-        // Video, audio o YouTube en una pastilla.
+        if (isYouTube (t))
+            return;   // YouTube: basta con la miniatura
+        // Video o audio en una pastilla.
         const auto chip = juce::Rectangle<float> (6.0f, (float) height / 2.0f - 12.0f, 30.0f, 24.0f);
         g.setColour (DarkLookAndFeel::raised);
         g.fillRoundedRectangle (chip, 5.0f);
-        if (isYouTube (t))
-        {
-            Icons::drawSource (g, chip.reduced (6.0f, 4.0f), SourceType::youtube, juce::Colour (0xffff4e45));
-            return;
-        }
         const bool video = Library::isVideoFile (t.getFile());
         Icons::draw (g, chip.reduced (7.0f, 5.0f), video ? Icons::Glyph::film : Icons::Glyph::note,
                      video ? juce::Colour (0xffd58cf5) : DarkLookAndFeel::textQuiet);
@@ -1193,6 +1201,38 @@ void LibraryBrowser::toggleFavorite (const TrackInfo& track)
     refresh();
 }
 
+void LibraryBrowser::hideTracks (int row)
+{
+    juce::StringArray paths;
+    juce::String name;
+    auto add = [&] (int r)
+    {
+        if (! juce::isPositiveAndBelow (r, (int) tracks.size()) || isYouTube (tracks[(size_t) r]))
+            return;
+        const auto& t = tracks[(size_t) r];
+        paths.addIfNotAlreadyThere (t.path);
+        name = t.title.isNotEmpty() ? t.title : t.getFile().getFileNameWithoutExtension();
+    };
+    if (table.isRowSelected (row))
+    {
+        const auto selected = table.getSelectedRows();
+        for (int k = 0; k < selected.size(); ++k)
+            add (selected[k]);
+    }
+    else
+        add (row);
+    if (paths.isEmpty())
+        return;
+    library.setHidden (paths, true);
+    table.deselectAllRows();
+    rebuildTree (false);   // los numeros de Favoritos, listas...
+    refresh();
+    showToast (paths.size() == 1 ? "Se quito \"" + name + "\" de la biblioteca (el archivo no se borra)."
+                                 : "Se quitaron " + juce::String (paths.size()) + " archivos de la biblioteca (no se borran).",
+               true);
+    lastHidden = paths;   // despues de showToast (que con canUndo no lo borra)
+}
+
 void LibraryBrowser::showTrackMenu (int row)
 {
     if (const auto video = youTubeAt (row))
@@ -1204,7 +1244,7 @@ void LibraryBrowser::showTrackMenu (int row)
         yt.showMenuAsync (juce::PopupMenu::Options());
         return;
     }
-    enum { addToAutomix = 1, playNext, loadA, loadB, prepareStems, favorite, removeFromList, moveUp, moveDown,
+    enum { addToAutomix = 1, playNext, loadA, loadB, prepareStems, favorite, removeFromList, moveUp, moveDown, hide,
            newList = 999, listBase = 1000 };
     juce::PopupMenu menu;
     menu.addItem (favorite, tracks[(size_t) row].favorite ? "Quitar de favoritos" : "Agregar a favoritos");
@@ -1237,6 +1277,9 @@ void LibraryBrowser::showTrackMenu (int row)
         menu.addSeparator();
         menu.addItem (prepareStems, "Preparar stems (voz / instrumental) en segundo plano");
     }
+    menu.addSeparator();
+    const int selectedCount = table.isRowSelected (row) ? table.getNumSelectedRows() : 1;
+    menu.addItem (hide, selectedCount > 1 ? "Quitar de la biblioteca (" + juce::String (selectedCount) + ")" : "Quitar de la biblioteca (Supr)");
     const auto track = tracks[(size_t) row];
     menu.showMenuAsync (juce::PopupMenu::Options(), [this, track, row, playlists] (int r)
     {
@@ -1259,6 +1302,7 @@ void LibraryBrowser::showTrackMenu (int row)
         else if ((r == loadA || r == loadB) && onLoadToDeck)  onLoadToDeck (track, r == loadA ? 0 : 1);
         else if (r == prepareStems && onPrepareStems)          onPrepareStems (track);
         else if (r == favorite)                                toggleFavorite (track);
+        else if (r == hide)                                    hideTracks (row);
     });
 }
 

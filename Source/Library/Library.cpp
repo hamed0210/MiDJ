@@ -631,6 +631,16 @@ void Library::undoRemoval (const Removal& removal)
     sendChangeMessage();
 }
 
+void Library::setHidden (const juce::StringArray& paths, bool hidden)
+{
+    {
+        const juce::ScopedLock sl (lock);
+        for (const auto& path : paths)
+            Statement (db, "UPDATE tracks SET hidden = ? WHERE path = ?").bind (1, (juce::int64) (hidden ? 1 : 0)).bind (2, path).run();
+    }
+    sendChangeMessage();
+}
+
 juce::StringArray Library::getTrackPaths() const
 {
     juce::StringArray result;

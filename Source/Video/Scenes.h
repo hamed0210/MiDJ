@@ -94,7 +94,9 @@ struct SceneItem
 // Cambio automatico de escena: la ventana pasa a esta escena cuando lo que mas se oye de los
 // decks pasa a ser una cancion de solo audio (audio) o un video (video), cuando no suena
 // ningun deck (idle) o cuando suena el reproductor de YouTube (youtube, que manda sobre los decks).
-enum class SceneAuto { none, audio, video, idle, youtube };
+// Una escena puede tener varios a la vez (son bits); cada uno, en una sola escena.
+enum class SceneAuto { none = 0, audio = 1, video = 2, idle = 4, youtube = 8 };
+inline constexpr std::array<SceneAuto, 4> allSceneAutos { SceneAuto::audio, SceneAuto::video, SceneAuto::idle, SceneAuto::youtube };
 
 // La ventana del reproductor de YouTube de MiDJ (la fuente YouTube la captura).
 namespace YouTubeWindow
@@ -108,7 +110,8 @@ struct Scene
     int id = 0;
     juce::String name;
     std::vector<SceneItem> items;   // el primero es el de abajo
-    SceneAuto autoWhen = SceneAuto::none;
+    int autoWhen = 0;               // SceneAuto combinados (0 = nunca)
+    bool switchesOn (SceneAuto when) const { return (autoWhen & (int) when) != 0; }
 };
 
 enum class TransitionType { cut, fade, fadeToBlack, slide, swipe };
@@ -177,6 +180,9 @@ public:
     SceneItem makeItem (SourceType type, int programWidth, int programHeight);
 
     static juce::String typeName (SourceType type);
+    static juce::String autoName (SceneAuto when);   // "Cuando suena una cancion de audio"...
+    // Da a una escena sus cambios automaticos y se los quita a las demas que los tuvieran.
+    void setAuto (int sceneId, int when);
     static juce::String transitionName (TransitionType type);
     static juce::String visualizerName (VisualizerStyle style);
 

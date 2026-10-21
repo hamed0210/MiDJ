@@ -58,6 +58,7 @@ public:
         DeckComponent::Sections deck;
         int automixWidth = defaultAutomixWidth, scenesWidth = defaultScenesWidth;
         float scenesShare = defaultScenesShare;   // parte del alto de la columna para Escenas
+        int topHeight = 0;                        // alto de los decks y el centro (0 = el que piden los decks)
         static constexpr int defaultAutomixWidth = 300, defaultScenesWidth = 280, minWidth = 220, maxWidth = 640;
         static constexpr float defaultScenesShare = 0.45f;
     };
@@ -154,6 +155,8 @@ private:
     // Abajo: biblioteca | automix | escenas y fuentes, con barritas para cambiar el ancho.
     PanelSettings panels;
     ResizeHandle automixHandle, scenesHandle, scenesSplitHandle { true };
+    ResizeHandle topHandle { true };     // entre los decks (arriba) y los paneles de abajo
+    int topShownHeight = 0;              // el alto que tiene ahora lo de arriba (para arrastrar)
     int dragStartWidth = 0;
     float dragStartShare = 0.0f;
     juce::Rectangle<int> scenesColumn;   // para pasar los pixeles arrastrados a una parte del alto

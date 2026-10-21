@@ -6,6 +6,19 @@ namespace
 {
     const char* typeIds[] = { "decks", "deckA", "deckB", "image", "text", "colour", "screen", "window", "visualizer", "media", "captureDevice", "youtube" };
     const char* visualizerIds[] = { "spectrum", "wave", "pulse" };
+
+    const char* autoId (SceneAuto when)
+    {
+        switch (when)
+        {
+            case SceneAuto::audio:   return "audio";
+            case SceneAuto::video:   return "video";
+            case SceneAuto::idle:    return "idle";
+            case SceneAuto::youtube: return "youtube";
+            case SceneAuto::none:
+            default:                 return "";
+        }
+    }
     const char* transitionIds[] = { "cut", "fade", "fadeToBlack", "slide", "swipe" };
     const char* customKindIds[] = { "stinger", "luma", "colour" };
 
@@ -134,6 +147,28 @@ SceneItem SceneCollection::makeItem (SourceType type, int w, int h)
     return item;
 }
 
+juce::String SceneCollection::autoName (SceneAuto when)
+{
+    switch (when)
+    {
+        case SceneAuto::audio:   return "Cuando suena una cancion de audio";
+        case SceneAuto::video:   return "Cuando suena un video";
+        case SceneAuto::idle:    return "Cuando no suena nada";
+        case SceneAuto::youtube: return "Cuando suena YouTube";
+        case SceneAuto::none:
+        default:                 return "Nunca";
+    }
+}
+
+void SceneCollection::setAuto (int sceneId, int when)
+{
+    for (auto& s : scenes)
+        if (s.id == sceneId)
+            s.autoWhen = when;
+        else
+            s.autoWhen &= ~when;   // cada cambio automatico, en una sola escena
+}
+
 juce::String SceneCollection::typeName (SourceType type)
 {
     switch (type)
@@ -203,9 +238,14 @@ std::unique_ptr<juce::XmlElement> SceneCollection::toXml() const
         auto* se = xml->createNewChildElement ("SCENE");
         se->setAttribute ("id", s.id);
         se->setAttribute ("name", s.name);
-        if (s.autoWhen != SceneAuto::none)
-            se->setAttribute ("auto", s.autoWhen == SceneAuto::audio ? "audio" : s.autoWhen == SceneAuto::video ? "video"
-                                    : s.autoWhen == SceneAuto::youtube ? "youtube" : "idle");
+        if (s.autoWhen != 0)
+        {
+            juce::StringArray when;
+            for (auto a : allSceneAutos)
+                if (s.switchesOn (a))
+                    when.add (autoId (a));
+            se->setAttribute ("auto", when.joinIntoString (","));
+        }
         for (const auto& i : s.items)
         {
             auto* e = se->createNewChildElement ("ITEM");
@@ -299,9 +339,10 @@ SceneCollection SceneCollection::fromXml (const juce::XmlElement& xml, int w, in
         Scene s;
         s.id = se->getIntAttribute ("id");
         s.name = se->getStringAttribute ("name", "Escena");
-        const auto when = se->getStringAttribute ("auto");
-        s.autoWhen = when == "audio" ? SceneAuto::audio : when == "video" ? SceneAuto::video
-                   : when == "idle" ? SceneAuto::idle : when == "youtube" ? SceneAuto::youtube : SceneAuto::none;
+        for (const auto& when : juce::StringArray::fromTokens (se->getStringAttribute ("auto"), ",", {}))
+            for (auto a : allSceneAutos)
+                if (when.trim() == autoId (a))
+                    s.autoWhen |= (int) a;
         c.lastId = juce::jmax (c.lastId, s.id);
         for (auto* e : se->getChildWithTagNameIterator ("ITEM"))
         {

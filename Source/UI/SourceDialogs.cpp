@@ -97,7 +97,8 @@ public:
         for (auto* c : std::initializer_list<juce::Component*> { &types, &heading, &hint, &createButton, &existing, &empty,
                                                                    &addExisting, &makeVisible, &closeButton })
             addAndMakeVisible (c);
-        types.selectRow (7);   // Multimedia, como la ultima que se suele anadir
+        // Multimedia, como la ultima que se suele anadir.
+        types.selectRow ((int) (std::find (addableTypes.begin(), addableTypes.end(), SourceType::media) - addableTypes.begin()));
         setSize (860, 560);
     }
 
@@ -388,13 +389,30 @@ public:
     }
 
 private:
-    // La imagen de la fuente, arriba (como la vista de la ventana de propiedades de OBS).
+    // La imagen de la fuente, arriba (como la vista de la ventana de propiedades de OBS): la
+    // compone el compositor (asi se ven tambien el video que se decodifica en la tarjeta grafica
+    // y las capturas). Sin Direct3D, lo que se pueda dibujar aqui.
     struct Preview : public juce::Component
     {
-        explicit Preview (Content& c) : owner (c) {}
+        explicit Preview (Content& c) : owner (c)
+        {
+            view = owner.stage.createSourceView (owner.itemId);
+            if (view != nullptr)
+            {
+                view->onRightClick = [] (const juce::MouseEvent&) {};
+                addAndMakeVisible (*view);
+            }
+        }
+        void resized() override
+        {
+            if (view != nullptr)
+                view->setBounds (getLocalBounds());
+        }
         void paint (juce::Graphics& g) override
         {
             g.fillAll (juce::Colours::black);
+            if (view != nullptr)
+                return;
             auto r = getLocalBounds().toFloat();
             juce::Image image;
             if (auto source = owner.stage.getProgram().frameSourceFor (owner.itemId))
@@ -415,6 +433,7 @@ private:
                         r.withTrimmedTop (r.getHeight() * 0.5f + 24.0f), juce::Justification::centredTop, true);
         }
         Content& owner;
+        std::unique_ptr<ProjectorView> view;
     };
 
     // Filas "etiqueta: control" con la etiqueta a la derecha, como las propiedades de OBS.
@@ -497,7 +516,8 @@ private:
 
     bool hasPreview() const
     {
-        return type == SourceType::media || type == SourceType::captureDevice || type == SourceType::image;
+        // Con el compositor se ven todas; sin el, solo las que tienen imagen en la memoria normal.
+        return preview.view != nullptr || type == SourceType::media || type == SourceType::captureDevice || type == SourceType::image;
     }
 
     template <typename C, typename... Args>
@@ -1029,7 +1049,7 @@ private:
     {
         if (transportLayout) transportLayout();
         if (buttonsLayout) buttonsLayout();
-        if (hasPreview())
+        if (hasPreview() && preview.view == nullptr)
             preview.repaint();
         if (statusLabel == nullptr)
             return;

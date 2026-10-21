@@ -47,9 +47,25 @@ namespace
     #movie_player .html5-video-container video {
       position: fixed !important; inset: 0 !important; width: 100vw !important; height: 100vh !important;
       object-fit: contain !important; left: 0 !important; top: 0 !important; }`;
+  const onYouTube = /(^|\.)youtube\.com$/.test(location.hostname);
+  let verifying = false;   // la ventana esta a la vista para que el usuario resuelva una verificacion
   const addCss = () => {
-    if (document.getElementById('midj-css') || !document.head) return;
+    const old = document.getElementById('midj-css');
+    if (verifying || !onYouTube) { if (old) old.remove(); return; }   // la pagina tal cual
+    if (old || !document.head) return;
     const s = document.createElement('style'); s.id = 'midj-css'; s.textContent = css; document.head.appendChild(s);
+  };
+  // Google pide demostrar que no es un robot (pagina /sorry con reCAPTCHA) o YouTube pide iniciar
+  // sesion "para confirmar que no eres un bot": eso lo tiene que resolver una persona.
+  const captchaPage = () => (/(^|\.)google\.[a-z.]+$/.test(location.hostname) && location.pathname.startsWith('/sorry'))
+    || !!document.querySelector('#captcha-form, iframe[src*="recaptcha"]');
+  const botCheck = /\bbot\b|robot/i;
+  const skipSelector = '.ytp-skip-ad-button, .ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-ad-skip-button-container button, '
+    + '.videoAdUiSkipButton, button[id^="skip-button"], .ytp-ad-overlay-close-button';
+  // Saltar el anuncio que se ve: el boton Omitir si esta; si no, sin sonido y al final.
+  const skipNow = (v) => {
+    document.querySelectorAll(skipSelector).forEach((b) => { try { b.click(); } catch (e) {} });
+    try { v.muted = true; v.playbackRate = 16; if (isFinite(v.duration) && v.duration > 0 && v.currentTime < v.duration - 0.3) v.currentTime = v.duration - 0.1; } catch (e) {}
   };
   document.addEventListener('DOMContentLoaded', addCss);
 
@@ -71,12 +87,10 @@ namespace
     let state = 'opening';
     if (p && v) {
       const now = performance.now();
-      // Saltar anuncios (si MiDJ lo pide): el boton Omitir si esta; si no, sin sonido y al final.
+      // Saltar anuncios (si MiDJ lo pide).
       if (ad && skipAds) {
         inAd = true;
-        const skip = document.querySelector('.ytp-skip-ad-button, .ytp-ad-skip-button, .ytp-ad-skip-button-modern, .videoAdUiSkipButton');
-        if (skip) { try { skip.click(); } catch (e) {} }
-        try { v.muted = true; v.playbackRate = 16; if (isFinite(v.duration) && v.duration > 0 && v.currentTime < v.duration - 0.3) v.currentTime = v.duration - 0.1; } catch (e) {}
+        skipNow(v);
       } else if (inAd && !ad) {
         inAd = false;   // termino el anuncio: velocidad y sonido normales
         try { v.playbackRate = 1; v.muted = false; } catch (e) {}
@@ -110,7 +124,9 @@ namespace
     }
     const errEl = document.querySelector('.ytp-error-content-wrap-reason, yt-playability-error-supported-renderers #reason, .ytp-error');
     const err = errEl ? errEl.innerText.trim().slice(0, 200) : '';
-    if (err && !finished) state = 'error';
+    if (err && !finished) state = botCheck.test(err) ? 'verify' : 'error';
+    // La pagina de Google no es la del video (otro id): se avisa aparte.
+    if (captchaPage()) { post({ captcha: true }); return; }
     post({ id: pageId, state, err, t: v ? v.currentTime : 0, d: v && !ad && isFinite(v.duration) ? v.duration : 0 });
   }, 250);
 
@@ -119,7 +135,13 @@ namespace
     const m = e.data;
     if (m.cmd === 'volume') { wantedVolume = m.value; return; }
     if (m.cmd === 'settings') { wantedQuality = m.quality || 'auto'; skipAds = !!m.skipAds; return; }
+    if (m.cmd === 'verifying') { verifying = !!m.value; addCss(); return; }
     if (!p) return;
+    if (m.cmd === 'skipAd') {
+      const v = document.querySelector('#movie_player video');
+      if (v && p.classList.contains('ad-showing')) { inAd = true; skipNow(v); }
+      return;
+    }
     try {
       if (m.cmd === 'play') { userPaused = false; if (!finished) p.playVideo(); }
       else if (m.cmd === 'pause') { userPaused = true; p.pauseVideo(); }
@@ -186,8 +208,47 @@ struct YouTubePlayer::Impl
             ShowWindow (window, SW_SHOWNOACTIVATE);
     }
 
+    bool verifying = false;   // la ventana esta a la vista para resolver una verificacion
+
+    // Poner la ventana en el centro de la pantalla principal (con barra de titulo, sin cerrar:
+    // cerrarla la destruiria) o devolverla fuera de las pantallas a su tamano de captura.
+    void placeWindow (bool visible, int width, int height)
+    {
+        if (window == nullptr)
+            return;
+        RECT work {};
+        SystemParametersInfoW (SPI_GETWORKAREA, 0, &work, 0);
+        const DWORD style = visible ? (WS_POPUP | WS_CAPTION | WS_VISIBLE) : (WS_POPUP | WS_VISIBLE);
+        SetWindowLongPtrW (window, GWL_STYLE, (LONG_PTR) style);
+        RECT client { 0, 0, visible ? juce::jmin (1100, (int) (work.right - work.left) - 80) : width,
+                            visible ? juce::jmin (800, (int) (work.bottom - work.top) - 80) : height };
+        RECT frame = client;
+        AdjustWindowRectEx (&frame, style, FALSE, 0);
+        const int fw = frame.right - frame.left, fh = frame.bottom - frame.top;
+        const auto off = offscreenPosition();
+        const int x = visible ? (int) (work.left + work.right - fw) / 2 : off.x;
+        const int y = visible ? (int) (work.top + work.bottom - fh) / 2 : off.y;
+        SetWindowPos (window, visible ? HWND_TOPMOST : HWND_NOTOPMOST, x, y, fw, fh,
+                      SWP_FRAMECHANGED | SWP_SHOWWINDOW | (visible ? 0 : SWP_NOACTIVATE));
+        if (visible)
+        {
+            SetForegroundWindow (window);
+            // Encima solo al aparecer: luego se puede pasar a MiDJ.
+            SetWindowPos (window, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+        if (controller != nullptr)
+        {
+            RECT rc { 0, 0, client.right, client.bottom };
+            controller->put_Bounds (rc);
+            if (visible)
+                controller->MoveFocus (COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+        }
+        verifying = visible;
+    }
+
     void destroyWindow()
     {
+        verifying = false;
         if (controller != nullptr)
             controller->Close();
         controller.Reset();
@@ -215,6 +276,7 @@ YouTubePlayer::State YouTubePlayer::stateFromText (const juce::String& s)
     if (s == "paused")  return State::paused;
     if (s == "ended")   return State::ended;
     if (s == "error")   return State::error;
+    if (s == "verify")  return State::verify;
     return State::opening;
 }
 
@@ -222,6 +284,7 @@ juce::String YouTubePlayer::stateText (const Status& s)
 {
     switch (s.state)
     {
+        case State::verify:  return "YouTube pide verificar que no eres un robot";
         case State::closed:  return "Sin video";
         case State::opening: return "Cargando...";
         case State::ad:      return "Anuncio";
@@ -346,6 +409,13 @@ void YouTubePlayer::open (const YouTubeVideo& v)
 void YouTubePlayer::handleMessage (const juce::String& json)
 {
     const auto v = juce::JSON::parse (json);
+    // La pagina de Google con el captcha (no es la del video): hay que resolverlo a mano.
+    if (v.isObject() && (bool) v["captcha"] && status.state != State::closed)
+    {
+        status.error = {};
+        setState (State::verify);
+        return;
+    }
     // Solo los avisos de la pagina del video pedido: los de la anterior siguen llegando un rato
     // (su "termino" saltaba otro video de la lista, y otro, hasta el ultimo).
     if (! v.isObject() || status.state == State::closed || v["id"].toString() != video.id + "|" + juce::String (impl->loadCount))
@@ -356,6 +426,9 @@ void YouTubePlayer::handleMessage (const juce::String& json)
     if ((double) v["d"] > 0.0)
         status.duration = (double) v["d"];
     status.error = v["err"].toString();
+    // Resuelta la verificacion (el video ya carga o suena): la ventana vuelve fuera de las pantallas.
+    if (impl->verifying && (newState == State::playing || newState == State::ad))
+        hideVerification();
     if (newState != previous)
     {
         status.state = newState;
@@ -375,6 +448,28 @@ void YouTubePlayer::send (const juce::String& json)
     if (impl->webView != nullptr)
         impl->webView->PostWebMessageAsJson (wide (json).c_str());
 }
+
+void YouTubePlayer::showVerification()
+{
+    if (impl->window == nullptr)
+        return;
+    impl->placeWindow (true, width, height);
+    send ("{\"cmd\":\"verifying\",\"value\":true}");
+    sendChangeMessage();
+}
+
+void YouTubePlayer::hideVerification()
+{
+    if (! impl->verifying)
+        return;
+    impl->placeWindow (false, width, height);
+    send ("{\"cmd\":\"verifying\",\"value\":false}");
+    sendChangeMessage();
+}
+
+bool YouTubePlayer::isVerifying() const { return impl->verifying; }
+
+void YouTubePlayer::skipAd() { send ("{\"cmd\":\"skipAd\"}"); }
 
 void YouTubePlayer::play()       { send ("{\"cmd\":\"play\"}"); }
 void YouTubePlayer::pause()      { send ("{\"cmd\":\"pause\"}"); }

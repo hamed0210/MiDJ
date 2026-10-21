@@ -14,7 +14,8 @@ namespace midj
 class ProjectorView : public juce::Component
 {
 public:
-    explicit ProjectorView (Compositor& compositor);
+    // solo: muestra el elemento solo del programa (la vista de las propiedades), no el programa.
+    explicit ProjectorView (Compositor& compositor, bool solo = false);
     ~ProjectorView() override;
 
     std::function<void()> onDoubleClick;
@@ -104,6 +105,8 @@ public:
     void showAddSource();
     void showProperties (int itemId);
     void closeDialogs();
+    // La vista de la fuente de un elemento sola (para su ventana de propiedades).
+    std::unique_ptr<ProjectorView> createSourceView (int itemId);
 
     // Atajos de la vista previa (Supr, flechas).
     bool previewKey (const juce::KeyPress& key);

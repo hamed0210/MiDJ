@@ -100,6 +100,7 @@ float4 psCopy (VsOut i) : SV_Target
         ComPtr<ID3D11RenderTargetView> target;
         int width = 0, height = 0;
         bool failed = false;
+        bool solo = false;   // muestra la textura 'solo' en vez del programa
         std::vector<Compositor::Quad> overlay;
     };
 
@@ -142,6 +143,7 @@ struct Compositor::Impl
 
     RenderTexture program;
     std::array<RenderTexture, 2> sceneTextures;   // escenas de una transicion
+    RenderTexture soloTexture;                    // la vista de una fuente (salidas 'solo')
     ComPtr<ID3D11Texture2D> staging;
     ComPtr<ID3D11ShaderResourceView> overlayColour;   // 1x1 del color de la seleccion
 
@@ -224,7 +226,8 @@ struct Compositor::Impl
         if (FAILED (hr = device->CreateRasterizerState (&rd, &rasterizer)))
             return fail ("CreateRasterizerState", hr);
 
-        if (! createRenderTexture (program) || ! createRenderTexture (sceneTextures[0]) || ! createRenderTexture (sceneTextures[1]))
+        if (! createRenderTexture (program) || ! createRenderTexture (sceneTextures[0]) || ! createRenderTexture (sceneTextures[1])
+            || ! createRenderTexture (soloTexture))
             return false;
 
         // Color de la seleccion de la vista previa (rojo, como OBS).
@@ -527,7 +530,7 @@ struct Compositor::Impl
             const float ow = (float) out.width, oh = (float) out.height;
             setViewport (ow, oh);
             const auto area = fitInside ((float) settings.width, (float) settings.height, { ow, oh });
-            draw (program.srgbView.Get(), copyShader.Get(), corners (area, 0.0f), ow, oh, { 0.0f, 0.0f, 1.0f, 1.0f }, 1.0f);
+            draw ((out.solo ? soloTexture : program).srgbView.Get(), copyShader.Get(), corners (area, 0.0f), ow, oh, { 0.0f, 0.0f, 1.0f, 1.0f }, 1.0f);
             if (! out.overlay.empty())
                 drawOverlay (out, area);
             ID3D11ShaderResourceView* none = nullptr;
@@ -629,6 +632,12 @@ struct Compositor::Impl
         return true;
     }
 
+    bool hasSoloOutput()
+    {
+        const std::lock_guard<std::mutex> sl (outputsLock);
+        return std::any_of (outputs.begin(), outputs.end(), [] (const Output& o) { return o.solo; });
+    }
+
     void renderFrame (const Frame& frame)
     {
         const std::lock_guard<std::mutex> sl (gpuLock);
@@ -637,7 +646,7 @@ struct Compositor::Impl
             slot.used = false;
         pictures.clear();
         // Primero se ponen al dia las capturas (copian en sus texturas), luego se compone.
-        for (const auto* list : { &frame.scenes[0], &frame.scenes[1], &frame.layers })
+        for (const auto* list : { &frame.scenes[0], &frame.scenes[1], &frame.layers, &frame.solo })
             for (const auto& layer : *list)
                 if (layer.gpu != nullptr)
                     picture (*layer.gpu);
@@ -645,6 +654,8 @@ struct Compositor::Impl
             if (frame.useScene[s])
                 compose (sceneTextures[s], frame.scenes[s]);
         compose (program, frame.layers);
+        if (hasSoloOutput())
+            compose (soloTexture, frame.solo);
         // Las texturas de capas que ya no estan se sueltan (p. ej. al quitar un video).
         for (auto it = slots.begin(); it != slots.end();)
             it = it->second.used ? std::next (it) : slots.erase (it);
@@ -753,7 +764,7 @@ void Compositor::stop()
 
 bool Compositor::isRunning() const { return impl->running.load(); }
 
-void Compositor::addOutput (void* hwnd)
+void Compositor::addOutput (void* hwnd, bool solo)
 {
     const std::lock_guard<std::mutex> sl (impl->outputsLock);
     for (const auto& out : impl->outputs)
@@ -761,6 +772,7 @@ void Compositor::addOutput (void* hwnd)
             return;
     Output out;
     out.hwnd = (HWND) hwnd;
+    out.solo = solo;
     impl->outputs.push_back (std::move (out));
 }
 

@@ -1,4 +1,5 @@
 #include "UI/YouTubeThumbnails.h"
+#include "UI/Icons.h"
 
 namespace midj
 {
@@ -32,7 +33,18 @@ juce::Image YouTubeThumbnails::get (const juce::String& videoId)
             if (data.getSize() > 0)
                 image = juce::ImageFileFormat::loadFrom (data.getData(), data.getSize());
             if (image.isValid())
-                image = image.rescaled (160, 90, juce::Graphics::mediumResamplingQuality);
+            {
+                // En la memoria normal (no Direct2D): en este hilo, la primera reescalada en la
+                // tarjeta grafica salia negra.
+                const auto source = juce::SoftwareImageType().convert (image);
+                juce::Image small (juce::Image::RGB, 160, 90, true, juce::SoftwareImageType());
+                {
+                    juce::Graphics g (small);
+                    g.setImageResamplingQuality (juce::Graphics::mediumResamplingQuality);
+                    g.drawImage (source, 0, 0, 160, 90, 0, 0, source.getWidth(), source.getHeight());
+                }
+                image = small;
+            }
             juce::MessageManager::callAsync ([this, flag, videoId, image]
             {
                 if (flag.expired() || ! *flag.lock() || ! image.isValid())
@@ -54,6 +66,14 @@ void YouTubeThumbnails::draw (juce::Graphics& g, const juce::Image& image, juce:
     g.setColour (juce::Colours::black);
     g.fillRect (area);
     if (image.isValid())
+    {
         g.drawImage (image, area, juce::RectanglePlacement::centred | juce::RectanglePlacement::fillDestination);
+        return;
+    }
+    // Sin miniatura (aun no llega o no se pudo bajar): el logo de YouTube.
+    g.setColour (juce::Colour (0xff1d1d22));
+    g.fillRect (area);
+    const float size = juce::jmin (area.getHeight() * 0.55f, area.getWidth() * 0.45f);
+    Icons::drawSource (g, area.withSizeKeepingCentre (size, size), SourceType::youtube, juce::Colour (0xffff4e45));
 }
 }

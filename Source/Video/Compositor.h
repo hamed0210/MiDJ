@@ -72,12 +72,14 @@ public:
         std::array<std::vector<Layer>, 2> scenes;   // se componen antes en las texturas de escena 0 y 1
         std::array<bool, 2> useScene {};            // (solo las que se usan en una transicion)
         std::vector<Layer> layers;                  // el programa
+        std::vector<Layer> solo;                    // lo que ven las salidas "solo" (la vista de una fuente)
 
         void clear()
         {
             for (auto& s : scenes) s.clear();
             useScene = {};
             layers.clear();
+            solo.clear();
         }
     };
 
@@ -122,8 +124,9 @@ public:
     bool isRunning() const;
 
     // Una salida: una ventana de Windows (HWND) donde se dibuja el programa encajado con bandas
-    // negras. Cualquier hilo; la ventana debe vivir hasta removeOutput.
-    void addOutput (void* hwnd);
+    // negras. Cualquier hilo; la ventana debe vivir hasta removeOutput. solo: en vez del programa
+    // muestra las capas 'solo' del fotograma (la vista de una fuente en sus propiedades).
+    void addOutput (void* hwnd, bool solo = false);
     void removeOutput (void* hwnd);
     int getNumOutputs() const;
     // Recuadros que se dibujan encima del programa solo en esa salida (la seleccion de la vista previa).

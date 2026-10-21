@@ -64,6 +64,9 @@ public:
     // Lo contrario: lo quitado de esa carpeta (o de una que la contiene) vuelve, sin anadirla
     // como carpeta de la biblioteca (para las que ya estan dentro de otra).
     void includeFolder (const juce::File& folder);
+    // Quitar (u ocultar de nuevo) canciones o videos sueltos: no se borra el archivo ni su analisis,
+    // pero no se ven en ningun sitio (ni en favoritos ni en las listas) y no vuelven al re-escanear.
+    void setHidden (const juce::StringArray& paths, bool hidden);
 
     // Duracion de lo que se ve (para que no entren sonidos de juegos, avisos o notas de voz):
     // minimo y maximo en segundos para musica y para video (0 = sin limite). Lo que queda fuera

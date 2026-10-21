@@ -500,6 +500,45 @@ void VideoProgram::sceneLayers (const PreparedScene& scene, std::vector<Composit
     }
 }
 
+void VideoProgram::soloLayers (const std::vector<PreparedScene>& scenes, int itemId, std::vector<Compositor::Layer>& layers)
+{
+    for (const auto& s : scenes)
+        for (const auto& p : s.items)
+        {
+            if (p.item.id != itemId)
+                continue;
+            // La fuente entera: visible, sin recorte, sin giro, a su tamano natural...
+            PreparedScene alone;
+            auto& copy = alone.items.emplace_back (p);
+            copy.item.visible = true;
+            copy.item.opacity = 1.0f;
+            copy.item.rotation = 0.0f;
+            copy.item.position = {};
+            copy.item.scaleX = copy.item.scaleY = 1.0f;
+            copy.item.cropLeft = copy.item.cropTop = copy.item.cropRight = copy.item.cropBottom = 0.0f;
+            const auto first = layers.size();
+            sceneLayers (alone, layers);
+            if (layers.size() == first)
+                return;
+            // ...y luego encajada sin deformar en todo el programa.
+            auto bounds = layers[first].area;
+            for (auto k = first; k < layers.size(); ++k)
+                bounds = bounds.getUnion (layers[k].area);
+            const auto fitted = Compositor::fitInside (bounds.getWidth(), bounds.getHeight(), { 0.0f, 0.0f, (float) width, (float) height });
+            if (fitted.isEmpty())
+                return;
+            const float scale = fitted.getWidth() / bounds.getWidth();
+            for (auto k = first; k < layers.size(); ++k)
+            {
+                auto& a = layers[k].area;
+                a = { fitted.getX() + (a.getX() - bounds.getX()) * scale, fitted.getY() + (a.getY() - bounds.getY()) * scale,
+                      a.getWidth() * scale, a.getHeight() * scale };
+                layers[k].transform = {};
+            }
+            return;
+        }
+}
+
 void VideoProgram::buildFrame (Compositor::Frame& frame)
 {
     std::shared_ptr<const std::vector<PreparedScene>> scenes;
@@ -536,6 +575,9 @@ void VideoProgram::buildFrame (Compositor::Frame& frame)
     }
     if (scenes == nullptr)
         return;
+    visualizersSeen.clear();
+    if (const int solo = soloItem.load(); solo != 0)
+        soloLayers (*scenes, solo, frame.solo);
     auto find = [&] (int id) -> const PreparedScene*
     {
         for (const auto& s : *scenes)
@@ -547,7 +589,6 @@ void VideoProgram::buildFrame (Compositor::Frame& frame)
     const auto* outgoing = inTransition ? find (prev) : nullptr;
     if (incoming == nullptr)
         return;
-    visualizersSeen.clear();
     if (outgoing == nullptr)
     {
         sceneLayers (*incoming, frame.layers);

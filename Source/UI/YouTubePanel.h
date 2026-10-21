@@ -30,7 +30,7 @@ public:
 
     // Ajustes del reproductor que se guardan con la lista: calidad y saltar anuncios.
     juce::String quality { "hd720" };
-    bool skipAds = false;
+    bool skipAds = true;
 
 private:
     std::vector<YouTubeVideo> items;
@@ -77,6 +77,7 @@ private:
                clearButton { Icons::Glyph::trash, "Vaciar la lista de YouTube" };
     juce::Slider volume;
     juce::TextButton settingsButton;   // "720p": calidad y saltar anuncios
+    juce::TextButton actionButton;     // "Saltar anuncio" o "Resolver verificacion", segun el estado
     juce::SharedResourcePointer<YouTubeThumbnails> thumbnails;
     juce::Rectangle<int> nowArea, progressArea, timeArea;
     bool errorPending = false;

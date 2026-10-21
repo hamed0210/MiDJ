@@ -90,6 +90,8 @@ private:
     static Automix::Item itemFor (const TrackInfo& t) { return { t.getFile(), t.title, t.artist, t.bpm }; }
     void showTrackMenu (int row);
     void toggleFavorite (const TrackInfo& track);
+    // Quitar de la biblioteca las filas elegidas (o 'row' si no esta entre ellas), con Deshacer.
+    void hideTracks (int row);
     // Listas de reproduccion: menu de la carpeta "Listas" (id 0) o de una lista; anadir canciones.
     void showPlaylistMenu (juce::int64 id, const juce::String& name);
     void addToPlaylist (juce::int64 id, const juce::File& file);
@@ -109,6 +111,7 @@ private:
     void cellDoubleClicked (int row, int column, const juce::MouseEvent&) override;
     void cellClicked (int row, int column, const juce::MouseEvent&) override;
     void returnKeyPressed (int row) override;
+    void deleteKeyPressed (int row) override { hideTracks (row); }
     juce::var getDragSourceDescription (const juce::SparseSet<int>& rows) override;
     juce::String getCellTooltip (int row, int column) override;   // el titulo y el artista enteros
 
@@ -140,6 +143,7 @@ private:
     juce::TextButton undoButton { "Deshacer" };
     IconButton closeToastButton { Icons::Glyph::close, "Cerrar el aviso" };
     std::optional<Library::Removal> lastRemoval;
+    juce::StringArray lastHidden;         // canciones quitadas sueltas (para Deshacer)
     juce::uint32 toastShownAt = 0;
 
     // Sincronizacion en marcha.

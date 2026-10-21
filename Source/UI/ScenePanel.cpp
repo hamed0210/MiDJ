@@ -46,6 +46,126 @@ namespace
                 done (name);
         }), true);
     }
+
+    // Dialogo de una escena: su nombre y cuando pasar a ella sola (varios a la vez). Nada cambia
+    // hasta Aceptar; Cancelar (o Esc) lo deja todo como estaba.
+    class SceneEditor : public juce::Component
+    {
+    public:
+        using Done = std::function<void (const juce::String& name, int autoWhen)>;
+
+        SceneEditor (const juce::String& name, int autoWhen, const juce::String& acceptText, Done d) : done (std::move (d))
+        {
+            for (auto* l : { &nameLabel, &autoLabel })
+            {
+                l->setFont (DarkLookAndFeel::sans (14.0f, false));
+                l->setColour (juce::Label::textColourId, DarkLookAndFeel::text);
+            }
+            hint.setFont (juce::FontOptions (12.5f));
+            hint.setColour (juce::Label::textColourId, DarkLookAndFeel::textQuiet);
+            nameEditor.setText (name, false);
+            nameEditor.setSelectAllWhenFocused (true);
+            nameEditor.onReturnKey = [this] { accept(); };
+            nameEditor.onEscapeKey = [this] { close(); };
+            nameEditor.onTextChange = [this] { acceptButton.setEnabled (nameEditor.getText().trim().isNotEmpty()); };
+            for (size_t k = 0; k < allSceneAutos.size(); ++k)
+            {
+                toggles[k].setButtonText (SceneCollection::autoName (allSceneAutos[k]));
+                toggles[k].setToggleState ((autoWhen & (int) allSceneAutos[k]) != 0, juce::dontSendNotification);
+                addAndMakeVisible (toggles[k]);
+            }
+            acceptButton.setButtonText (acceptText);
+            acceptButton.onClick = [this] { accept(); };
+            cancelButton.onClick = [this] { close(); };
+            for (auto* c : std::initializer_list<juce::Component*> { &nameLabel, &nameEditor, &autoLabel, &hint, &acceptButton, &cancelButton })
+                addAndMakeVisible (c);
+            setWantsKeyboardFocus (true);
+            setSize (420, 300);
+        }
+
+        // Con la ventana ya delante: escribir el nombre sin tener que hacer clic.
+        void focusName()
+        {
+            nameEditor.grabKeyboardFocus();
+            nameEditor.selectAll();
+        }
+
+        void paint (juce::Graphics& g) override { g.fillAll (DarkLookAndFeel::panel); }
+
+        void resized() override
+        {
+            auto r = getLocalBounds().reduced (16, 14);
+            nameLabel.setBounds (r.removeFromTop (20));
+            r.removeFromTop (4);
+            nameEditor.setBounds (r.removeFromTop (28));
+            r.removeFromTop (14);
+            autoLabel.setBounds (r.removeFromTop (20));
+            for (auto& t : toggles)
+                t.setBounds (r.removeFromTop (26));
+            hint.setBounds (r.removeFromTop (20));
+            auto bar = r.removeFromBottom (30);
+            cancelButton.setBounds (bar.removeFromRight (100));
+            bar.removeFromRight (8);
+            acceptButton.setBounds (bar.removeFromRight (100));
+        }
+
+        bool keyPressed (const juce::KeyPress& key) override
+        {
+            if (key == juce::KeyPress::escapeKey) { close(); return true; }
+            if (key == juce::KeyPress::returnKey) { accept(); return true; }
+            return false;
+        }
+
+    private:
+        void accept()
+        {
+            const auto name = nameEditor.getText().trim();
+            if (name.isEmpty())
+                return;
+            int when = 0;
+            for (size_t k = 0; k < allSceneAutos.size(); ++k)
+                if (toggles[k].getToggleState())
+                    when |= (int) allSceneAutos[k];
+            auto callback = done;   // el dialogo se borra al cerrarse
+            close();
+            callback (name, when);
+        }
+
+        void close()
+        {
+            if (auto* window = findParentComponentOfClass<juce::DialogWindow>())
+                window->exitModalState (0);   // se borra sola
+        }
+
+        Done done;
+        juce::Label nameLabel { {}, "Nombre de la escena" }, autoLabel { {}, "Pasar a esta escena automaticamente:" },
+                    hint { {}, "Si otra escena ya tenia alguno de estos, se le quita." };
+        juce::TextEditor nameEditor;
+        std::array<juce::ToggleButton, allSceneAutos.size()> toggles;
+        juce::TextButton acceptButton, cancelButton { "Cancelar" };
+    };
+
+    void editScene (juce::Component* parent, const juce::String& title, const juce::String& name, int autoWhen,
+                    const juce::String& acceptText, SceneEditor::Done done)
+    {
+        juce::DialogWindow::LaunchOptions options;
+        auto* editor = new SceneEditor (name, autoWhen, acceptText, std::move (done));
+        options.content.setOwned (editor);
+        options.dialogTitle = title;
+        options.dialogBackgroundColour = DarkLookAndFeel::panel;
+        options.componentToCentreAround = parent;
+        options.escapeKeyTriggersCloseButton = true;
+        options.useNativeTitleBar = true;
+        options.resizable = false;
+        if (auto* window = options.launchAsync())
+        {
+            window->toFront (true);
+            juce::Timer::callAfterDelay (60, [safe = juce::Component::SafePointer<SceneEditor> (editor)]
+            {
+                if (safe != nullptr) safe->focusName();
+            });
+        }
+    }
 }
 
 // --- Escenas ---------------------------------------------------------------------------------
@@ -60,12 +180,18 @@ ScenesPanel::ScenesPanel (VideoStage& s) : stage (s)
 
     addButton.onClick = [this]
     {
-        auto& scenes = stage.getScenes();
-        auto& scene = scenes.addScene ("Escena " + juce::String (scenes.scenes.size()));
-        scene.items.push_back (scenes.makeItem (SourceType::decks, stage.getProgramWidth(), stage.getProgramHeight()));
-        const int id = scene.id;
-        stage.scenesChanged();
-        stage.switchToScene (id);
+        // Primero el nombre (y si se quiere, cuando pasar a ella); la escena se crea al aceptar.
+        editScene (this, "Nueva escena", "Escena " + juce::String (stage.getScenes().scenes.size() + 1), 0, "Anadir",
+                   [this] (const juce::String& name, int autoWhen)
+        {
+            auto& scenes = stage.getScenes();
+            auto& scene = scenes.addScene (name);
+            scene.items.push_back (scenes.makeItem (SourceType::decks, stage.getProgramWidth(), stage.getProgramHeight()));
+            const int id = scene.id;
+            scenes.setAuto (id, autoWhen);
+            stage.scenesChanged();
+            stage.switchToScene (id);
+        });
     };
     removeButton.onClick = [this] { removeCurrent(); };
     renameButton.onClick = [this] { rename (stage.getScenes().currentScene); };
@@ -122,6 +248,23 @@ void ScenesPanel::rename (int sceneId)
     });
 }
 
+void ScenesPanel::editAuto (int sceneId)
+{
+    auto* scene = stage.getScenes().findScene (sceneId);
+    if (scene == nullptr)
+        return;
+    editScene (this, "Escena '" + scene->name + "'", scene->name, scene->autoWhen, "Aceptar",
+               [this, sceneId] (const juce::String& name, int autoWhen)
+    {
+        if (auto* sc = stage.getScenes().findScene (sceneId))
+        {
+            sc->name = name;
+            stage.getScenes().setAuto (sceneId, autoWhen);
+            stage.scenesChanged();
+        }
+    });
+}
+
 void ScenesPanel::moveCurrent (int delta)
 {
     auto& all = stage.getScenes().scenes;
@@ -162,13 +305,19 @@ void ScenesPanel::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bo
     g.fillEllipse (juce::Rectangle<float> (8.0f, 8.0f).withCentre ({ 14.0f, h * 0.5f }));
     g.setColour (onAir ? juce::Colours::white : DarkLookAndFeel::text.withAlpha (0.85f));
     g.setFont (DarkLookAndFeel::sans (14.0f, onAir));
-    const int autoW = scene.autoWhen != SceneAuto::none ? 22 : 0;
+    int autoCount = 0;
+    for (auto a : allSceneAutos)
+        autoCount += scene.switchesOn (a) ? 1 : 0;
+    const int autoW = autoCount * 18 + (autoCount > 0 ? 4 : 0);
     g.drawText (scene.name, 26, 0, w - 74 - autoW, h, juce::Justification::centredLeft, true);
-    // Cambio automatico: nota (audio), pelicula (video) o pausa (no suena nada).
-    if (autoW > 0)
+    // Cambios automaticos: nota (audio), pelicula (video), pausa (no suena nada) o YouTube.
+    float x = (float) (w - 54 - autoW);
+    for (auto when : allSceneAutos)
     {
-        const auto when = scene.autoWhen;
-        const auto iconArea = juce::Rectangle<float> ((float) (w - 70), 0.0f, 16.0f, (float) h).withSizeKeepingCentre (13.0f, 13.0f);
+        if (! scene.switchesOn (when))
+            continue;
+        const auto iconArea = juce::Rectangle<float> (x, 0.0f, 18.0f, (float) h).withSizeKeepingCentre (13.0f, 13.0f);
+        x += 18.0f;
         if (when == SceneAuto::youtube)
             Icons::drawSource (g, iconArea, SourceType::youtube, juce::Colour (0xffff4e45));
         else
@@ -212,25 +361,9 @@ void ScenesPanel::listBoxItemClicked (int row, const juce::MouseEvent& e)
             stage.switchToScene (newId);
         });
         menu.addItem ("Borrar", stage.getScenes().scenes.size() > 1, false, [this] { removeCurrent(); });
-        // Cambio automatico: una sola escena por tipo (al elegirla se quita de la que la tenia).
-        juce::PopupMenu autoMenu;
-        const auto current = stage.getScenes().findScene (id)->autoWhen;
-        auto setAuto = [this, id] (SceneAuto when)
-        {
-            for (auto& sc : stage.getScenes().scenes)
-                if (sc.id == id)
-                    sc.autoWhen = when;
-                else if (when != SceneAuto::none && sc.autoWhen == when)
-                    sc.autoWhen = SceneAuto::none;
-            stage.scenesChanged();
-        };
-        autoMenu.addItem ("Nunca", true, current == SceneAuto::none, [setAuto] { setAuto (SceneAuto::none); });
-        autoMenu.addItem ("Cuando suena una cancion de audio", true, current == SceneAuto::audio, [setAuto] { setAuto (SceneAuto::audio); });
-        autoMenu.addItem ("Cuando suena un video", true, current == SceneAuto::video, [setAuto] { setAuto (SceneAuto::video); });
-        autoMenu.addItem ("Cuando no suena nada", true, current == SceneAuto::idle, [setAuto] { setAuto (SceneAuto::idle); });
-        autoMenu.addItem ("Cuando suena YouTube", true, current == SceneAuto::youtube, [setAuto] { setAuto (SceneAuto::youtube); });
+        // Cambio automatico: varios a la vez en el dialogo de la escena (cada uno en una sola escena).
         menu.addSeparator();
-        menu.addSubMenu ("Pasar a esta escena automaticamente", autoMenu);
+        menu.addItem ("Pasar a esta escena automaticamente...", [this, id] { editAuto (id); });
         menu.showMenuAsync (juce::PopupMenu::Options().withMousePosition());
     }
 }

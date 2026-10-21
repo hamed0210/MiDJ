@@ -20,7 +20,8 @@ namespace midj
 class YouTubePlayer : public juce::ChangeBroadcaster
 {
 public:
-    enum class State { closed, opening, ad, playing, paused, ended, error };
+    // verify: Google o YouTube piden demostrar que no es un robot (captcha o iniciar sesion).
+    enum class State { closed, opening, ad, playing, paused, ended, error, verify };
     struct Status
     {
         State state = State::closed;
@@ -48,6 +49,14 @@ public:
     const juce::String& getQuality() const { return quality; }
     void setSkipAds (bool skip);
     bool getSkipAds() const { return skipAds; }
+    // Saltar ya el anuncio que se ve (por si el salto automatico falla o esta apagado).
+    void skipAd();
+
+    // Verificacion (estado verify): la ventana del reproductor se pone a la vista para que el
+    // usuario resuelva el captcha o inicie sesion; al volver a sonar el video, se esconde sola.
+    void showVerification();
+    void hideVerification();
+    bool isVerifying() const;
     static juce::StringArray getQualities();
     static juce::String qualityName (const juce::String& quality);   // "720p", "Auto"...
 
@@ -76,6 +85,6 @@ private:
     Status status;
     float volume = 0.8f;
     juce::String quality { "hd720" };
-    bool skipAds = false;
+    bool skipAds = true;
 };
 }

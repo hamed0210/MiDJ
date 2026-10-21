@@ -46,6 +46,9 @@ public:
     void previewTransition (const CustomTransition& transition);
     // El video de los stingers (lo reproduce el escenario); nullptr = sin video.
     void setStinger (std::shared_ptr<FrameSource> source);
+    // Hilo de interfaz: el elemento que se ve solo en las salidas 'solo' (la vista de sus
+    // propiedades), encajado entero sin recorte ni giro; 0 = ninguno.
+    void setSoloItem (int itemId) { soloItem = itemId; }
 
     // Tamano natural de la fuente de un elemento (lo que mide sin escalar ni recortar).
     juce::Point<int> naturalSize (const SceneItem& item) const;
@@ -91,6 +94,8 @@ private:
                        const juce::Image& maskImage, juce::uint64 maskImageVersion, const std::shared_ptr<FrameSource>& stingerSource,
                        Compositor::Frame& frame);
     void sceneLayers (const PreparedScene& scene, std::vector<Compositor::Layer>& layers);
+    // Hilo del compositor: las capas del elemento solo, encajadas en todo el programa.
+    void soloLayers (const std::vector<PreparedScene>& scenes, int itemId, std::vector<Compositor::Layer>& layers);
 
     VideoMix& mix;
     const int width, height;
@@ -115,6 +120,7 @@ private:
     juce::Image mask;                         // su imagen de barrido
     juce::uint64 maskVersion = 0;
     std::shared_ptr<FrameSource> stinger;
+    std::atomic<int> soloItem { 0 };
 
     // Hilo de interfaz: imagenes de barrido ya leidas (por ruta).
     std::map<juce::String, juce::Image> maskCache;
