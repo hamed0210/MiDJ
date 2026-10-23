@@ -1,5 +1,7 @@
 # MiDJ
 
+![MiDJ](Resources/Logo/logo.png)
+
 Aplicación de DJ y video para Windows escrita en C++20 con [JUCE](https://juce.com): dos decks con
 keylock, SYNC, efectos, stems con IA y video; sampler, automix, audífonos con pre-escucha, biblioteca
 con favoritos y listas, escenas y fuentes como OBS (capturas, capturadoras, visualizador) y YouTube.
@@ -48,12 +50,31 @@ lleva el programa, ONNX Runtime y DirectML, el modelo de stems y las DLL de Visu
 paquete de Microsoft), accesos directos y desinstalador. Los datos de `%APPDATA%\MiDJ` (biblioteca, escenas,
 ajustes) no se tocan ni al instalar ni al desinstalar.
 
+**Actualizar:** si MiDJ ya está instalado, el instalador lo detecta y muestra solo una página, *Actualizar
+MiDJ 0.2.0 -> 0.3.0*: usa la misma carpeta, el mismo modo (usuario o todos) y los mismos accesos directos, y
+cierra MiDJ si está abierto. Con la misma versión ofrece *Reinstalar*; si lo instalado es más nuevo, avisa antes
+de volver a la anterior. Para cada versión nueva basta con cambiar `AppVersion` en `Installer\MiDJ.iss` (y
+`VERSION` en `CMakeLists.txt`).
+
+### Logo
+
+El logo (un disco de vinilo con su brazo) está en `Resources\Logo`: `icon.svg` e `icon-small.svg` (hasta
+32 px) son los originales; el icono del programa, `MiDJ.ico` del instalador, las imágenes del asistente y
+`logo.png` se generan con Edge a partir de ellos:
+
+```bat
+powershell -ExecutionPolicy Bypass -File Resources\Logo\render.ps1
+```
+
+Dentro de la aplicación (barra de arriba y fondo de la salida de video) se dibuja con `Source\Brand\Logo.*`.
+
 ## Estructura
 
 ```
 Source/
   Main.cpp              arranque de la aplicación y ventana
   MainComponent.*       ventana principal: une motor e interfaz
+  Brand/Logo.*          el logo dibujado (disco y nombre)
   Engine/               motor de audio (sin interfaz, se puede probar solo)
     Deck.*              un plato: carga, reproduce, velocidad, BPM
     Mixer.*             mezcla de dos decks con crossfader
@@ -115,7 +136,9 @@ Tests/
                         MiDJTests --video archivo             coste de decodificar un video en la GPU y en la CPU
                         MiDJTests --benchmark                 CPU del keylock y de los efectos
 Installer/
-  MiDJ.iss              instalador (Inno Setup)
+  MiDJ.iss              instalador (Inno Setup): instala o actualiza
+Resources/
+  Logo/                 logo: SVG originales, render.ps1 y las imagenes que genera
 ```
 
 ## Interfaz y atajos de teclado
@@ -419,4 +442,5 @@ los pesos de Spleeter son de Deezer con licencia MIT (exportados a ONNX por el p
 - Escenas automáticas (cuando suena audio, video, YouTube o nada), Ctrl+1-9 para las escenas, Espacio que pausa lo que suena y vuelve a eso mismo, crossfader automático al dar Play, Escenas y Fuentes ocultables por separado con barrita entre ellas.
 - Audio: tarjeta de sonido, frecuencia y bloque en Ajustes; audífonos con pre-escucha por deck (salidas 3-4, cable en Y u otra tarjeta con corrección de reloj), mezcla cue / master y volumen; limitador del master a -0,3 dBFS. La ventana recuerda su tamaño y posición.
 - YouTube: búsqueda sin clave en la biblioteca, reproductor WebView2 fuera de las pantallas (página normal, H.264, anuncios incluidos), fuente de escena YouTube, escena automática y automix de YouTube con su propia lista.
-- Instalador con Inno Setup (para el usuario o para todos, con las DLL de Visual C++ y aviso si falta WebView2).
+- Instalador con Inno Setup (para el usuario o para todos, con las DLL de Visual C++ y aviso si falta WebView2) que actualiza una instalación anterior en su sitio.
+- Logo: disco de vinilo con su brazo, como icono del programa y del instalador, en la barra de arriba y en el fondo de la salida de video.

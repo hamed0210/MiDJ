@@ -58,6 +58,7 @@ endfunction()
 
 # Motor de audio: independiente de la interfaz para poder probarlo solo
 add_library(MiDJEngine STATIC
+    Source/Brand/Logo.cpp
     Source/Control/Actions.cpp
     Source/Control/ControlSurface.cpp
     Source/Control/MidiController.cpp
@@ -108,7 +109,10 @@ set_target_properties(MiDJEngine PROPERTIES
     POSITION_INDEPENDENT_CODE TRUE VISIBILITY_INLINES_HIDDEN TRUE C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden)
 
 # Aplicacion
-juce_add_gui_app(MiDJ PRODUCT_NAME "MiDJ" COMPANY_NAME "MiDJ")
+# Icono del programa (exe, barra de tareas, ventanas): se genera con Resources/Logo/render.ps1.
+juce_add_gui_app(MiDJ PRODUCT_NAME "MiDJ" COMPANY_NAME "MiDJ"
+    ICON_BIG ${CMAKE_CURRENT_SOURCE_DIR}/Resources/Logo/icon-256.png
+    ICON_SMALL ${CMAKE_CURRENT_SOURCE_DIR}/Resources/Logo/icon-32.png)
 target_sources(MiDJ PRIVATE
     Source/Main.cpp
     Source/MainComponent.cpp

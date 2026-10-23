@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include "Brand/Logo.h"
 
 namespace midj
 {
@@ -823,17 +824,22 @@ void MainComponent::releaseResources()
     mixer.releaseResources();
 }
 
+namespace
+{
+    constexpr int headerLogoWidth = 84;   // disco y nombre, a la izquierda de la barra de arriba
+}
+
 void MainComponent::paint (juce::Graphics& g)
 {
     g.fillAll (DarkLookAndFeel::background);
-    // Barra de arriba: nombre y formato de la salida de video; fondo de las pestanas.
+    // Barra de arriba: logo y formato de la salida de video; fondo de las pestanas.
     auto header = headerArea;
     g.setColour (DarkLookAndFeel::selection);
     g.fillRect (header.removeFromBottom (1));
     auto h = header.reduced (14, 0);
-    g.setColour (DarkLookAndFeel::text);
-    g.setFont (DarkLookAndFeel::sans (17.0f, true));
-    g.drawText ("MiDJ", h.removeFromLeft (56), juce::Justification::centredLeft, false);
+    auto logo = h.removeFromLeft (headerLogoWidth).toFloat();
+    Logo::drawMark (g, logo.removeFromLeft (24.0f));
+    Logo::drawWordmark (g, logo.withTrimmedLeft (7.0f), DarkLookAndFeel::sans (17.0f, true), juce::Justification::centredLeft);
     if (videoStage != nullptr && videoStage->isReady())
     {
         g.setColour (DarkLookAndFeel::textQuiet);
@@ -883,7 +889,7 @@ void MainComponent::resized()
         auto tabs = tabsArea.reduced (3);
         audioTabButton.setBounds (tabs.removeFromLeft (tabs.getWidth() / 2));
         programTabButton.setBounds (tabs);
-        h.removeFromLeft (56 + 170);
+        h.removeFromLeft (headerLogoWidth + 170);
         // El sampler solo si cabe entero (en ventanas estrechas se oculta).
         const bool samplerFits = h.getWidth() >= SamplerPanel::compactWidth + 16;
         samplerPanel.setVisible (panels.sampler && samplerFits);

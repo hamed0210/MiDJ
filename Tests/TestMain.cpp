@@ -3396,6 +3396,11 @@ void testVideoMix()
     std::vector<midj::Compositor::Layer> layers;
     mix.buildLayers (layers);
     check (layers.size() == 1 && layers[0].slot == 4, "mezcla de video: sin nada, el logo", (double) layers.size(), 1.0);
+    // El logo: el disco con su etiqueta naranja (al lado del agujero del centro) sobre negro.
+    const auto logo = VideoMix::renderLogo (640, 360);
+    const auto label = logo.getPixelAt (326, (int) ((360.0f - 360.0f * 0.33f) * 0.5f + 360.0f * 0.1f));
+    check (label.getRed() > 90 && label.getRed() > 2 * label.getGreen() && logo.getPixelAt (4, 4).getBrightness() < 0.01f,
+           "mezcla de video: el logo es el disco naranja sobre negro", label.getRed(), 115.0);
 
     videoA.setFile (file);
     videoA.setActive (true);

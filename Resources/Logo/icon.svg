@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- Icono de MiDJ (48 px o mas): disco de vinilo con su brazo sobre un cuadrado grafito. -->
+  <rect x="8" y="8" width="240" height="240" rx="54" fill="#0E0F13"/>
+  <g transform="translate(38 38) scale(0.818)">
+    <circle cx="110" cy="110" r="100" fill="#1B1D24"/>
+    <circle cx="110" cy="110" r="86" fill="none" stroke="#2E313C" stroke-width="3"/>
+    <circle cx="110" cy="110" r="70" fill="none" stroke="#2E313C" stroke-width="3"/>
+    <circle cx="110" cy="110" r="54" fill="none" stroke="#2E313C" stroke-width="3"/>
+    <circle cx="110" cy="110" r="36" fill="#FF5A36"/>
+    <circle cx="110" cy="110" r="6" fill="#0E0F13"/>
+    <path d="M188 30 L164 98" stroke="#F2EFE8" stroke-width="10" stroke-linecap="round"/>
+    <circle cx="188" cy="30" r="13" fill="#F2EFE8"/>
+  </g>
+</svg>

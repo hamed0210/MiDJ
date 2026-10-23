@@ -1,4 +1,5 @@
 #include "Video/VideoMix.h"
+#include "Brand/Logo.h"
 
 namespace midj
 {
@@ -165,9 +166,12 @@ juce::Image VideoMix::renderLogo (int w, int h)
     juce::Image image (juce::Image::ARGB, w, h, true, juce::SoftwareImageType());
     juce::Graphics g (image);
     g.fillAll (juce::Colours::black);
-    g.setColour (juce::Colours::white.withAlpha (0.2f));
-    g.setFont (juce::FontOptions (h * 0.08f, juce::Font::bold));
-    g.drawText ("MiDJ", image.getBounds(), juce::Justification::centred);
+    // El disco encima del nombre, apagados (es el fondo cuando no suena nada con imagen).
+    const float mark = h * 0.2f, text = h * 0.09f, gap = h * 0.04f;
+    const float top = (h - mark - gap - text) * 0.5f;
+    Logo::drawMark (g, { 0.0f, top, (float) w, mark }, 0.45f);
+    Logo::drawWordmark (g, { 0.0f, top + mark + gap, (float) w, text }, juce::FontOptions (text, juce::Font::bold),
+                        juce::Justification::centred, 0.45f);
     return image;
 }
 }
