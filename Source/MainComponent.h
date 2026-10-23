@@ -107,6 +107,20 @@ private:
     std::atomic<int> headphoneMode { (int) HeadphoneMode::off };
     juce::String headphoneDevice;
     HeadphoneOutput headphones;
+    // Vigilante de la tarjeta: bloques que pide (hilo de audio); si deja de pedirlos, se avisa.
+    void checkAudioDevice();
+    std::atomic<juce::uint32> audioBlocks { 0 };
+    juce::uint32 lastAudioBlocks = 0;
+    int silentTicks = 0;
+    bool audioWarningShown = false;
+    // Medidor del audio (barra de arriba): parte de cada bloque que tarda el calculo (pico que
+    // baja despacio) y bloques que llegaron muy tarde (cortes que se oyen).
+    std::atomic<float> audioLoad { 0.0f };
+    std::atomic<int> audioLate { 0 };
+    double audioRate = 0.0;              // hilo de audio
+    juce::int64 lastBlockStart = 0;      // hilo de audio
+    juce::String audioMeterText;         // lo dibujado
+    bool audioMeterWarn = false;
 
     DarkLookAndFeel lookAndFeel;
     juce::AudioFormatManager formatManager;

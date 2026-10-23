@@ -108,6 +108,7 @@ public:
     // Trabajo de fondo: escanear todas las carpetas y analizar lo pendiente.
     void startBackgroundWork();
     bool isBusy() const;
+    bool isScanning() const { return scanning.load(); }   // buscando archivos (no analizando)
     juce::String getStatusText() const;   // p. ej. "Analizando 2 de 15"
 
     // Lo mismo pero en el hilo que llama (pruebas y herramientas).

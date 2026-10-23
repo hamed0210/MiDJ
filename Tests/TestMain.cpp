@@ -116,7 +116,7 @@ void testBpm (double bpm, double sampleRate, double expected)
 
 // Ritmo de dembow (reggaeton): bombo en cada pulso y caja fuerte en el 3/4 y el 6/4 de cada
 // dos pulsos (3+3+2 semicorcheas). Las cajas suenan mas que el bombo en toda la banda, y su
-// separacion (3/4 de pulso) engaña a un detector que solo mira la energia total: da 4/3 del tempo.
+// separacion (3/4 de pulso) engaÃ±a a un detector que solo mira la energia total: da 4/3 del tempo.
 std::vector<float> dembowTrack (double bpm, double seconds, double firstBeat)
 {
     std::vector<float> out ((size_t) (seconds * sr), 0.0f);
@@ -673,6 +673,43 @@ void writeClickWav (const juce::File& file, double bpm, double seconds = 20.0)
     writer->writeFromFloatArrays (&data, 1, (int) clicks.size());
 }
 
+void pumpMessages();
+
+// Play mientras el deck carga (en un equipo lento tarda): suena al terminar; Pausa lo anula.
+void testDeckPlayWhileLoading()
+{
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    midj::Deck deck (formats);
+    deck.prepareToPlay (blockSize, sr);
+    const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("MiDJTestsLoad.wav");
+    writeClickWav (file, 120.0);
+    auto waitLoaded = [&deck]
+    {
+        for (int i = 0; i < 300 && deck.isLoading(); ++i)
+        {
+            pumpMessages();   // la carga termina con un mensaje al hilo de interfaz
+            juce::Thread::sleep (20);
+        }
+    };
+
+    deck.load (file);
+    const bool wasLoading = deck.isLoading();
+    deck.play();
+    const bool pendingWhileLoading = deck.isPlayPending() && ! deck.isPlaying();
+    waitLoaded();
+    check (wasLoading && pendingWhileLoading && deck.hasTrack() && deck.isPlaying() && ! deck.isPlayPending(),
+           "deck: Play durante la carga suena al terminar", deck.isPlaying() ? 1.0 : 0.0, 1.0);
+
+    deck.load (file);
+    deck.play();
+    deck.togglePlay();   // Pausa antes de que termine
+    waitLoaded();
+    check (deck.hasTrack() && ! deck.isPlaying() && ! deck.isPlayPending(), "deck: Pausa durante la carga lo anula",
+           deck.isPlaying() ? 1.0 : 0.0, 0.0);
+    file.deleteFile();
+}
+
 void testTagReader()
 {
     using namespace midj::TagReader;
@@ -689,7 +726,7 @@ void testTagReader()
         frames.write (body.getData(), body.getSize());
     };
     const uint8_t title[] = { 0, 'C', 'a', 'n', 'c', 'i', 0xf3, 'n' };
-    const uint8_t artist[] = { 1, 0xff, 0xfe, 0xd1, 0, 'a', 0, 'n', 0, 'd', 0, 0xfa, 0, 0, 0 };   // "Ñandú"
+    const uint8_t artist[] = { 1, 0xff, 0xfe, 0xd1, 0, 'a', 0, 'n', 0, 'd', 0, 0xfa, 0, 0, 0 };   // "Ã‘andÃº"
     const uint8_t genre[] = { 0, '(', '1', '7', ')', 'R', 'o', 'c', 'k' };
     const uint8_t bpmText[] = { 0, '1', '2', '8' };
     frame23 ("TIT2", juce::MemoryBlock (title, sizeof (title)));
@@ -3864,6 +3901,7 @@ int main (int argc, char* argv[])
 
     std::printf ("== Deck: reproduccion, CUE y bucles ==\n");
     testDeck();
+    testDeckPlayWhileLoading();
     std::printf ("== SYNC ==\n");
     testSync();
 

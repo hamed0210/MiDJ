@@ -35,7 +35,7 @@ void ControlSurface::pressButton (const juce::String& action)
     const auto verb = Actions::verb (action);
 
     if (verb == "play")
-        deck.isPlaying() ? deck.pause() : deck.play();
+        deck.togglePlay();
     else if (verb == "cue")
         deck.cue();
     else if (verb == "sync")

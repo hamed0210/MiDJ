@@ -32,7 +32,7 @@ DeckComponent::DeckComponent (Deck& d, Deck& other, EffectRack& effects, const j
     cueButton.setTooltip ("CUE: vuelve al punto de inicio (tecla C en el deck activo)");
     playButton.onClick = [this]
     {
-        deck.isPlaying() ? deck.pause() : deck.play();
+        deck.togglePlay();
         updateLabels();
     };
     playButton.setTooltip ("Play / Pausa (Espacio en el deck activo)");
@@ -202,7 +202,8 @@ void DeckComponent::updateLabels()
             }
         }
     }
-    juce::String newState = deck.isLoading() ? "cargando..." : ! hasTrack ? "vacio" : deck.isPlaying() ? "sonando" : "en pausa";
+    juce::String newState = deck.isLoading() ? (deck.isPlayPending() ? "cargando, luego suena" : "cargando...")
+                          : ! hasTrack ? "vacio" : deck.isPlaying() ? "sonando" : "en pausa";
     const double bpm = deck.getCurrentBpm();
     juce::String newBpm = hasTrack && bpm > 0.0 ? juce::String (bpm, 1) : juce::String ("---");
     juce::String newTime = formatTime (deck.getPositionSeconds()) + " / " + formatTime (deck.getLengthSeconds());
@@ -229,7 +230,7 @@ void DeckComponent::updateLabels()
         repaint (pitchScaleArea);
     }
 
-    const bool playing = deck.isPlaying();
+    const bool playing = deck.isPlaying() || deck.isPlayPending();   // pedido mientras carga: ya como sonando
     playButton.setButtonText (playing ? "Pausa" : "Play");
     playButton.getProperties().set (DarkLookAndFeel::filledProperty, playing);
     playButton.setColour (juce::TextButton::buttonColourId, playing ? accent() : juce::Colours::transparentBlack);

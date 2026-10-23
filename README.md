@@ -51,7 +51,7 @@ paquete de Microsoft), accesos directos y desinstalador. Los datos de `%APPDATA%
 ajustes) no se tocan ni al instalar ni al desinstalar.
 
 **Actualizar:** si MiDJ ya está instalado, el instalador lo detecta y muestra solo una página, *Actualizar
-MiDJ 0.2.0 -> 0.3.0*: usa la misma carpeta, el mismo modo (usuario o todos) y los mismos accesos directos, y
+MiDJ 0.3.0 -> 0.3.1*: usa la misma carpeta, el mismo modo (usuario o todos) y los mismos accesos directos, y
 cierra MiDJ si está abierto. Con la misma versión ofrece *Reinstalar*; si lo instalado es más nuevo, avisa antes
 de volver a la anterior. Para cada versión nueva basta con cambiar `AppVersion` en `Installer\MiDJ.iss` (y
 `VERSION` en `CMakeLists.txt`).
@@ -144,14 +144,19 @@ Resources/
 ## Interfaz y atajos de teclado
 
 Diseño "Escenario" (oscuro, deck A en azul y B en ámbar), pensado para una pantalla de 1366x768:
-- **Arriba**, una barra con el formato de la salida de video, el **sampler** (8 pads, volumen y Parar), las
+- **Arriba**, una barra con el logo, el formato de la salida de video y debajo el **medidor del audio** ("audio
+  31 %": lo que tarda el cálculo de cada bloque frente a lo que dura; "· N cortes" si la tarjeta se quedó sin
+  audio; en rojo desde el 70 % o con cortes), el **sampler** (8 pads, volumen y Parar), las
   pestañas **AUDIO / PROGRAMA** del centro, **Proyector** (pantalla completa en un monitor), **MIDI**,
   **Atajos** y **Ajustes**.
+- **Tarjeta de sonido**: si la guardada no abre, se usa la predeterminada en estéreo; si ninguna abre, o la
+  abierta no pide audio (auriculares Bluetooth apagados, HDMI sin altavoces...: los decks "suenan" sin
+  avanzar), se avisa con un botón para elegir otra.
 - **Decks** a los lados: portada (un fotograma si es un video), título, artista, BPM y tiempo, la forma de
   onda delgada (lo ya sonado más apagado), el **pitch** ±16 % con el centro marcado (raya y 0 en verde cuando
   está en 0; se engancha al pasar cerca; doble clic: 0) y **KEY**, bucles 1-2-4-8, stems (Voz / Instrumental
   o "Separar stems"), tres efectos (el nombre enciende, la flecha elige otro, el mando es la cantidad) y
-  Play, Cue y Sync.
+  Play, Cue y Sync. Play mientras la canción carga ("cargando, luego suena") la pone a sonar al terminar.
 - **Centro**: a los lados el **volumen** de cada deck (fader con vúmetro y, con audífonos, su botón de
   pre-escucha) y en medio la página elegida: **PROGRAMA** (la salida de video, lo más grande que quepa) o
   **AUDIO** (High, Mid, Low, Gain y Filter de cada deck con su vúmetro, el **master** con su volumen y

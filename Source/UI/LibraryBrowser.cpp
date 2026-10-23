@@ -943,9 +943,10 @@ void LibraryBrowser::changeListenerCallback (juce::ChangeBroadcaster* source)
         table.repaint();   // llego una miniatura de YouTube
         return;
     }
-    // La biblioteca avisa a menudo mientras escanea o analiza: se agrupan los avisos.
+    // La biblioteca avisa a menudo mientras escanea o analiza: se agrupan los avisos (mas mientras
+    // trabaja: en un equipo lento rehacer la lista a cada momento frena la interfaz).
     if (! isTimerRunning())
-        startTimer (400);
+        startTimer (library.isBusy() ? 1500 : 400);
 }
 
 void LibraryBrowser::timerCallback()
@@ -956,7 +957,10 @@ void LibraryBrowser::timerCallback()
         return;               // el temporizador sigue a 100 ms mientras busca
     }
     stopTimer();
-    rebuildTree (false);
+    // Mientras busca archivos el arbol cambiaria a cada aviso (y parpadea al rehacerse): se
+    // rehace al terminar la busqueda, que tambien avisa.
+    if (! library.isScanning())
+        rebuildTree (false);
     refresh();
     // El aviso se va solo a los 15 s.
     if (toastLabel.isVisible() && juce::Time::getMillisecondCounter() - toastShownAt > 15000)

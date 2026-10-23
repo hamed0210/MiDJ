@@ -112,12 +112,30 @@ void Deck::install (std::unique_ptr<Track> newTrack, const juce::String& name, T
     positionSeconds = 0.0;
     cuePoint = 0.0;
     loopBeats = 0;
+    if (playWhenLoaded.exchange (false))
+        playing = true;   // se pidio Play mientras cargaba
     loading = false;
     sendChangeMessage();
 }
 
-void Deck::play()  { if (hasTrack()) playing = true; }
-void Deck::pause() { playing = false; }
+void Deck::play()
+{
+    // Cargando (en un equipo lento puede tardar): se recuerda y suena al terminar.
+    if (loading.load())
+    {
+        playWhenLoaded = true;
+        if (! loading.load() && playWhenLoaded.exchange (false))   // termino justo ahora
+            playing = true;
+    }
+    else if (hasTrack())
+        playing = true;
+}
+
+void Deck::pause()
+{
+    playing = false;
+    playWhenLoaded = false;
+}
 
 void Deck::requestSeek (double seconds)
 {

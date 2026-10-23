@@ -48,9 +48,12 @@ public:
     bool isLoading() const { return loading.load(); }
     bool hasTrack() const;
 
+    // Play mientras carga: suena en cuanto la cancion esta lista (pause() lo anula).
     void play();
     void pause();
     bool isPlaying() const { return playing.load(); }
+    bool isPlayPending() const { return playWhenLoaded.load(); }
+    void togglePlay() { isPlaying() || isPlayPending() ? pause() : play(); }
 
     // CUE estilo CDJ: parado = fija el punto CUE aqui; sonando = vuelve al CUE y para.
     void cue();
@@ -139,7 +142,7 @@ private:
     juce::File loadedFile;
     MixPoints mixPoints;
 
-    std::atomic<bool> loading { false }, playing { false }, keyLock { true };
+    std::atomic<bool> loading { false }, playing { false }, playWhenLoaded { false }, keyLock { true };
     std::atomic<double> speed { 1.0 }, bpm { 0.0 }, firstBeat { 0.0 }, cuePoint { 0.0 };
     std::atomic<double> positionSeconds { 0.0 }, lengthSeconds { 0.0 };
     std::atomic<double> pendingSeek { -1.0 };            // < 0 = ninguna

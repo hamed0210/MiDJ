@@ -216,6 +216,23 @@ MainComponent::MainComponent()
     mixerView.limiterSettingChanged();
     mixerView.onLimiterChanged = [this] { saveAudioSettings(); };
     setAudioChannels (0, 4, savedDevice.get());
+    // Sin tarjeta abierta los decks no avanzan (ni suenan ni se mueve la onda). Si la guardada o la
+    // predeterminada con 4 salidas no abre, la predeterminada en estereo; si tampoco, se avisa.
+    if (deviceManager.getCurrentAudioDevice() == nullptr)
+    {
+        const auto error = deviceManager.initialiseWithDefaultDevices (0, 2);
+        if (deviceManager.getCurrentAudioDevice() == nullptr)
+            juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<MainComponent> (this), error]
+            {
+                if (safe == nullptr)
+                    return;
+                juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::WarningIcon, "MiDJ",
+                    "No se pudo abrir ninguna tarjeta de sonido, asi que los decks no sonaran"
+                        + (error.isNotEmpty() ? ":\n" + error : juce::String (".")) + "\n\nElige una en Ajustes > Audio y audifonos.",
+                    "Elegir tarjeta", "Cerrar", safe.getComponent(),
+                    juce::ModalCallbackFunction::create ([safe] (int result) { if (result == 1 && safe != nullptr) safe->showAudioSettings(); }));
+            });
+    }
     setHeadphoneMode ((HeadphoneMode) headphoneMode.load(), headphoneDevice);
 }
 
@@ -607,10 +624,51 @@ void MainComponent::timerCallback()
         }
     }
     updateAutoCrossfader();
+    checkAudioDevice();
+    if (timerTicks % 15 == 0)
+    {
+        // Medidor del audio: rojo si el calculo se come casi todo el bloque o si hubo cortes.
+        const int load = juce::roundToInt (audioLoad.load (std::memory_order_relaxed) * 100.0f);
+        const int late = audioLate.load (std::memory_order_relaxed);
+        const auto text = "audio " + juce::String (load) + " %" + (late > 0 ? juce::String::fromUTF8 (" \xc2\xb7 ") + juce::String (late) + " cortes" : juce::String());
+        if (text != audioMeterText)
+        {
+            audioMeterText = text;
+            audioMeterWarn = load >= 70 || late > 0;
+            repaint (headerArea);
+        }
+    }
     if (timerTicks % 6 == 0)
         updateAutoScene();
     if (++timerTicks % 8 == 0)
         automixPanel.updateStatus();
+}
+
+void MainComponent::checkAudioDevice()
+{
+    // Una tarjeta abierta que no pide audio (auriculares Bluetooth apagados, una salida HDMI sin
+    // altavoces...): Windows la da por buena, pero los decks "suenan" sin avanzar. A los 3 s se avisa.
+    const auto blocks = audioBlocks.load (std::memory_order_relaxed);
+    auto* device = deviceManager.getCurrentAudioDevice();
+    if (device == nullptr || blocks != lastAudioBlocks)
+    {
+        lastAudioBlocks = blocks;
+        silentTicks = 0;
+        audioWarningShown = false;   // si vuelve a callarse, se avisa otra vez
+        return;
+    }
+    if (++silentTicks < 90 || audioWarningShown)   // 3 s a 30 Hz
+        return;
+    audioWarningShown = true;
+    juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::WarningIcon, "MiDJ",
+        "La tarjeta de sonido \"" + device->getName() + "\" no esta pidiendo audio, asi que los decks no avanzan ni suenan.\n\n"
+            "Suele pasar con auriculares Bluetooth apagados o una salida HDMI sin altavoces. Elige otra en Ajustes > Audio y audifonos.",
+        "Elegir tarjeta", "Cerrar", this,
+        juce::ModalCallbackFunction::create ([safe = juce::Component::SafePointer<MainComponent> (this)] (int result)
+        {
+            if (result == 1 && safe != nullptr)
+                safe->showAudioSettings();
+        }));
 }
 
 void MainComponent::startMidiSimulation (const juce::File& script)
@@ -642,6 +700,8 @@ void MainComponent::prepareToPlay (int samplesPerBlockExpected, double sampleRat
 {
     mixer.prepareToPlay (samplesPerBlockExpected, sampleRate);
     headphones.prepare (sampleRate);
+    audioRate = sampleRate;
+    lastBlockStart = 0;
     // El visualizador muestra lo que se oye: lo calculado hace la latencia de la tarjeta y un bloque.
     if (auto* device = deviceManager.getCurrentAudioDevice())
         mixer.getTap().setOutputLatency (device->getOutputLatencyInSamples() + samplesPerBlockExpected);
@@ -649,6 +709,21 @@ void MainComponent::prepareToPlay (int samplesPerBlockExpected, double sampleRat
 
 void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
 {
+    audioBlocks.fetch_add (1, std::memory_order_relaxed);
+    const auto blockStart = juce::Time::getHighResolutionTicks();
+    const double blockSeconds = audioRate > 0.0 ? info.numSamples / audioRate : 0.0;
+    // Un bloque que llega mucho despues del anterior: la tarjeta se quedo sin audio (corte).
+    if (lastBlockStart != 0 && blockSeconds > 0.0
+        && juce::Time::highResolutionTicksToSeconds (blockStart - lastBlockStart) > 2.5 * blockSeconds)
+        audioLate.fetch_add (1, std::memory_order_relaxed);
+    lastBlockStart = blockStart;
+    const juce::ScopeGuard measure { [this, blockStart, blockSeconds]
+    {
+        if (blockSeconds <= 0.0)
+            return;
+        const auto used = (float) (juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - blockStart) / blockSeconds);
+        audioLoad.store (juce::jmax (used, audioLoad.load (std::memory_order_relaxed) * 0.995f), std::memory_order_relaxed);
+    } };
     // El mezclador escribe el master en las salidas 1 y 2; despues, los audifonos donde toque.
     auto& buffer = *info.buffer;
     const int channels = buffer.getNumChannels(), n = info.numSamples;
@@ -840,14 +915,20 @@ void MainComponent::paint (juce::Graphics& g)
     auto logo = h.removeFromLeft (headerLogoWidth).toFloat();
     Logo::drawMark (g, logo.removeFromLeft (24.0f));
     Logo::drawWordmark (g, logo.withTrimmedLeft (7.0f), DarkLookAndFeel::sans (17.0f, true), juce::Justification::centredLeft);
+    // Formato de la salida de video y, debajo, el medidor del audio.
+    auto info = h.removeFromLeft (170).reduced (0, 6);
+    g.setFont (DarkLookAndFeel::mono (11.0f));
     if (videoStage != nullptr && videoStage->isReady())
     {
         g.setColour (DarkLookAndFeel::textQuiet);
-        g.setFont (DarkLookAndFeel::mono (12.0f));
         g.drawText (juce::String (videoStage->getProgramWidth()) + juce::String::fromUTF8 (" \xc3\x97 ") + juce::String (videoStage->getProgramHeight())
                         + juce::String::fromUTF8 (" \xc2\xb7 ") + juce::String (videoSettings().fps) + " fps",
-                    h.removeFromLeft (170), juce::Justification::centredLeft, false);
+                    info.removeFromTop (info.getHeight() / 2), juce::Justification::centredLeft, false);
     }
+    else
+        info.removeFromTop (info.getHeight() / 2);
+    g.setColour (audioMeterWarn ? DarkLookAndFeel::danger : DarkLookAndFeel::textFaint);
+    g.drawText (audioMeterText, info, juce::Justification::centredLeft, false);
     g.setColour (DarkLookAndFeel::panel);
     g.fillRoundedRectangle (tabsArea.toFloat(), 8.0f);
 }
