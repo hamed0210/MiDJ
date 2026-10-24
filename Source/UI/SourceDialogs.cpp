@@ -1,5 +1,7 @@
 #include "UI/SourceDialogs.h"
+#include "UI/AlphaConvertDialog.h"
 #include "UI/DarkLookAndFeel.h"
+#include "Video/AlphaVideo.h"
 
 #include <map>
 
@@ -607,12 +609,45 @@ private:
     {
         auto& path = make<juce::TextEditor>();
         auto& browse = make<juce::TextButton> ("Examinar");
-        path.onReturnKey = [this, &path, afterChoose]
+        // Multimedia: un video con transparencia (.webm, .mov) se convierte a uno con mate y se usa ese.
+        // (Mientras se convierte, el mismo archivo no se vuelve a pedir: la ventana del avance le
+        // quita el foco al cuadro de texto, que lo pediria otra vez.)
+        auto pending = std::make_shared<juce::File>();
+        auto choose = [this, afterChoose, pending] (const juce::File& chosen)
         {
-            edit ([&path, afterChoose] (SceneItem& i) { i.file = juce::File (path.getText().trim().unquoted()); if (afterChoose) afterChoose (i); });
+            if (chosen == *pending)
+                return;
+            *pending = chosen;
+            // Un .webm/.mov: con mate si se convirtio; si no (sin transparencia, cancelado), sin mate.
+            const bool decides = type == SourceType::media && AlphaVideo::mightHaveAlpha (chosen);
+            auto use = [safe = juce::Component::SafePointer<Content> (this), afterChoose, pending, decides] (const juce::File& f, bool matte)
+            {
+                *pending = juce::File();
+                if (safe == nullptr)
+                    return;
+                safe->edit ([&f, matte, decides, afterChoose] (SceneItem& i)
+                {
+                    i.file = f;
+                    if (matte || decides)
+                        i.matte = matte;
+                    if (afterChoose)
+                        afterChoose (i);
+                });
+                safe->reload();
+            };
+            if (type == SourceType::media)
+                AlphaConvertDialog::prepare (chosen, use);
+            else
+                use (chosen, false);
+        };
+        path.onReturnKey = [this, &path, choose]
+        {
+            const juce::File typed (path.getText().trim().unquoted());
+            if (auto* item = stage.getScenes().findItem (itemId); item != nullptr && item->file != typed)
+                choose (typed);
         };
         path.onFocusLost = path.onReturnKey;
-        browse.onClick = [this, &path, filter, afterChoose, label]
+        browse.onClick = [this, &path, filter, choose, label]
         {
             auto* item = stage.getScenes().findItem (itemId);
             const auto start = item != nullptr && item->file.existsAsFile() ? item->file
@@ -620,12 +655,12 @@ private:
                                                                                          : juce::File::userMoviesDirectory);
             chooser = std::make_unique<juce::FileChooser> (label, start, filter);
             chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
-                                  [this, &path, afterChoose] (const juce::FileChooser& fc)
+                                  [&path, choose] (const juce::FileChooser& fc)
             {
                 if (fc.getResult() == juce::File())
                     return;
                 path.setText (fc.getResult().getFullPathName(), false);
-                edit ([&fc, afterChoose] (SceneItem& i) { i.file = fc.getResult(); if (afterChoose) afterChoose (i); });
+                choose (fc.getResult());
             });
         };
         loaders.push_back ([&path] (const SceneItem& i) { path.setText (i.file.getFullPathName(), false); });
@@ -677,7 +712,8 @@ private:
         toggle ("Video con mate (color a la izquierda, transparencia a la derecha)", &SceneItem::matte,
                 [this] (SceneItem& i) { stage.fitWhenReady (i.id); })
             .setTooltip ("Para videos con transparencia: el color en la mitad izquierda y en la derecha la transparencia en grises "
-                         "(blanco = se ve). Como convertir un video con transparencia: LEEME, 'Videos con mate'");
+                         "(blanco = se ve). Un .webm o .mov con transparencia se convierte solo al elegirlo (con FFmpeg). "
+                         "Mas en el LEEME, 'Videos con mate'");
         slider ("Velocidad", 1.0, 200.0, 1.0, " %", [] (const SceneItem& i) { return (double) i.speedPercent; },
                 [] (SceneItem& i, double v) { i.speedPercent = (int) v; });
         buildVolume();

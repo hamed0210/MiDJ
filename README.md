@@ -52,7 +52,7 @@ paquete de Microsoft), accesos directos y desinstalador. Los datos de `%APPDATA%
 ajustes) no se tocan ni al instalar ni al desinstalar.
 
 **Actualizar:** si MiDJ ya está instalado, el instalador lo detecta y muestra solo una página, *Actualizar
-MiDJ 0.3.3 -> 0.3.4*: usa la misma carpeta, el mismo modo (usuario o todos) y los mismos accesos directos, y
+MiDJ 0.3.4 -> 0.3.5*: usa la misma carpeta, el mismo modo (usuario o todos) y los mismos accesos directos, y
 cierra MiDJ si está abierto. Con la misma versión ofrece *Reinstalar*; si lo instalado es más nuevo, avisa antes
 de volver a la anterior. Para cada versión nueva basta con cambiar `AppVersion` en `Installer\MiDJ.iss` (y
 `VERSION` en `CMakeLists.txt`).
@@ -359,8 +359,15 @@ gráfica y el compositor recorta el color con el mate. Sirve para **stingers** y
 encima de otras (logos animados, tercios inferiores...): casilla **Video con mate** en sus propiedades (la
 fuente mide la mitad de ancho y se vuelve a encajar).
 
-Para convertir un video con transparencia (ProRes 4444 `.mov`, WebM VP9 con alfa, PNG...) hace falta
-[FFmpeg](https://ffmpeg.org) (en este equipo, `D:\Tools\ffmpeg`):
+**Automático:** al elegir un `.webm`, `.mov` o `.mkv` para una fuente Multimedia o un stinger, MiDJ mira con
+[FFmpeg](https://ffmpeg.org) si tiene transparencia y, si la tiene, lo convierte (ventana con el avance y
+Cancelar), usa el convertido y marca **Video con mate**. El convertido queda junto al original como
+`<nombre>_mate.mp4` (si esa carpeta no deja escribir, en `%APPDATA%\MiDJ\Mate`); la próxima vez se usa sin
+convertir. Cada mitad cabe en el tamaño del programa sin deformar. FFmpeg se busca en `%APPDATA%\MiDJ\ffmpeg`,
+junto a `MiDJ.exe`, en el PATH y en `D:\Tools\ffmpeg\bin`; si no está, MiDJ ofrece descargarlo (la
+compilación GPL de BtbN en GitHub, unos 200 MB, una sola vez: solo guarda `ffmpeg.exe` en `%APPDATA%\MiDJ\ffmpeg`).
+
+**A mano**, con el script (por ejemplo para elegir otro tamaño):
 
 ```bat
 powershell -ExecutionPolicy Bypass -File Resources\Tools\alpha-a-mate.ps1 D:\Videos\intro.mov

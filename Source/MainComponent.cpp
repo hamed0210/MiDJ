@@ -1,5 +1,6 @@
 #include "MainComponent.h"
 #include "Brand/Logo.h"
+#include "UI/AlphaConvertDialog.h"
 
 namespace midj
 {
@@ -130,6 +131,7 @@ MainComponent::MainComponent()
                                                std::array<const Deck*, 2> { &deckA, &deckB }, mixer, formatManager, videoSettings(),
                                                getDataFolder().getChildFile ("scenes.xml"));
     videoStage->getTitle = [this] (int d) { return videoTitleFor (d); };
+    AlphaConvertDialog::setProgramSize (videoStage->getProgramWidth(), videoStage->getProgramHeight());
     videoStage->getYouTube = [this]
     {
         VideoStage::YouTubeNow yt;

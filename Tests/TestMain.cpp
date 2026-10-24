@@ -12,6 +12,7 @@
 #include "Engine/Effects.h"
 #include "Engine/HeadphoneOutput.h"
 #include "Video/YouTubeSearch.h"
+#include "Video/AlphaVideo.h"
 #include "Engine/Mixer.h"
 #include "Engine/Sampler.h"
 #include "Engine/StemSeparator.h"
@@ -3641,6 +3642,67 @@ void testLibraryLists()
 
 // --- YouTube: leer la pagina de resultados, duraciones y enlaces --------------------------------
 
+void testAlphaVideo()
+{
+    std::printf ("== Videos con transparencia (a mate con FFmpeg) ==\n");
+    using midj::AlphaVideo::parseInfo;
+    // Lo que dice ffmpeg -i de un WebM VP9 con alfa (el alfa va en el metadato) y de un MOV ProRes 4444.
+    const auto webm = parseInfo (R"(Input #0, matroska,webm, from 'logo.webm':
+  Duration: 00:00:02.03, start: 0.000000, bitrate: 2522 kb/s
+  Stream #0:0: Video: vp9 (Profile 0), yuv420p(tv, bt709, progressive), 1920x1080, SAR 1:1 DAR 16:9, 30 fps, 30 tbr, 1k tbn (default)
+    Metadata:
+      alpha_mode      : 1
+      ENCODER         : Lavc63.23.100 libvpx-vp9)");
+    check (webm.alpha && webm.width == 1920 && webm.height == 1080 && std::abs (webm.seconds - 2.03) < 0.001,
+           "webm VP9: alfa por alpha_mode, 1920x1080 y 2,03 s", webm.seconds, 2.03);
+    const auto mov = parseInfo (R"(Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'logo.mov':
+  Duration: 00:01:02.50, start: 0.000000, bitrate: 183461 kb/s
+  Stream #0:0[0x1]: Video: prores (4444) (ap4h / 0x68347061), yuva444p12le(tv, bt709, progressive), 1280x720, 183456 kb/s, 30 fps (default)
+  Stream #0:1[0x2]: Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 192 kb/s (default))");
+    check (mov.alpha && mov.width == 1280 && mov.height == 720 && std::abs (mov.seconds - 62.5) < 0.001,
+           "mov ProRes 4444: alfa por yuva, 1280x720 (no el codigo 0x...) y 62,5 s", (double) mov.width, 1280.0);
+    const auto plain = parseInfo ("  Duration: 00:00:05.00\n  Stream #0:0: Video: h264 (High), yuv420p(progressive), 1920x1080, 30 fps\n"
+                                  "  Stream #0:1: Video: png, rgba(pc), 300x300 (attached pic)");
+    check (! plain.alpha && plain.width == 1920, "mp4 normal: sin alfa (la caratula con alfa no cuenta)", (double) plain.alpha, 0.0);
+    check (midj::AlphaVideo::mightHaveAlpha (juce::File ("C:\\a\\b.WEBM")) && midj::AlphaVideo::mightHaveAlpha (juce::File ("C:\\a\\b.mov"))
+               && ! midj::AlphaVideo::mightHaveAlpha (juce::File ("C:\\a\\b.mp4")),
+           "solo .webm, .mov y .mkv", 0.0, 0.0);
+    const auto folder = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("MiDJTestsAlpha");
+    folder.deleteRecursively();
+    folder.createDirectory();
+    check (midj::AlphaVideo::matteFileFor (folder.getChildFile ("logo.webm")) == folder.getChildFile ("logo_mate.mp4"),
+           "el convertido: <nombre>_mate.mp4 junto al original", 0.0, 0.0);
+
+    // De verdad (si hay FFmpeg): un MOV con alfa de 1 s, 160x90, a mate en 64x64 como maximo.
+    const auto ffmpeg = midj::AlphaVideo::findFfmpeg();
+    if (! ffmpeg.existsAsFile())
+    {
+        std::printf ("  (sin FFmpeg: no se prueba la conversion)\n");
+        return;
+    }
+    const auto source = folder.getChildFile ("prueba.mov");
+    juce::ChildProcess make;
+    make.start (juce::StringArray { ffmpeg.getFullPathName(), "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                                    "color=c=red@0.5:s=160x90:d=1,format=argb", "-c:v", "qtrle", source.getFullPathName() });
+    make.waitForProcessToFinish (60000);
+    midj::AlphaVideo::Info info;
+    check (midj::AlphaVideo::probe (ffmpeg, source, info) && info.alpha && info.width == 160 && std::abs (info.seconds - 1.0) < 0.1,
+           "FFmpeg: el MOV de prueba tiene alfa, 160x90 y 1 s", info.seconds, 1.0);
+    const auto output = midj::AlphaVideo::matteFileFor (source);
+    double lastProgress = 0.0;
+    juce::String error;
+    const bool ok = midj::AlphaVideo::convert (ffmpeg, source, output, 64, 64, info.seconds,
+                                               [&lastProgress] (double p) { lastProgress = p; return true; }, error);
+    midj::AlphaVideo::Info out;
+    midj::AlphaVideo::probe (ffmpeg, output, out);
+    // 160x90 cabe en 64x64 sin deformar: 64x36; con el mate al lado, 128x36.
+    check (ok && output.existsAsFile() && out.width == 128 && out.height == 36 && ! out.alpha,
+           "convertido: 128x36 (dos mitades de 64x36), H.264 sin alfa", (double) out.width, 128.0);
+    check (! output.getSiblingFile ("prueba_mate.convirtiendo.mp4").exists(), "sin temporal al terminar", 0.0, 0.0);
+    std::printf ("  (avance final %.2f%s)\n", lastProgress, error.isEmpty() ? "" : (" " + error).toRawUTF8());
+    folder.deleteRecursively();
+}
+
 void testYouTubeSearch()
 {
     std::printf ("== YouTube: busqueda ==\n");
@@ -3916,6 +3978,7 @@ int main (int argc, char* argv[])
     testLimiterAndHeadphones();
     testLibraryLists();
     testYouTubeSearch();
+    testAlphaVideo();
 
     std::printf ("== Video ==\n");
     testVideo();

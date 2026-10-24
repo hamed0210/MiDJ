@@ -1,4 +1,5 @@
 #include "UI/TransitionDialog.h"
+#include "UI/AlphaConvertDialog.h"
 #include "UI/DarkLookAndFeel.h"
 #include "Video/MediaFoundation.h"
 #include "Video/MediaSources.h"
@@ -222,25 +223,40 @@ void TransitionDialog::chooseFile()
                               const auto chosen = fc.getResult();
                               if (! chosen.existsAsFile())
                                   return;
-                              file = chosen;
-                              fileEditor.setText (file.getFileName(), false);
                               if (stinger)
                               {
-                                  // La duracion del video como duracion de la transicion; el cambio, a la mitad.
-                                  MediaFoundation::initialiseThisThread();
-                                  juce::String error;
-                                  if (auto decoder = VideoDecoder::open (file, 64, error, false); decoder != nullptr && decoder->getDuration() > 0.0)
+                                  // Un video con transparencia (.webm, .mov): se convierte a uno con mate y se usa ese.
+                                  AlphaConvertDialog::prepare (chosen, [safe = juce::Component::SafePointer<TransitionDialog> (this)] (const juce::File& f, bool matte)
                                   {
-                                      const double ms = juce::jlimit (100.0, 20000.0, decoder->getDuration() * 1000.0);
-                                      durationSlider.setValue (ms, juce::dontSendNotification);
-                                      cutSlider.setValue (std::round (ms / 2.0 / 50.0) * 50.0, juce::dontSendNotification);
-                                      // Mas de 3 veces mas ancho que alto (2560x720, 3840x1080): un 16:9 con su mate al lado.
-                                      matteToggle.setToggleState (decoder->getWidth() > 3 * decoder->getHeight(), juce::dontSendNotification);
-                                  }
-                                  repaint();
+                                      if (safe != nullptr)
+                                          safe->useFile (f, true, matte);
+                                  });
+                                  return;
                               }
-                              update();
+                              useFile (chosen, false, false);
                           });
+}
+
+void TransitionDialog::useFile (const juce::File& chosen, bool stinger, bool converted)
+{
+    file = chosen;
+    fileEditor.setText (file.getFileName(), false);
+    if (stinger)
+    {
+        // La duracion del video como duracion de la transicion; el cambio, a la mitad.
+        MediaFoundation::initialiseThisThread();
+        juce::String error;
+        if (auto decoder = VideoDecoder::open (file, 64, error, false); decoder != nullptr && decoder->getDuration() > 0.0)
+        {
+            const double ms = juce::jlimit (100.0, 20000.0, decoder->getDuration() * 1000.0);
+            durationSlider.setValue (ms, juce::dontSendNotification);
+            cutSlider.setValue (std::round (ms / 2.0 / 50.0) * 50.0, juce::dontSendNotification);
+            // Convertido aqui, o mas de 3 veces mas ancho que alto (2560x720, 3840x1080): un 16:9 con su mate al lado.
+            matteToggle.setToggleState (converted || decoder->getWidth() > 3 * decoder->getHeight(), juce::dontSendNotification);
+        }
+        repaint();
+    }
+    update();
 }
 
 void TransitionDialog::changeListenerCallback (juce::ChangeBroadcaster* source)

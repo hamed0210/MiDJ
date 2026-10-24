@@ -32,6 +32,8 @@ private:
     void load (const CustomTransition& existing);   // para modificarla
     void setKind (CustomTransitionKind kind);
     void chooseFile();
+    // El archivo elegido (stinger: su duracion y si lleva mate; converted: es un video con mate de MiDJ).
+    void useFile (const juce::File& chosen, bool stinger, bool converted);
     void setColour (juce::Colour c);
     void update();
     void close();

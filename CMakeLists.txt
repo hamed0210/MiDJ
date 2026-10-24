@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(MiDJ VERSION 0.3.4 LANGUAGES C CXX)
+project(MiDJ VERSION 0.3.5 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -90,7 +90,8 @@ add_library(MiDJEngine STATIC
     Source/Video/Visualizer.cpp
     Source/Video/MediaSources.cpp
     Source/Video/GpuFrames.cpp
-    Source/Video/YouTubeSearch.cpp)
+    Source/Video/YouTubeSearch.cpp
+    Source/Video/AlphaVideo.cpp)
 target_include_directories(MiDJEngine PUBLIC Source)
 # Los modulos JUCE se compilan una sola vez aqui (PRIVATE) y se exportan sus
 # cabeceras y definiciones a la app y a las pruebas (patron recomendado por JUCE).
@@ -129,6 +130,7 @@ target_sources(MiDJ PRIVATE
     Source/UI/Icons.cpp
     Source/UI/Widgets.cpp
     Source/UI/TransitionDialog.cpp
+    Source/UI/AlphaConvertDialog.cpp
     Source/UI/DarkLookAndFeel.cpp
     Source/UI/YouTubePlayer.cpp
     Source/UI/YouTubePanel.cpp
