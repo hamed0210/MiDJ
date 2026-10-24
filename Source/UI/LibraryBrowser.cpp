@@ -567,23 +567,71 @@ void LibraryBrowser::startYouTubeSearch (const juce::String& text)
     {
         youtubeResults = { { id, "Video de YouTube (" + id + ")", {}, 0.0 } };
         youtubeStatus = "Enlace de YouTube";
+        ++youtubeSearchId;
+        youtubeContinuation.clear();
         refresh();
         return;
     }
     youtubeStatus = "Buscando \"" + query + "\" en YouTube...";
     repaint (footerArea);
     const int searchId = ++youtubeSearchId;
+    youtubeQuery = query;
+    youtubeContinuation.clear();
+    youtubeLoadingMore = false;
     juce::Component::SafePointer<LibraryBrowser> safe (this);
     juce::Thread::launch ([safe, query, searchId]
     {
         juce::String error;
-        auto results = YouTubeSearch::search (query, error);
-        juce::MessageManager::callAsync ([safe, searchId, results = std::move (results), error, query]
+        auto page = YouTubeSearch::search (query, error);
+        juce::MessageManager::callAsync ([safe, searchId, page = std::move (page), error]
         {
             if (safe == nullptr || searchId != safe->youtubeSearchId)
                 return;   // ya se pidio otra busqueda
-            safe->youtubeResults = results;
-            safe->youtubeStatus = results.empty() ? error : juce::String ((int) results.size()) + " videos para \"" + query + "\"";
+            safe->youtubeResults = page.videos;
+            safe->youtubeContinuation = page.clientVersion.isNotEmpty() ? page.continuation : juce::String();
+            safe->youtubeClientVersion = page.clientVersion;
+            safe->youtubeStatus = page.videos.empty() ? error : safe->youtubeCountText();
+            safe->table.getVerticalScrollBar().setCurrentRangeStart (0.0);
+            safe->refresh();
+        });
+    });
+}
+
+juce::String LibraryBrowser::youtubeCountText() const
+{
+    return juce::String ((int) youtubeResults.size()) + " videos para \"" + youtubeQuery + "\""
+         + (youtubeContinuation.isNotEmpty() ? " (baja para ver mas)" : juce::String());
+}
+
+void LibraryBrowser::loadMoreYouTube()
+{
+    if (youtubeContinuation.isEmpty())
+    {
+        youtubeLoadingMore = false;
+        return;
+    }
+    youtubeStatus = juce::String ((int) youtubeResults.size()) + " videos para \"" + youtubeQuery + "\"  -  cargando mas...";
+    repaint (footerArea);
+    const int searchId = youtubeSearchId;
+    juce::Component::SafePointer<LibraryBrowser> safe (this);
+    juce::Thread::launch ([safe, searchId, token = youtubeContinuation, version = youtubeClientVersion]
+    {
+        juce::String error;
+        auto page = YouTubeSearch::searchMore (token, version, error);
+        juce::MessageManager::callAsync ([safe, searchId, page = std::move (page), error]
+        {
+            if (safe == nullptr || searchId != safe->youtubeSearchId)
+                return;   // ya se pidio otra busqueda (o se limpio)
+            // Se anaden los nuevos (sin repetir). Sin videos nuevos o con error: no hay mas.
+            const auto before = safe->youtubeResults.size();
+            for (const auto& v : page.videos)
+                if (std::none_of (safe->youtubeResults.begin(), safe->youtubeResults.end(),
+                                  [&v] (const YouTubeVideo& o) { return o.id == v.id; }))
+                    safe->youtubeResults.push_back (v);
+            const bool more = safe->youtubeResults.size() > before && page.continuation != safe->youtubeContinuation;
+            safe->youtubeContinuation = more ? page.continuation : juce::String();
+            safe->youtubeStatus = safe->youtubeCountText() + (error.isNotEmpty() ? "  -  " + error : juce::String());
+            safe->youtubeLoadingMore = false;
             safe->refresh();
         });
     });
@@ -598,6 +646,8 @@ void LibraryBrowser::clearSearch()
         // YouTube: tambien los resultados (y una busqueda en marcha ya no los trae).
         ++youtubeSearchId;
         youtubeResults.clear();
+        youtubeContinuation.clear();
+        youtubeLoadingMore = false;
         youtubeStatus = "Escribe y pulsa Intro para buscar en YouTube (o pega un enlace)";
     }
     refresh();
@@ -888,11 +938,14 @@ void LibraryBrowser::refresh()
         tracks.erase (std::remove_if (tracks.begin(), tracks.end(),
                                       [this] (const TrackInfo& t) { return Library::isVideoFile (t.getFile()) != (filterKind == 2); }),
                       tracks.end());
-    // YouTube: filas mas altas (la miniatura va al principio del titulo).
+    // YouTube: filas mas altas (la miniatura va al principio del titulo) y sin las columnas que no
+    // usa (icono de tipo, favorito y BPM): la miniatura queda pegada a la izquierda.
     if (const bool yt = filterKind == 6; yt != youtubeLayout)
     {
         youtubeLayout = yt;
         table.setRowHeight (yt ? 56 : 38);
+        for (const int column : { (int) typeCol, (int) favCol, (int) bpmCol })
+            table.getHeader().setColumnVisible (column, ! yt);
     }
     table.updateContent();
     // Con muchas filas sale la barra vertical: las columnas, al ancho que queda (sin barra horizontal).
@@ -971,6 +1024,16 @@ void LibraryBrowser::timerCallback()
 
 void LibraryBrowser::paintRowBackground (juce::Graphics& g, int row, int width, int height, bool selected)
 {
+    // YouTube: al asomar las ultimas filas, los siguientes resultados (como al bajar en YouTube).
+    if (filterKind == 6 && row >= (int) tracks.size() - 3 && youtubeContinuation.isNotEmpty() && ! youtubeLoadingMore)
+    {
+        youtubeLoadingMore = true;
+        juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<LibraryBrowser> (this)]
+        {
+            if (safe != nullptr)
+                safe->loadMoreYouTube();
+        });
+    }
     if (selected)
     {
         g.setColour (DarkLookAndFeel::selection);

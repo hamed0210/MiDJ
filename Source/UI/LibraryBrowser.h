@@ -132,7 +132,12 @@ private:
     std::vector<YouTubeVideo> youtubeResults;
     juce::String youtubeStatus { "Escribe y pulsa Intro para buscar en YouTube (o pega un enlace)" };
     int youtubeSearchId = 0;
+    // Los siguientes resultados (al bajar hasta el final): el codigo de YouTube ("" si no hay mas).
+    juce::String youtubeQuery, youtubeContinuation, youtubeClientVersion;
+    bool youtubeLoadingMore = false;
     void startYouTubeSearch (const juce::String& text);
+    void loadMoreYouTube();
+    juce::String youtubeCountText() const;   // "40 videos para "..." (baja para ver mas)"
     std::optional<YouTubeVideo> youTubeAt (int row) const;
     juce::String filterLabel { "Musica local" };
     IconButton syncButton { Icons::Glyph::sync, "Sincronizar: buscar musica y videos en todo el PC y anadirlos" },

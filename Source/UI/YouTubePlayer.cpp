@@ -10,6 +10,8 @@
 #include "UI/YouTubePlayer.h"
 #include "Video/Scenes.h"
 
+#include <juce_gui_basics/juce_gui_basics.h>
+
 namespace midj
 {
 using Microsoft::WRL::Callback;
@@ -174,6 +176,12 @@ struct YouTubePlayer::Impl
     ComPtr<ICoreWebView2Controller> controller;
     ComPtr<ICoreWebView2> webView;
     bool creatingEnvironment = false, creatingController = false;
+    std::vector<std::function<void (bool)>> environmentWaiters;
+    // La ventana de la cuenta (inicio de sesion de Google), con su propio WebView en el mismo perfil.
+    HWND accountWindow = nullptr;
+    ComPtr<ICoreWebView2Controller> accountController;
+    ComPtr<ICoreWebView2> accountView;
+    bool signingIn = false;   // se abrio para iniciar sesion: se cierra sola al volver a YouTube con ella
     juce::String pendingId;   // el video a cargar en cuanto este listo
     int loadCount = 0;        // va en la direccion (&midj=): los avisos de una pagina anterior se descartan
     std::shared_ptr<bool> alive = std::make_shared<bool> (true);   // para los avisos de WebView2 que llegan tarde
@@ -189,7 +197,33 @@ struct YouTubePlayer::Impl
         wc.lpszClassName = L"MiDJYouTubePlayer";
         wc.hbrBackground = (HBRUSH) GetStockObject (BLACK_BRUSH);
         RegisterClassW (&wc);
+        WNDCLASSW account {};
+        account.lpfnWndProc = accountProc;
+        account.hInstance = GetModuleHandleW (nullptr);
+        account.lpszClassName = L"MiDJYouTubeAccount";
+        account.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH);
+        account.hCursor = LoadCursor (nullptr, IDC_ARROW);
+        account.hIcon = LoadIconW (GetModuleHandleW (nullptr), L"IDI_ICON1");   // el de MiDJ.exe (recurso con nombre de JUCE)
+        RegisterClassW (&account);
         done = true;
+    }
+
+    // La ventana de la cuenta: el WebView sigue su tamano y cerrarla la destruye (con su WebView).
+    static LRESULT CALLBACK accountProc (HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+    {
+        auto* player = reinterpret_cast<YouTubePlayer*> (GetWindowLongPtrW (hwnd, GWLP_USERDATA));
+        if (player != nullptr && msg == WM_SIZE && player->impl->accountController != nullptr)
+        {
+            RECT rc {};
+            GetClientRect (hwnd, &rc);
+            player->impl->accountController->put_Bounds (rc);
+        }
+        if (player != nullptr && msg == WM_CLOSE)
+        {
+            player->closeAccount();
+            return 0;
+        }
+        return DefWindowProcW (hwnd, msg, wp, lp);
     }
 
     void createWindow (int width, int height)
@@ -267,6 +301,10 @@ YouTubePlayer::~YouTubePlayer()
 {
     *impl->alive = false;
     impl->destroyWindow();
+    if (impl->accountController != nullptr)
+        impl->accountController->Close();
+    if (impl->accountWindow != nullptr)
+        DestroyWindow (impl->accountWindow);
 }
 
 YouTubePlayer::State YouTubePlayer::stateFromText (const juce::String& s)
@@ -364,45 +402,241 @@ void YouTubePlayer::open (const YouTubeVideo& v)
                         CoTaskMemFree (text);
                         return S_OK;
                     }).Get(), nullptr);
+                // La sesion de YouTube (por si caduca o se inicio en otro sitio).
+                impl->webView->add_NavigationCompleted (Callback<ICoreWebView2NavigationCompletedEventHandler> (
+                    [this, alive] (ICoreWebView2* view, ICoreWebView2NavigationCompletedEventArgs*) -> HRESULT
+                    {
+                        if (! alive.expired() && *alive.lock())
+                            checkSignedIn (view);
+                        return S_OK;
+                    }).Get(), nullptr);
                 navigate();
                 return S_OK;
             }).Get());
     };
 
+    withEnvironment ([this, createController] (bool ok)
+    {
+        if (! ok)
+        {
+            status.error = "Falta el WebView2 Runtime de Microsoft";
+            setState (State::error);
+        }
+        else if (impl->window != nullptr)
+        {
+            createController();
+        }
+    });
+}
+
+void YouTubePlayer::withEnvironment (std::function<void (bool)> then)
+{
     if (impl->environment != nullptr)
     {
-        createController();
+        then (true);
         return;
     }
+    impl->environmentWaiters.push_back (std::move (then));
     if (impl->creatingEnvironment)
         return;
     impl->creatingEnvironment = true;
+    auto finish = [this] (bool ok)
+    {
+        impl->creatingEnvironment = false;
+        auto waiters = std::move (impl->environmentWaiters);
+        impl->environmentWaiters.clear();
+        for (auto& w : waiters)
+            w (ok);
+    };
+    std::weak_ptr<bool> alive = impl->alive;
     auto options = Microsoft::WRL::Make<CoreWebView2EnvironmentOptions>();
     options->put_AdditionalBrowserArguments (browserArguments);
     const auto profile = dataFolder.getChildFile ("WebView2");
     const HRESULT hr = CreateCoreWebView2EnvironmentWithOptions (nullptr, wide (profile.getFullPathName()).c_str(), options.Get(),
         Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler> (
-            [this, alive, createController] (HRESULT result, ICoreWebView2Environment* env) -> HRESULT
+            [this, alive, finish] (HRESULT result, ICoreWebView2Environment* env) -> HRESULT
             {
                 if (alive.expired() || ! *alive.lock())
                     return S_OK;
-                impl->creatingEnvironment = false;
-                if (FAILED (result) || env == nullptr)
-                {
-                    status.error = "Falta el WebView2 Runtime de Microsoft";
-                    setState (State::error);
-                    return S_OK;
-                }
-                impl->environment = env;
-                if (impl->window != nullptr)
-                    createController();
+                if (SUCCEEDED (result) && env != nullptr)
+                    impl->environment = env;
+                finish (impl->environment != nullptr);
                 return S_OK;
             }).Get());
     if (FAILED (hr))
+        finish (false);
+}
+
+// --- Cuenta ----------------------------------------------------------------------------------------
+
+void YouTubePlayer::openAccountWindow (bool visible, std::function<void()> ready)
+{
+    if (impl->accountWindow != nullptr)
     {
-        impl->creatingEnvironment = false;
-        status.error = "Falta el WebView2 Runtime de Microsoft";
-        setState (State::error);
+        if (visible)
+        {
+            ShowWindow (impl->accountWindow, IsIconic (impl->accountWindow) ? SW_RESTORE : SW_SHOW);
+            SetForegroundWindow (impl->accountWindow);
+        }
+        if (impl->accountView != nullptr)
+            ready();
+        return;
+    }
+    Impl::registerClass();
+    RECT work {};
+    SystemParametersInfoW (SPI_GETWORKAREA, 0, &work, 0);
+    const int w = juce::jmin (560, (int) (work.right - work.left) - 40), h = juce::jmin (760, (int) (work.bottom - work.top) - 40);
+    impl->accountWindow = CreateWindowExW (0, L"MiDJYouTubeAccount", L"MiDJ - Cuenta de YouTube", WS_OVERLAPPEDWINDOW,
+                                           (int) (work.left + work.right - w) / 2, (int) (work.top + work.bottom - h) / 2, w, h,
+                                           nullptr, nullptr, GetModuleHandleW (nullptr), nullptr);
+    if (impl->accountWindow == nullptr)
+        return;
+    SetWindowLongPtrW (impl->accountWindow, GWLP_USERDATA, (LONG_PTR) this);
+    if (visible)
+    {
+        ShowWindow (impl->accountWindow, SW_SHOW);
+        SetForegroundWindow (impl->accountWindow);
+    }
+
+    std::weak_ptr<bool> alive = impl->alive;
+    withEnvironment ([this, alive, ready] (bool ok)
+    {
+        if (impl->accountWindow == nullptr)
+            return;
+        if (! ok)
+        {
+            closeAccount();
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Cuenta de YouTube",
+                                                    "Falta el WebView2 Runtime de Microsoft.");
+            return;
+        }
+        impl->environment->CreateCoreWebView2Controller (impl->accountWindow, Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler> (
+            [this, alive, ready] (HRESULT hr, ICoreWebView2Controller* c) -> HRESULT
+            {
+                if (alive.expired() || ! *alive.lock() || impl->accountWindow == nullptr)
+                    return S_OK;
+                if (FAILED (hr) || c == nullptr)
+                {
+                    closeAccount();
+                    return S_OK;
+                }
+                impl->accountController = c;
+                impl->accountController->get_CoreWebView2 (&impl->accountView);
+                RECT rc {};
+                GetClientRect (impl->accountWindow, &rc);
+                impl->accountController->put_Bounds (rc);
+                // Las ventanas que abra Google (ayuda, crear cuenta...) en la misma.
+                impl->accountView->add_NewWindowRequested (Callback<ICoreWebView2NewWindowRequestedEventHandler> (
+                    [this] (ICoreWebView2*, ICoreWebView2NewWindowRequestedEventArgs* args) -> HRESULT
+                    {
+                        LPWSTR uri = nullptr;
+                        args->put_Handled (TRUE);
+                        if (SUCCEEDED (args->get_Uri (&uri)) && uri != nullptr && impl->accountView != nullptr)
+                            impl->accountView->Navigate (uri);
+                        CoTaskMemFree (uri);
+                        return S_OK;
+                    }).Get(), nullptr);
+                // Cada pagina: mirar si ya hay sesion. Iniciada y de vuelta en YouTube: cerrar.
+                impl->accountView->add_NavigationCompleted (Callback<ICoreWebView2NavigationCompletedEventHandler> (
+                    [this, alive] (ICoreWebView2* view, ICoreWebView2NavigationCompletedEventArgs*) -> HRESULT
+                    {
+                        if (! alive.expired() && *alive.lock())
+                            checkSignedIn (view);
+                        return S_OK;
+                    }).Get(), nullptr);
+                ready();
+                return S_OK;
+            }).Get());
+    });
+}
+
+void YouTubePlayer::showAccount()
+{
+    openAccountWindow (true, [this]
+    {
+        impl->signingIn = ! signedIn;
+        impl->accountView->Navigate (signedIn ? L"https://www.youtube.com/account"
+                                              : L"https://accounts.google.com/ServiceLogin?service=youtube&passive=true"
+                                                L"&continue=https%3A%2F%2Fwww.youtube.com%2F");
+    });
+    sendChangeMessage();
+}
+
+void YouTubePlayer::signOut()
+{
+    // Sin pagina abierta, una ventana escondida solo para llegar a las cookies del perfil.
+    const bool hidden = impl->accountWindow == nullptr;
+    openAccountWindow (false, [this, hidden]
+    {
+        ComPtr<ICoreWebView2_2> view;
+        ComPtr<ICoreWebView2CookieManager> cookies;
+        if (SUCCEEDED (impl->accountView.As (&view)) && SUCCEEDED (view->get_CookieManager (&cookies)))
+            cookies->DeleteAllCookies();
+        updateSignedIn (false);
+        if (hidden)
+            closeAccount();
+        else
+            impl->accountView->Navigate (L"https://www.youtube.com/");
+    });
+}
+
+bool YouTubePlayer::isAccountOpen() const { return impl->accountWindow != nullptr && IsWindowVisible (impl->accountWindow); }
+
+void YouTubePlayer::closeAccount()
+{
+    if (impl->accountController != nullptr)
+        impl->accountController->Close();
+    impl->accountController.Reset();
+    impl->accountView.Reset();
+    impl->signingIn = false;
+    if (impl->accountWindow != nullptr)
+        DestroyWindow (impl->accountWindow);
+    impl->accountWindow = nullptr;
+    sendChangeMessage();
+}
+
+void YouTubePlayer::checkSignedIn (void* webView)
+{
+    ComPtr<ICoreWebView2> view (static_cast<ICoreWebView2*> (webView));
+    ComPtr<ICoreWebView2_2> view2;
+    ComPtr<ICoreWebView2CookieManager> cookies;
+    if (FAILED (view.As (&view2)) || FAILED (view2->get_CookieManager (&cookies)))
+        return;
+    LPWSTR source = nullptr;
+    view->get_Source (&source);
+    const juce::String url (source != nullptr ? source : L"");
+    CoTaskMemFree (source);
+    std::weak_ptr<bool> alive = impl->alive;
+    cookies->GetCookies (L"https://www.youtube.com", Callback<ICoreWebView2GetCookiesCompletedHandler> (
+        [this, alive, url] (HRESULT hr, ICoreWebView2CookieList* list) -> HRESULT
+        {
+            if (alive.expired() || ! *alive.lock() || FAILED (hr) || list == nullptr)
+                return S_OK;
+            // LOGIN_INFO: la sesion de YouTube (la pone YouTube al volver del inicio de sesion).
+            bool found = false;
+            UINT count = 0;
+            list->get_Count (&count);
+            for (UINT i = 0; i < count && ! found; ++i)
+            {
+                ComPtr<ICoreWebView2Cookie> cookie;
+                LPWSTR name = nullptr;
+                if (SUCCEEDED (list->GetValueAtIndex (i, &cookie)) && SUCCEEDED (cookie->get_Name (&name)) && name != nullptr)
+                    found = juce::String (name) == "LOGIN_INFO";
+                CoTaskMemFree (name);
+            }
+            updateSignedIn (found);
+            if (found && impl->signingIn && url.startsWith ("https://www.youtube.com"))
+                juce::MessageManager::callAsync ([this, alive] { if (! alive.expired() && *alive.lock()) closeAccount(); });
+            return S_OK;
+        }).Get());
+}
+
+void YouTubePlayer::updateSignedIn (bool now)
+{
+    if (signedIn != now)
+    {
+        signedIn = now;
+        sendChangeMessage();
     }
 }
 

@@ -19,10 +19,21 @@ struct YouTubeVideo
 // tocar parseResultsPage().
 namespace YouTubeSearch
 {
-    // Bloquea (red): llamar desde un hilo aparte. error: por que no hubo resultados.
-    std::vector<YouTubeVideo> search (const juce::String& query, juce::String& error);
-    // La pagina de resultados -> videos (sin directos, cortos ni listas).
-    std::vector<YouTubeVideo> parseResultsPage (const juce::String& html);
+    // Unos 20 resultados y como pedir los siguientes (lo que hace YouTube al bajar en la pagina:
+    // un POST a youtubei/v1/search con el codigo de continuacion y la version de su web).
+    struct Page
+    {
+        std::vector<YouTubeVideo> videos;
+        juce::String continuation, clientVersion;   // continuation "": no hay mas
+    };
+
+    // Bloquean (red): llamar desde un hilo aparte. error: por que no hubo resultados.
+    Page search (const juce::String& query, juce::String& error);
+    Page searchMore (const juce::String& continuation, const juce::String& clientVersion, juce::String& error);
+    // La pagina de resultados -> videos (sin directos, cortos ni listas) y la continuacion.
+    Page parseResultsPage (const juce::String& html);
+    // La respuesta JSON de una continuacion -> lo mismo.
+    Page parseMoreResults (const juce::String& json);
     // "3:41" o "1:02:03" -> segundos (0 si no se entiende).
     double parseDuration (const juce::String& text);
     // "3:41" (o "1:02:03"; "" si 0).

@@ -28,9 +28,11 @@ public:
     void save (const juce::File& file) const;
     void load (const juce::File& file);
 
-    // Ajustes del reproductor que se guardan con la lista: calidad y saltar anuncios.
+    // Ajustes del reproductor que se guardan con la lista: calidad, saltar anuncios y si la
+    // cuenta de YouTube tenia la sesion iniciada (lo que se vio la ultima vez en las cookies).
     juce::String quality { "hd720" };
     bool skipAds = true;
+    bool signedIn = false;
 
 private:
     std::vector<YouTubeVideo> items;

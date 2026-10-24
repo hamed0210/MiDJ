@@ -52,7 +52,7 @@ paquete de Microsoft), accesos directos y desinstalador. Los datos de `%APPDATA%
 ajustes) no se tocan ni al instalar ni al desinstalar.
 
 **Actualizar:** si MiDJ ya está instalado, el instalador lo detecta y muestra solo una página, *Actualizar
-MiDJ 0.3.2 -> 0.3.3*: usa la misma carpeta, el mismo modo (usuario o todos) y los mismos accesos directos, y
+MiDJ 0.3.3 -> 0.3.4*: usa la misma carpeta, el mismo modo (usuario o todos) y los mismos accesos directos, y
 cierra MiDJ si está abierto. Con la misma versión ofrece *Reinstalar*; si lo instalado es más nuevo, avisa antes
 de volver a la anterior. Para cada versión nueva basta con cambiar `AppVersion` en `Installer\MiDJ.iss` (y
 `VERSION` en `CMakeLists.txt`).
@@ -242,7 +242,8 @@ Favoritos, reproducciones y listas se guardan en `library.db`.
 ## YouTube
 
 **Biblioteca > YouTube**: se escribe en el buscador y se pulsa **Intro** (o se pega un enlace de YouTube).
-Cada video tiene **Ver** (suena ya) y **+** (a la lista del automix de YouTube); clic derecho, también "como el
+Salen unos 20 resultados; al bajar hasta el final de la lista se cargan 20 más, como en YouTube (sin Shorts
+ni directos). Cada video tiene **Ver** (suena ya) y **+** (a la lista del automix de YouTube); clic derecho, también "como el
 siguiente". Lo que suena se ve en la pestaña **YOUTUBE** del panel del automix: título, estado (Cargando,
 Anuncio, Sonando...), avance (clic en la barra: saltar), Play/Pausa, Detener (cierra el reproductor) y volumen.
 
@@ -255,6 +256,11 @@ Anuncio, Sonando...), avance (clic en la barra: saltar), Play/Pausa, Detener (ci
   sola mientras suena YouTube (manda sobre los decks).
 - El **sonido** sale por la tarjeta predeterminada de Windows: no pasa por el mezclador de MiDJ (sin EQ ni
   crossfader); su volumen es el de la pestaña YOUTUBE.
+- **Cuenta de YouTube** (por ejemplo **Premium**, sin anuncios): el reproductor tiene su propio perfil (en
+  `%APPDATA%\MiDJ\WebView2`) y no ve la sesión de Chrome ni de Edge. En la pestaña YOUTUBE, el botón de la
+  calidad (*720p*) > **Iniciar sesión...** abre una ventana con el inicio de sesión de Google; al terminar
+  vuelve a YouTube y se cierra sola. La sesión queda guardada y vale para los videos que se abran después. En
+  el mismo menú: ver la cuenta o **Cerrar sesión** (borra las cookies del reproductor).
 - El **automix de YouTube** es el mismo automix con su propia lista (pestaña YOUTUBE, Encendido/Apagado,
   siguiente y vaciar): al terminar un video suena el siguiente; un video que no se puede ver se salta. Sin
   automix, al terminar se cierra el reproductor. La lista se guarda en `youtube.xml`.

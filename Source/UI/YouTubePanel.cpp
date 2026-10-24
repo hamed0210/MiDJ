@@ -34,6 +34,7 @@ void YouTubeQueue::save (const juce::File& file) const
     juce::XmlElement xml ("YOUTUBE");
     xml.setAttribute ("quality", quality);
     xml.setAttribute ("autoSkipAds", skipAds);   // (el antiguo "skipAds" venia apagado por defecto)
+    xml.setAttribute ("signedIn", signedIn);
     for (const auto& v : items)
     {
         auto* e = xml.createNewChildElement ("VIDEO");
@@ -52,6 +53,7 @@ void YouTubeQueue::load (const juce::File& file)
     {
         quality = xml->getStringAttribute ("quality", "hd720");
         skipAds = xml->getBoolAttribute ("autoSkipAds", true);
+        signedIn = xml->getBoolAttribute ("signedIn", false);
         for (auto* e : xml->getChildWithTagNameIterator ("VIDEO"))
             items.push_back ({ e->getStringAttribute ("id"), e->getStringAttribute ("title"), e->getStringAttribute ("channel"),
                                e->getDoubleAttribute ("seconds") });
@@ -90,7 +92,8 @@ YouTubePanel::YouTubePanel (YouTubePlayer& p, YouTubeQueue& q) : player (p), que
     // Calidad y anuncios: lo guardado con la lista.
     player.setQuality (queue.quality);
     player.setSkipAds (queue.skipAds);
-    settingsButton.setTooltip ("Calidad del video de YouTube y saltar anuncios");
+    player.setSignedIn (queue.signedIn);
+    settingsButton.setTooltip ("Calidad del video de YouTube, saltar anuncios y cuenta de YouTube");
     settingsButton.onClick = [this] { showSettingsMenu(); };
     addAndMakeVisible (settingsButton);
 
@@ -162,6 +165,17 @@ void YouTubePanel::showSettingsMenu()
         updateButtons();
         resized();
     });
+    // Cuenta (Premium: sin anuncios). El reproductor no ve la sesion de Chrome ni de Edge.
+    menu.addSectionHeader ("Cuenta de YouTube");
+    if (player.isSignedIn())
+    {
+        menu.addItem ("Sesion iniciada (ver la cuenta)...", [this] { player.showAccount(); });
+        menu.addItem ("Cerrar sesion", [this] { player.signOut(); });
+    }
+    else
+    {
+        menu.addItem ("Iniciar sesion (con Premium, sin anuncios)...", [this] { player.showAccount(); });
+    }
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&settingsButton));
 }
 
@@ -186,6 +200,7 @@ void YouTubePanel::changeListenerCallback (juce::ChangeBroadcaster* source)
         list.updateContent();
         list.repaint();
     }
+    queue.signedIn = player.isSignedIn();
     // Un video que no se puede reproducir: con el automix, al siguiente a los 2 s.
     const auto state = player.getStatus().state;
     if (state == YouTubePlayer::State::error && queue.isEnabled() && ! errorPending)

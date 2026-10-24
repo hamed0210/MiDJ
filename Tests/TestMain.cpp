@@ -3657,8 +3657,11 @@ void testYouTubeSearch()
            "enlaces: watch, youtu.be, shorts e id; texto normal no", 0.0, 0.0);
 
     // Una pagina de resultados en miniatura, como la de YouTube: dos videos, un directo (sin
-    // duracion, se descarta), un repetido y una lista (no es un video).
-    const juce::String page = R"html(<html><script>var ytInitialData = {"contents":{"twoColumnSearchResultsRenderer":{"primaryContents":
+    // duracion, se descarta), un repetido y una lista (no es un video). Arriba un filtro con su
+    // propia continuacion (no es la de la lista) y al final la de la lista.
+    const juce::String page = R"html(<html><script>ytcfg.set({"INNERTUBE_CLIENT_VERSION":"2.20261023.01.00"});</script>
+      <script>var ytInitialData = {"header":{"chipCloudChipRenderer":{"navigationEndpoint":{"continuationCommand":{"token":"FILTRO"}}}},
+      "contents":{"twoColumnSearchResultsRenderer":{"primaryContents":
       {"sectionListRenderer":{"contents":[{"itemSectionRenderer":{"contents":[
         {"videoRenderer":{"videoId":"pnEHsUWFuNM","title":{"runs":[{"text":"Piensas En Mi - Nicky Jam"}]},
           "ownerText":{"runs":[{"text":"NickyJamTV"}]},"lengthText":{"simpleText":"4:16"}}},
@@ -3667,13 +3670,25 @@ void testYouTubeSearch()
         {"videoRenderer":{"videoId":"bJ1Y9S6SR9I","title":{"runs":[{"text":"La Mar"},{"text":"ia"}]},
           "longBylineText":{"runs":[{"text":"Luister La Voz"}]},"lengthText":{"simpleText":"3:41"}}},
         {"videoRenderer":{"videoId":"pnEHsUWFuNM","title":{"runs":[{"text":"Repetido"}]},"lengthText":{"simpleText":"4:16"}}}
-      ]}}]}}}}};</script></html>)html";
-    const auto videos = midj::YouTubeSearch::parseResultsPage (page);
+      ]}},{"continuationItemRenderer":{"trigger":"CONTINUATION_TRIGGER_ON_ITEM_SHOWN","continuationEndpoint":
+        {"continuationCommand":{"token":"PAGINA2","request":"CONTINUATION_REQUEST_TYPE_SEARCH"}}}}]}}}}};</script></html>)html";
+    const auto results = midj::YouTubeSearch::parseResultsPage (page);
+    const auto& videos = results.videos;
     check (videos.size() == 2, "resultados: 2 videos (sin directos, listas ni repetidos)", (double) videos.size(), 2.0);
     check (videos.size() == 2 && videos[0].id == "pnEHsUWFuNM" && videos[0].channel == "NickyJamTV" && videos[0].seconds == 256.0
                && videos[1].title == "La Maria" && videos[1].channel == "Luister La Voz",
            "resultados: id, titulo (en partes), canal y duracion", videos.empty() ? 0.0 : videos[0].seconds, 256.0);
-    check (midj::YouTubeSearch::parseResultsPage ("<html>sin datos</html>").empty(), "pagina sin datos: nada", 0.0, 0.0);
+    check (results.continuation == "PAGINA2" && results.clientVersion == "2.20261023.01.00",
+           "resultados: continuacion de la lista (no la del filtro) y version de la web", 0.0, 0.0);
+    check (midj::YouTubeSearch::parseResultsPage ("<html>sin datos</html>").videos.empty(), "pagina sin datos: nada", 0.0, 0.0);
+
+    // La respuesta de los siguientes (POST youtubei/v1/search): los videos y la continuacion siguiente.
+    const auto more = midj::YouTubeSearch::parseMoreResults (R"json({"onResponseReceivedCommands":[{"appendContinuationItemsAction":
+      {"continuationItems":[{"itemSectionRenderer":{"contents":[{"videoRenderer":{"videoId":"nq9TVmwWoOM","title":{"runs":[{"text":"Otra"}]},
+      "ownerText":{"runs":[{"text":"Canal"}]},"lengthText":{"simpleText":"2:05"}}}]}},
+      {"continuationItemRenderer":{"continuationEndpoint":{"continuationCommand":{"token":"PAGINA3"}}}}]}}]})json");
+    check (more.videos.size() == 1 && more.videos[0].id == "nq9TVmwWoOM" && more.videos[0].seconds == 125.0 && more.continuation == "PAGINA3",
+           "mas resultados: videos y continuacion", (double) more.videos.size(), 1.0);
 }
 
 // --- Limitador del master, pre-escucha y audifonos por otra tarjeta -----------------------------

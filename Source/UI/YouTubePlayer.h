@@ -57,6 +57,18 @@ public:
     void showVerification();
     void hideVerification();
     bool isVerifying() const;
+
+    // Cuenta de YouTube (p. ej. Premium: sin anuncios). El reproductor tiene su propio perfil de
+    // Edge (no ve la sesion de Chrome ni de Edge): showAccount() abre una ventana normal con el
+    // inicio de sesion de Google en ese perfil (con la sesion ya iniciada, la cuenta) y se cierra
+    // sola al volver a YouTube con la sesion iniciada. signOut() borra las cookies del perfil.
+    // La sesion vale para los videos que se abran despues. isSignedIn() es lo ultimo que se vio
+    // en las cookies (al arrancar, lo guardado: setSignedIn).
+    void showAccount();
+    void signOut();
+    bool isSignedIn() const { return signedIn; }
+    void setSignedIn (bool known) { signedIn = known; }
+    bool isAccountOpen() const;
     static juce::StringArray getQualities();
     static juce::String qualityName (const juce::String& quality);   // "720p", "Auto"...
 
@@ -77,6 +89,12 @@ private:
     void send (const juce::String& json);
     void sendSettings();
     void setState (State s);
+    // Cuando el entorno de WebView2 (el perfil) este listo, o no se pueda crear (false).
+    void withEnvironment (std::function<void (bool)> then);
+    void openAccountWindow (bool visible, std::function<void()> ready);
+    void closeAccount();
+    void checkSignedIn (void* webView);   // ICoreWebView2*: mira las cookies de YouTube
+    void updateSignedIn (bool now);
 
     std::unique_ptr<Impl> impl;
     juce::File dataFolder;
@@ -86,5 +104,6 @@ private:
     float volume = 0.8f;
     juce::String quality { "hd720" };
     bool skipAds = true;
+    bool signedIn = false;
 };
 }
