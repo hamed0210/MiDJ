@@ -87,6 +87,7 @@ void SceneItem::resetSourceSettings()
     clearOnEnd = d.clearOnEnd;
     closeWhenInactive = d.closeWhenInactive;
     speedPercent = d.speedPercent;
+    matte = d.matte;
     hardwareDecode = d.hardwareDecode;
     volume = d.volume;
     muted = d.muted;
@@ -232,6 +233,8 @@ std::unique_ptr<juce::XmlElement> SceneCollection::toXml() const
         e->setAttribute ("cut", t.cutMilliseconds);
         e->setAttribute ("softness", t.softness);
         e->setAttribute ("colour", t.colour.toString());
+        if (t.matte)
+            e->setAttribute ("matte", true);
     }
     for (const auto& s : scenes)
     {
@@ -305,6 +308,8 @@ std::unique_ptr<juce::XmlElement> SceneCollection::toXml() const
                 e->setAttribute ("clearOnEnd", i.clearOnEnd);
                 e->setAttribute ("closeInactive", i.closeWhenInactive);
                 e->setAttribute ("speed", i.speedPercent);
+                if (i.matte)
+                    e->setAttribute ("matte", true);
             }
             if (i.type == SourceType::captureDevice)
             {
@@ -384,6 +389,7 @@ SceneCollection SceneCollection::fromXml (const juce::XmlElement& xml, int w, in
             i.clearOnEnd = e->getBoolAttribute ("clearOnEnd", i.clearOnEnd);
             i.closeWhenInactive = e->getBoolAttribute ("closeInactive", i.closeWhenInactive);
             i.speedPercent = juce::jlimit (1, 200, e->getIntAttribute ("speed", i.speedPercent));
+            i.matte = e->getBoolAttribute ("matte");
             i.deviceId = e->getStringAttribute ("deviceId");
             i.deviceName = e->getStringAttribute ("deviceName");
             i.customFormat = e->getBoolAttribute ("customFormat");
@@ -423,6 +429,7 @@ SceneCollection SceneCollection::fromXml (const juce::XmlElement& xml, int w, in
         t.cutMilliseconds = juce::jlimit (0, t.milliseconds, e->getIntAttribute ("cut", t.milliseconds / 2));
         t.softness = juce::jlimit (0.0f, 1.0f, (float) e->getDoubleAttribute ("softness", 0.2));
         t.colour = juce::Colour::fromString (e->getStringAttribute ("colour", "ff000000"));
+        t.matte = e->getBoolAttribute ("matte");
         c.lastId = juce::jmax (c.lastId, t.id);
         c.customTransitions.push_back (t);
     }

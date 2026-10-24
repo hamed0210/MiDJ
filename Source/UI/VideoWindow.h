@@ -84,8 +84,10 @@ public:
     const VideoProgram& getProgram() const { return program; }
     VideoMix& getMix() { return mix; }
     void switchToScene (int sceneId);
-    // Transiciones propias: anadir (devuelve su id y queda elegida), quitar y probar sin cambiar de escena.
+    // Transiciones propias: anadir (devuelve su id y queda elegida), modificar (por su id), quitar
+    // y probar sin cambiar de escena.
     int addCustomTransition (CustomTransition transition);
+    void updateCustomTransition (const CustomTransition& transition);
     void removeCustomTransition (int id);
     void previewTransition (const CustomTransition& transition);
     void scenesChanged();   // tras editar la coleccion: se publica, se refresca y se guarda

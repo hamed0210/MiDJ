@@ -673,6 +673,11 @@ private:
         toggle ("Utilizar la decodificacion por hardware cuando este disponible", &SceneItem::hardwareDecode);
         toggle ("No mostrar nada al terminar la reproduccion", &SceneItem::clearOnEnd);
         toggle ("Cerrar archivo cuando este inactivo", &SceneItem::closeWhenInactive);
+        // Al cambiarlo cambia el tamano de la fuente (la mitad de ancho): se vuelve a encajar.
+        toggle ("Video con mate (color a la izquierda, transparencia a la derecha)", &SceneItem::matte,
+                [this] (SceneItem& i) { stage.fitWhenReady (i.id); })
+            .setTooltip ("Para videos con transparencia: el color en la mitad izquierda y en la derecha la transparencia en grises "
+                         "(blanco = se ve). Como convertir un video con transparencia: LEEME, 'Videos con mate'");
         slider ("Velocidad", 1.0, 200.0, 1.0, " %", [] (const SceneItem& i) { return (double) i.speedPercent; },
                 [] (SceneItem& i, double v) { i.speedPercent = (int) v; });
         buildVolume();

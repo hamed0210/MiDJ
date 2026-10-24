@@ -232,16 +232,23 @@ void MixerComponent::refreshTransitions()
         std::unique_ptr<IconButton> remove;
         if (customId != 0)
         {
-            remove = std::make_unique<IconButton> (Icons::Glyph::close, "Quitar esta transicion");
+            // El lapiz de una propia: Modificar o Quitar.
+            remove = std::make_unique<IconButton> (Icons::Glyph::pencil, "Modificar o quitar esta transicion");
             remove->onClick = [this, customId]
             {
-                if (stage != nullptr)
-                    stage->removeCustomTransition (customId);
-                juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<MixerComponent> (this)]
+                juce::PopupMenu menu;
+                menu.addItem ("Modificar...", [this, customId] { editCustomTransition (customId); });
+                menu.addItem ("Quitar", [this, customId]
                 {
-                    if (safe != nullptr)
-                        safe->refreshTransitions();
+                    if (stage != nullptr)
+                        stage->removeCustomTransition (customId);
+                    juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<MixerComponent> (this)]
+                    {
+                        if (safe != nullptr)
+                            safe->refreshTransitions();
+                    });
                 });
+                menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (removeButtonFor (customId)));
             };
             addAndMakeVisible (*remove);
         }
@@ -322,6 +329,42 @@ void MixerComponent::addCustomTransition()
                 safe->refreshTransitions();
             }
         });
+}
+
+void MixerComponent::editCustomTransition (int id)
+{
+    if (stage == nullptr)
+        return;
+    const auto* existing = stage->getScenes().findCustom (id);
+    if (existing == nullptr)
+        return;
+    juce::Component::SafePointer<MixerComponent> safe (this);
+    TransitionDialog::show (getTopLevelComponent(),
+        [safe] (const CustomTransition& t)
+        {
+            if (safe != nullptr && safe->stage != nullptr)
+            {
+                safe->showVideoTab (true);
+                safe->stage->previewTransition (t);
+            }
+        },
+        [safe] (const CustomTransition& t)
+        {
+            if (safe != nullptr && safe->stage != nullptr)
+            {
+                safe->stage->updateCustomTransition (t);
+                safe->refreshTransitions();
+            }
+        },
+        existing);
+}
+
+juce::Component* MixerComponent::removeButtonFor (int customId)
+{
+    for (size_t i = 0; i < transitionCustomIds.size(); ++i)
+        if (transitionCustomIds[i] == customId)
+            return removeButtons[i].get();
+    return nullptr;
 }
 
 void MixerComponent::showVideoTab (bool video)

@@ -2584,6 +2584,30 @@ void testScenes()
                "transiciones: barrido con imagen a la mitad", img.getPixelAt (160, 360).getBlue(), 255.0);
     }
 
+    // Video con mate: el color de la mitad izquierda donde el mate (mitad derecha) es blanco; donde
+    // es negro se ve lo de abajo. Aqui el mate deja ver la mitad izquierda del rojo.
+    {
+        juce::Image matted (juce::Image::ARGB, 64, 16, false);
+        for (int x = 0; x < 64; ++x)
+            for (int y = 0; y < 16; ++y)
+                matted.setPixelAt (x, y, x < 32 ? juce::Colours::red : x < 48 ? juce::Colours::white : juce::Colours::black);
+        Compositor::Layer under, over;
+        under.slot = 904;
+        under.image = solidImage (16, 9, juce::Colours::lime);
+        under.version = 1;
+        under.area = over.area = { 0.0f, 0.0f, 1280.0f, 720.0f };
+        over.slot = 905;
+        over.image = matted;
+        over.version = 1;
+        over.matte = true;
+        frame.layers = { under, over };
+        compositor.renderOnce (frame);
+        img = compositor.readProgram();
+        const auto seen = img.getPixelAt (320, 360), hidden = img.getPixelAt (960, 360);
+        check (seen.getRed() > 250 && seen.getGreen() < 5 && hidden.getGreen() > 250 && hidden.getRed() < 5,
+               "video con mate: el color donde el mate es blanco, lo de abajo donde es negro", seen.getRed(), 255.0);
+    }
+
     // El programa: escena con un color, cambio de escena con transicion y despues sin ella.
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
@@ -2683,6 +2707,22 @@ void testScenes()
         videoProgram.setStinger (nullptr);
         col.transition.custom = 0;
         videoProgram.setScenes (col);
+
+        // Probar un barrido: de ella a ella misma no se veria; va a negro y vuelve a la escena.
+        CustomTransition wipe;
+        wipe.kind = CustomTransitionKind::luma;
+        wipe.milliseconds = 300;
+        videoProgram.previewTransition (wipe);
+        const bool goingOut = videoProgram.isInTransition() && videoProgram.getCurrentScene() == green.id;
+        juce::Thread::sleep (330);   // acabada la ida
+        f.clear();
+        videoProgram.buildFrame (f);   // empieza la vuelta
+        const bool returning = videoProgram.isInTransition() && videoProgram.getCurrentScene() == green.id;
+        juce::Thread::sleep (330);
+        f.clear();
+        videoProgram.buildFrame (f);
+        check (goingOut && returning && ! videoProgram.isInTransition() && videoProgram.getCurrentScene() == green.id,
+               "transiciones: probar un barrido va a negro y vuelve a la escena", 0.0, 0.0);
     }
 
     // Fuente de imagen: un PNG de 200x100 en el centro, a su tamano.
@@ -3170,11 +3210,13 @@ void testMediaSource()
     dev.audioDevice = "Digital Audio Interface (USB3. 0 capture)";
     dev.volume = 0.5f;
     auto& scene = c.addScene ("Captura");
+    item.matte = true;
     scene.items.push_back (item);
     scene.items.push_back (dev);
     const auto back = SceneCollection::fromXml (*c.toXml(), 1280, 720);
     const auto* s = back.findScene (scene.id);
     check (s != nullptr && s->items.size() == 2 && s->items[0].type == SourceType::media && s->items[0].loop && s->items[0].speedPercent == 200
+               && s->items[0].matte && ! s->items[1].matte
                && s->items[0].file == item.file && s->items[1].type == SourceType::captureDevice && s->items[1].deviceId == dev.deviceId
                && s->items[1].captureFps == 60.0 && s->items[1].captureFormat == "MJPG" && s->items[1].audioDevice == dev.audioDevice
                && s->items[1].volume == 0.5f,

@@ -19,6 +19,7 @@ con favoritos y listas, escenas y fuentes como OBS (capturas, capturadoras, visu
 | Modelo Spleeter 2 stems int8 | sherpa-onnx | `D:\Tools\models\spleeter-2stems-int8` (se copia junto al programa) |
 | WebView2 SDK (cargador estático) | 1.0.3240.44 | `D:\Tools\WebView2` (otra ruta: `-DWEBVIEW2_DIR=...`) |
 | Inno Setup (solo para el instalador) | 6.7 | `%LOCALAPPDATA%\Programs\Inno Setup 6` |
+| FFmpeg (solo para convertir videos con transparencia) | build de BtbN, win64 gpl | `D:\Tools\ffmpeg` |
 | Git | cualquiera | ya instalado |
 
 Para usar MiDJ hace falta Windows 10 1903 o posterior. YouTube usa además el motor WebView2 de Microsoft,
@@ -51,7 +52,7 @@ paquete de Microsoft), accesos directos y desinstalador. Los datos de `%APPDATA%
 ajustes) no se tocan ni al instalar ni al desinstalar.
 
 **Actualizar:** si MiDJ ya está instalado, el instalador lo detecta y muestra solo una página, *Actualizar
-MiDJ 0.3.0 -> 0.3.1*: usa la misma carpeta, el mismo modo (usuario o todos) y los mismos accesos directos, y
+MiDJ 0.3.1 -> 0.3.2*: usa la misma carpeta, el mismo modo (usuario o todos) y los mismos accesos directos, y
 cierra MiDJ si está abierto. Con la misma versión ofrece *Reinstalar*; si lo instalado es más nuevo, avisa antes
 de volver a la anterior. Para cada versión nueva basta con cambiar `AppVersion` en `Installer\MiDJ.iss` (y
 `VERSION` en `CMakeLists.txt`).
@@ -139,6 +140,7 @@ Installer/
   MiDJ.iss              instalador (Inno Setup): instala o actualiza
 Resources/
   Logo/                 logo: SVG originales, render.ps1 y las imagenes que genera
+  Tools/alpha-a-mate.ps1  video con transparencia -> MP4 con mate (con FFmpeg)
 ```
 
 ## Interfaz y atajos de teclado
@@ -169,8 +171,11 @@ Diseño "Escenario" (oscuro, deck A en azul y B en ámbar), pensado para una pan
   automático; en los decks, la forma de onda, el pitch y KEY, los loops, los stems o los efectos (el deck se
   compacta sin huecos y lo de abajo crece); **Audio y audífonos...** (ver abajo) y restablecer. Se guarda en
   `%APPDATA%\MiDJ\layout.xml`; la ventana recuerda su tamaño, posición y si estaba maximizada (`window.txt`).
-- **Crossfader automático**: al dar Play a un deck que el crossfader deja apagado, si el otro no suena, el
-  crossfader pasa a su lado en 0,4 s (no con el automix encendido).
+- **Crossfader**: al arrancar MiDJ está del todo en A. **Automático** (con clic en Play, espacio o MIDI): al
+  dar Play a un deck, si el otro no suena y el crossfader lo deja apagado, pasa a su lado en 0,4 s; si el otro
+  ya sonaba, pasa del todo a su lado y el otro se pausa al llegar (un cambio de canción). Si arrancan los dos
+  a la vez, o se agarra el crossfader con el ratón, no se toca nada; tampoco con el automix encendido. Se
+  quita en Ajustes ("Play: crossfader al deck, pausa el otro").
 
 El **deck activo** (marco del color del deck) es el de los atajos: se elige con un clic en el deck, con
 Tab o cargando una canción en él. Botón **Atajos**:
@@ -306,7 +311,8 @@ Abajo a la derecha están los paneles **Escenas** y **Fuentes**, como los de OBS
 `%APPDATA%\MiDJ\scenes.xml`; por defecto, una escena "Mezcla" con la mezcla de los decks):
 - **Escenas**: clic para ponerla al aire con la transición elegida bajo el crossfader (Corte, Fundido,
   A negro, Deslizar o Barrido, de 0,1 a 3 s, o una propia); Ctrl+1-9 (o F1-F9) pasan a las nueve primeras.
-  Botones para crear, borrar, renombrar y ordenar; clic derecho para duplicar y para **Pasar a esta escena
+  Botones para crear (la escena nueva empieza vacía, sin fuentes), borrar, renombrar y ordenar; clic derecho
+  para duplicar y para **Pasar a esta escena
   automáticamente**: cuando lo que más se oye de los decks es una canción de audio, un video, cuando no suena
   nada (tras 1,5 s) o cuando suena YouTube (un icono en la lista lo indica). Solo actúa al cambiar: una escena
   elegida a mano se respeta hasta el próximo cambio.
@@ -323,14 +329,37 @@ Abajo a la derecha están los paneles **Escenas** y **Fuentes**, como los de OBS
   bordes y al centro; Mayús para no pegarse), arrastrar una esquina para escalarla sin deformar (Mayús para
   deformar), flechas para mover de 1 en 1 (Mayús: de 10 en 10) y Supr para quitarla.
 - **Transiciones propias** (**+ Personalizada**, bajo el crossfader): nombre y tipo, con **Probar en el
-  programa** (se hace sin cambiar de escena) y **Añadir transición** (queda elegida; su **x** la quita):
+  programa** (se hace sin cambiar de escena; un barrido va a negro y vuelve, que de la escena a ella misma no
+  se vería) y **Añadir transición** (queda elegida). La ventana se abre abajo a la izquierda para que se vea
+  la salida de video al probar. Su **lápiz**: **Modificar...** (la misma ventana con sus datos y **Guardar
+  cambios**) o **Quitar**:
   - **Stinger**: un video tapa el cambio; la escena cambia debajo en el **punto de cambio** y su sonido va al
     master. Al elegir el video se toma su duración y el punto de cambio a la mitad. Media Foundation no da
-    transparencia: el video se ve entero.
+    transparencia: el video se ve entero, salvo un **video con mate** (ver abajo; la casilla se marca sola al
+    elegir uno de doble ancho), que deja ver la escena por donde es transparente.
   - **Barrido**: la escena nueva entra por donde una imagen en grises es más oscura, con el borde suavizado
     (en la GPU); sin imagen, un barrido en diagonal.
   - **A color**: funde al color elegido y del color a la escena nueva.
   Se guardan en `scenes.xml` con las escenas.
+
+### Videos con mate (transparencia)
+
+Media Foundation no decodifica la transparencia (ni WebM VP9 con alfa ni ProRes 4444), así que MiDJ usa
+videos **con mate**, como el "Track Matte" de OBS: un MP4 H.264 normal del doble de ancho con el color en
+la mitad izquierda y la transparencia en grises en la derecha (blanco = se ve). Se decodifica en la tarjeta
+gráfica y el compositor recorta el color con el mate. Sirve para **stingers** y para fuentes **Multimedia**
+encima de otras (logos animados, tercios inferiores...): casilla **Video con mate** en sus propiedades (la
+fuente mide la mitad de ancho y se vuelve a encajar).
+
+Para convertir un video con transparencia (ProRes 4444 `.mov`, WebM VP9 con alfa, PNG...) hace falta
+[FFmpeg](https://ffmpeg.org) (en este equipo, `D:\Tools\ffmpeg`):
+
+```bat
+powershell -ExecutionPolicy Bypass -File Resources\Tools\alpha-a-mate.ps1 D:\Videos\intro.mov
+```
+
+Deja `intro_mate.mp4` junto al original, de 2560x720 (cada mitad, del tamaño del programa; `-Width` y
+`-Height` lo cambian). Con MiDJ instalado, el script está en la carpeta `Herramientas` del programa.
 
 ### Captura de pantalla y de ventana
 
@@ -441,7 +470,8 @@ los pesos de Spleeter son de Deezer con licencia MIT (exportados a ONNX por el p
 - Fuentes **Multimedia** (archivo de video o audio con bucle, reiniciar al activarse, no mostrar nada al terminar, cerrar si está inactiva, velocidad y su sonido al master) y **Dispositivo de captura de video** (capturadoras USB/HDMI y webcams con Media Foundation: resolución, FPS y formato, volteo, decodificación por hardware y el audio HDMI de su entrada de Windows, remuestreado con corrección de reloj), como en OBS.
 - Interfaz como VirtualDJ + OBS: video integrado en la pestaña VIDEO del mezclador (vista previa, nivel de video por deck, transición), crossfader dentro del mezclador, sampler en la fila del medio, paneles inferiores ajustables a lo ancho (carpetas, canciones, automix en su propio panel, escenas y fuentes), diálogos Añadir fuente y Propiedades como los de OBS, ojo y candado por fuente, icono de audio o video en la lista, una sola forma de onda por deck y atajos de teclado (Espacio, Tab, C/S/K, Intro, flechas, A, 1-8, F1-F9, V, Ctrl+F).
 - Interfaz "Escenario": estilo oscuro nuevo; decks con portada del video, pitch con el centro marcado y enganche, loops, stems, efectos y transporte; centro con pestañas AUDIO (EQ, filtro, vúmetros y volumen del master) y PROGRAMA, crossfader con centro marcado y volúmenes a los lados, sampler en fila; paneles de abajo con barritas de ancho y Ajustes para ocultarlos; biblioteca con árbol Música local / Mis carpetas / Discos, quitar con Deshacer y sincronizar con el PC; automix con iconos.
-- Transiciones propias: stinger (video con punto de cambio y su sonido), barrido con imagen en grises (máscara en la GPU) y a color, con probar en el programa; guardadas en `scenes.xml`.
+- Transiciones propias: stinger (video con punto de cambio y su sonido), barrido con imagen en grises (máscara en la GPU) y a color, con probar en el programa y modificar; guardadas en `scenes.xml`.
+- Videos con mate (color a la izquierda, transparencia a la derecha) para stingers y fuentes Multimedia con transparencia, recortados en la GPU; script con FFmpeg para convertir ProRes 4444 / WebM VP9 con alfa.
 - Interfaz "Escenario" v2: programa grande con los volúmenes a los lados, sampler y pestañas AUDIO / PROGRAMA en la barra de arriba, crossfader y transiciones en una línea, forma de onda delgada y partes de los decks ocultables desde Ajustes (el deck se compacta y lo de abajo crece).
 - Biblioteca: favoritos (estrella), más reproducidos (30 s sonando) y listas de reproducción propias; el automix las reproduce desde "Listas".
 - Escenas automáticas (cuando suena audio, video, YouTube o nada), Ctrl+1-9 para las escenas, Espacio que pausa lo que suena y vuelve a eso mismo, crossfader automático al dar Play, Escenas y Fuentes ocultables por separado con barrita entre ellas.

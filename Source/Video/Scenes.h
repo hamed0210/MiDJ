@@ -70,6 +70,9 @@ struct SceneItem
     // no esta al aire y velocidad del 1 al 200 %.
     bool loop = false, restartOnActivate = true, clearOnEnd = true, closeWhenInactive = false;
     int speedPercent = 100;
+    // Video con mate (como el "Track Matte" de OBS): el color en la mitad izquierda y la
+    // transparencia en grises en la derecha (blanco = se ve). La fuente mide la mitad de ancho.
+    bool matte = false;
     bool hardwareDecode = true;                      // multimedia y capturadora: decodificar en la tarjeta grafica (OBS: no; aqui si, la CPU es lenta)
 
     // Sonido de la fuente (multimedia y capturadora): va al master.
@@ -132,6 +135,7 @@ struct CustomTransition
     juce::File file;                  // stinger: el video; luma: la imagen en grises
     int milliseconds = 1200;          // duracion total
     int cutMilliseconds = 600;        // stinger: cuando cambia la escena debajo
+    bool matte = false;               // stinger: video con mate (color a la izquierda, transparencia a la derecha)
     float softness = 0.2f;            // luma: suavidad del borde (0..1)
     juce::Colour colour { juce::Colours::black };   // a color
 };

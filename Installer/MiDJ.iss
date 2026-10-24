@@ -13,7 +13,7 @@
 ; MiDJ si esta abierto. Si lo instalado es mas nuevo, avisa antes de volver a una version anterior.
 
 #define AppName "MiDJ"
-#define AppVersion "0.3.1"
+#define AppVersion "0.3.2"
 #define AppGuid "6B3F2C1E-8A4D-4F2B-9C7E-4D1A5E9B7C21"
 #define Release "..\build\MiDJ_artefacts\Release"
 #define Logo "..\Resources\Logo"
@@ -60,6 +60,7 @@ Source: "{#VcRuntime}\msvcp140.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#VcRuntime}\vcruntime140.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#VcRuntime}\vcruntime140_1.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}"; DestName: "LEEME.md"; Flags: ignoreversion
+Source: "..\Resources\Tools\alpha-a-mate.ps1"; DestDir: "{app}\Herramientas"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\MiDJ.exe"

@@ -40,6 +40,7 @@ cbuffer Placement : register(b0)
     float4 uv;       // zona de la textura (izquierda, arriba, derecha, abajo)
     float4 params;   // x = opacidad, y = 1 si la imagen no tiene alfa (capturas del escritorio),
                      // z = avance del barrido con mascara (< 0: sin mascara), w = suavidad del borde
+    float4 extra;    // x = 1 si es un video con mate, y = medio pixel de la textura en u
 };
 Texture2D image : register(t0);
 Texture2D maskImage : register(t1);
@@ -64,10 +65,19 @@ float3 srgbToLinear (float3 c)
 
 float4 psLayer (VsOut i) : SV_Target
 {
-    float4 c = image.Sample (linearClamp, i.uv);
-    if (params.y > 0.5) c.a = 1;
+    float2 t = i.uv;
+    float matteAlpha = 1;
+    if (extra.x > 0.5)
+    {
+        // Video con mate: el color en la mitad izquierda y la transparencia en grises en la
+        // derecha (sin pasar de la mitad, para no mezclar las dos al filtrar).
+        t.x = clamp (t.x * 0.5, extra.y, 0.5 - extra.y);
+        matteAlpha = saturate (dot (image.Sample (linearClamp, t + float2 (0.5, 0)).rgb, float3 (0.299, 0.587, 0.114)));
+    }
+    float4 c = image.Sample (linearClamp, t);
+    if (params.y > 0.5 || extra.x > 0.5) c.a = 1;
     float3 straight = c.a > 0 ? c.rgb / c.a : 0;
-    float a = c.a * params.x;
+    float a = c.a * params.x * matteAlpha;
     if (params.z >= 0)
     {
         // Barrido con forma: entra primero lo oscuro de la mascara. El borde va de -s a 1+s para
@@ -91,6 +101,7 @@ float4 psCopy (VsOut i) : SV_Target
         float points[8];
         float uv[4];
         float params[4];
+        float extra[4];
     };
 
     struct Output
@@ -332,7 +343,7 @@ struct Compositor::Impl
     // Un cuadrilatero (esquinas en pixeles del destino, en el orden de Quad) con una zona de la textura.
     void draw (ID3D11ShaderResourceView* view, ID3D11PixelShader* shader, const Quad& q,
                float targetW, float targetH, juce::Rectangle<float> uv, float opacity, bool opaque = false,
-               float maskProgress = -1.0f, float maskSoftness = 0.1f)
+               float maskProgress = -1.0f, float maskSoftness = 0.1f, float matteTextureWidth = 0.0f)
     {
         Placement p {};
         auto put = [&] (int i, juce::Point<float> pt)
@@ -349,6 +360,8 @@ struct Compositor::Impl
         p.params[1] = opaque ? 1.0f : 0.0f;
         p.params[2] = maskProgress;
         p.params[3] = maskSoftness;
+        p.extra[0] = matteTextureWidth > 0.0f ? 1.0f : 0.0f;
+        p.extra[1] = matteTextureWidth > 0.0f ? 0.5f / matteTextureWidth : 0.0f;
         context->UpdateSubresource (constants.Get(), 0, nullptr, &p, 0, 0);
         context->PSSetShader (shader, nullptr, 0);
         context->PSSetShaderResources (0, 1, &view);
@@ -490,6 +503,9 @@ struct Compositor::Impl
             }
             if (view == nullptr)
                 continue;
+            const float textureW = sw;
+            if (layer.matte)
+                sw *= 0.5f;   // la imagen es la mitad izquierda
             const auto area = layer.area.isEmpty()
                                   ? fitInside (sw * layer.uv.getWidth(), sh * layer.uv.getHeight(), { w, h })
                                   : layer.area;
@@ -513,7 +529,7 @@ struct Compositor::Impl
                 }
             }
             draw (view, layerShader.Get(), quad, w, h, layer.uv, juce::jlimit (0.0f, 1.0f, layer.opacity), gpu.opaque && gpu.view != nullptr,
-                  maskProgress, layer.maskSoftness);
+                  maskProgress, layer.maskSoftness, layer.matte ? textureW : 0.0f);
             if (maskProgress >= 0.0f)
             {
                 ID3D11ShaderResourceView* noMask = nullptr;

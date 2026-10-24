@@ -157,6 +157,8 @@ private:
     void updateAutoCrossfader();
     std::array<bool, 2> wasPlaying {};
     float crossfaderTarget = -1.0f;   // < 0: no se esta moviendo solo
+    int crossfaderDeck = 0;           // el deck hacia el que va
+    bool pauseWhenCrossed = false;    // al llegar, pausar el otro (empezo uno con el otro sonando)
     juce::uint32 pendingAutoSince = 0;
 
     // Barra de arriba.

@@ -55,6 +55,7 @@ TransitionDialog::TransitionDialog()
     nameEditor.setTextToShowWhenEmpty ("p. ej. Logo girando", DarkLookAndFeel::textFaint);
     nameEditor.setFont (DarkLookAndFeel::sans (14.0f));
     nameEditor.setIndents (10, 7);
+    nameEditor.setSelectAllWhenFocused (true);   // al modificarla, escribir reemplaza el nombre
     nameEditor.onTextChange = [this] { update(); };
     addAndMakeVisible (nameEditor);
 
@@ -73,6 +74,10 @@ TransitionDialog::TransitionDialog()
     addAndMakeVisible (fileEditor);
     browseButton.onClick = [this] { chooseFile(); };
     addAndMakeVisible (browseButton);
+    matteToggle.setTooltip ("Para videos con transparencia: la escena se ve por donde el video es transparente "
+                            "(se marca solo al elegir un video de doble ancho)");
+    matteToggle.onClick = [this] { repaint(); };
+    addAndMakeVisible (matteToggle);
 
     setUpSlider (cutSlider, 0.0, 20000.0, 50.0, 600.0, " ms");
     setUpSlider (durationSlider, 100.0, 20000.0, 50.0, 1200.0, " ms");
@@ -116,31 +121,57 @@ TransitionDialog::TransitionDialog()
         addAndMakeVisible (b);
 
     setKind (CustomTransitionKind::stinger);
-    setSize (540, 470);
+    setSize (540, 500);
 }
 
 TransitionDialog::~TransitionDialog() = default;
 
 void TransitionDialog::show (juce::Component* parent, std::function<void (const CustomTransition&)> tryIt,
-                             std::function<void (const CustomTransition&)> save)
+                             std::function<void (const CustomTransition&)> save, const CustomTransition* existing)
 {
     auto content = std::make_unique<TransitionDialog>();
     content->onTry = std::move (tryIt);
     content->onSave = std::move (save);
+    if (existing != nullptr)
+        content->load (*existing);
     juce::DialogWindow::LaunchOptions options;
     options.content.setOwned (content.release());
-    options.dialogTitle = "Nueva transicion personalizada";
+    options.dialogTitle = existing != nullptr ? "Modificar transicion" : "Nueva transicion personalizada";
     options.dialogBackgroundColour = juce::Colour (0xff18181b);
     options.componentToCentreAround = parent;
     options.escapeKeyTriggersCloseButton = true;
     options.useNativeTitleBar = true;
     options.resizable = false;
-    options.launchAsync();
+    // Centrada taparia la salida de video (arriba en el centro): abajo a la izquierda, donde la
+    // biblioteca, para ver la prueba.
+    if (auto* window = options.launchAsync(); window != nullptr && parent != nullptr)
+    {
+        const auto area = parent->getScreenBounds();
+        window->setTopLeftPosition (area.getX() + 12, juce::jmax (area.getY(), area.getBottom() - window->getHeight() - 12));
+    }
+}
+
+void TransitionDialog::load (const CustomTransition& t)
+{
+    editingId = t.id;
+    nameEditor.setText (t.name, false);
+    setKind (t.kind);   // antes que el archivo: cambiar de tipo lo borra
+    file = t.file;
+    fileEditor.setText (file.getFileName(), false);
+    durationSlider.setValue (t.milliseconds, juce::dontSendNotification);
+    cutSlider.setValue (t.cutMilliseconds, juce::dontSendNotification);
+    softnessSlider.setValue (t.softness * 100.0, juce::dontSendNotification);
+    matteToggle.setToggleState (t.matte, juce::dontSendNotification);
+    colour = t.colour;
+    saveButton.setButtonText ("Guardar cambios");
+    update();
+    repaint();
 }
 
 CustomTransition TransitionDialog::current() const
 {
     CustomTransition t;
+    t.id = editingId;
     t.name = nameEditor.getText().trim();
     if (t.name.isEmpty())
         t.name = "Personalizada";
@@ -150,6 +181,7 @@ CustomTransition TransitionDialog::current() const
     t.cutMilliseconds = juce::jmin ((int) cutSlider.getValue(), t.milliseconds);
     t.softness = (float) softnessSlider.getValue() / 100.0f;
     t.colour = colour;
+    t.matte = kind == CustomTransitionKind::stinger && matteToggle.getToggleState();
     return t;
 }
 
@@ -164,6 +196,7 @@ void TransitionDialog::setKind (CustomTransitionKind k)
     fileEditor.setVisible (! solid);
     browseButton.setVisible (! solid);
     cutSlider.setVisible (stinger);
+    matteToggle.setVisible (stinger);
     softnessSlider.setVisible (luma);
     for (auto& s : swatches)
         s.setVisible (solid);
@@ -201,7 +234,10 @@ void TransitionDialog::chooseFile()
                                       const double ms = juce::jlimit (100.0, 20000.0, decoder->getDuration() * 1000.0);
                                       durationSlider.setValue (ms, juce::dontSendNotification);
                                       cutSlider.setValue (std::round (ms / 2.0 / 50.0) * 50.0, juce::dontSendNotification);
+                                      // Mas de 3 veces mas ancho que alto (2560x720, 3840x1080): un 16:9 con su mate al lado.
+                                      matteToggle.setToggleState (decoder->getWidth() > 3 * decoder->getHeight(), juce::dontSendNotification);
                                   }
+                                  repaint();
                               }
                               update();
                           });
@@ -261,7 +297,9 @@ void TransitionDialog::paint (juce::Graphics& g)
     {
         g.setColour (DarkLookAndFeel::textFaint);
         g.setFont (DarkLookAndFeel::sans (11.0f));
-        g.drawFittedText ("El video se ve entero (sin transparencia) y su sonido va al master.", noteArea, juce::Justification::topLeft, 2);
+        g.drawFittedText (matteToggle.getToggleState() ? "Con mate se ve la escena por donde el video es transparente. Su sonido va al master."
+                                                       : "Sin mate el video se ve entero (sin transparencia). Su sonido va al master.",
+                          noteArea, juce::Justification::topLeft, 2);
     }
     g.setColour (DarkLookAndFeel::line);
     g.fillRect (16, saveButton.getY() - 14, getWidth() - 32, 1);
@@ -297,7 +335,12 @@ void TransitionDialog::resized()
         browseButton.setBounds (row.removeFromRight (110));
         row.removeFromRight (8);
         fileEditor.setBounds (row);
-        r.removeFromTop (12);
+        r.removeFromTop (matteToggle.isVisible() ? 6 : 12);
+    }
+    if (matteToggle.isVisible())
+    {
+        matteToggle.setBounds (r.removeFromTop (24));
+        r.removeFromTop (8);
     }
     auto sliderRow = [&r] (juce::Rectangle<int>& label, juce::Slider& s)
     {

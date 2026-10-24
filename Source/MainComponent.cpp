@@ -209,6 +209,7 @@ MainComponent::MainComponent()
     keepFocusForShortcuts (*this);
 
     loadLayout();
+    mixer.setCrossfader (0.0f);   // se empieza con todo en A
     setSize (1366, 720);
     // Sin entradas; hasta 4 salidas (las 3 y 4, para los audifonos si la tarjeta las tiene),
     // con la tarjeta, frecuencia y bloque guardados.
@@ -503,19 +504,31 @@ void MainComponent::toggleMidiLearn()
 
 void MainComponent::updateAutoCrossfader()
 {
-    // Al empezar a sonar un deck que el crossfader deja sin volumen (o casi), si el otro no
-    // suena, el crossfader se desliza a su lado en ~0,4 s. Con el otro sonando no se toca: puede
-    // ser una mezcla preparada. El automix maneja el crossfader solo.
+    // Al empezar a sonar un deck (con clic, espacio o MIDI), el crossfader se desliza a su lado en
+    // ~0,4 s: si el otro no suena, solo cuando lo deja sin volumen (o casi); si el otro ya sonaba,
+    // del todo y el otro se pausa al llegar (un cambio de cancion). Si arrancan los dos a la vez
+    // (el espacio que vuelve a poner los dos) no se toca. El automix maneja el crossfader solo.
+    const auto before = wasPlaying;
     for (int d = 0; d < 2; ++d)
     {
         const bool playing = (d == 0 ? deckA : deckB).isPlaying();
         const bool otherPlaying = (d == 0 ? deckB : deckA).isPlaying();
-        if (playing && ! wasPlaying[(size_t) d] && ! otherPlaying && panels.autoCrossfader && ! automix.isEnabled())
+        if (playing && ! before[(size_t) d] && panels.autoCrossfader && ! automix.isEnabled())
         {
             const float cross = mixer.getCrossfader();
             const float gain = juce::jmin (1.0f, 2.0f * (d == 0 ? 1.0f - cross : cross));
-            if (gain < 0.99f)
+            if (otherPlaying && before[(size_t) (1 - d)])
+            {
                 crossfaderTarget = d == 0 ? 0.0f : 1.0f;
+                crossfaderDeck = d;
+                pauseWhenCrossed = true;
+            }
+            else if (! otherPlaying && gain < 0.99f)
+            {
+                crossfaderTarget = d == 0 ? 0.0f : 1.0f;
+                crossfaderDeck = d;
+                pauseWhenCrossed = false;
+            }
         }
         wasPlaying[(size_t) d] = playing;
     }
@@ -523,15 +536,20 @@ void MainComponent::updateAutoCrossfader()
         return;
     if (mixerView.getCrossfader().isMouseButtonDown() || automix.isEnabled())
     {
-        crossfaderTarget = -1.0f;   // la mano (o el automix) manda
+        crossfaderTarget = -1.0f;   // la mano (o el automix) manda: tampoco se pausa nada
+        pauseWhenCrossed = false;
         return;
     }
     const float cross = mixer.getCrossfader();
     const float step = 1.0f / 12.0f;   // 12 pasos a 30 por segundo
     const float next = std::abs (crossfaderTarget - cross) <= step ? crossfaderTarget : cross + (crossfaderTarget > cross ? step : -step);
     mixer.setCrossfader (next);
-    if (next == crossfaderTarget)
-        crossfaderTarget = -1.0f;
+    if (next != crossfaderTarget)
+        return;
+    crossfaderTarget = -1.0f;
+    // Del todo en el deck que empezo (si sigue sonando): el otro ya no se oye y se pausa.
+    if (std::exchange (pauseWhenCrossed, false) && (crossfaderDeck == 0 ? deckA : deckB).isPlaying())
+        (crossfaderDeck == 0 ? deckB : deckA).pause();
 }
 
 void MainComponent::updateAutoScene()
@@ -1052,7 +1070,7 @@ void MainComponent::showSettings()
             const std::array<std::pair<bool*, const char*>, numToggles> items { {
                 { &p.library, "Biblioteca" }, { &p.automix, "Automix" }, { &p.scenes, "Escenas" }, { &p.sources, "Fuentes" },
                 { &p.sampler, "Sampler (barra de arriba)" }, { &p.transitions, "Transiciones (junto al crossfader)" },
-                { &p.autoCrossfader, "Crossfader automatico al dar Play" },
+                { &p.autoCrossfader, "Play: crossfader al deck, pausa el otro" },
                 { &p.deck.waveform, "Forma de onda" }, { &p.deck.pitch, "Pitch y KEY" }, { &p.deck.loops, "Loops" },
                 { &p.deck.stems, "Stems" }, { &p.deck.effects, "Efectos (FX)" } } };
             for (size_t i = 0; i < items.size(); ++i)

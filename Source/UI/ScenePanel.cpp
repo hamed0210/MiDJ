@@ -184,10 +184,9 @@ ScenesPanel::ScenesPanel (VideoStage& s) : stage (s)
         editScene (this, "Nueva escena", "Escena " + juce::String (stage.getScenes().scenes.size() + 1), 0, "Anadir",
                    [this] (const juce::String& name, int autoWhen)
         {
+            // Vacia, como en OBS: las fuentes se anaden con el + de Fuentes.
             auto& scenes = stage.getScenes();
-            auto& scene = scenes.addScene (name);
-            scene.items.push_back (scenes.makeItem (SourceType::decks, stage.getProgramWidth(), stage.getProgramHeight()));
-            const int id = scene.id;
+            const int id = scenes.addScene (name).id;
             scenes.setAuto (id, autoWhen);
             stage.scenesChanged();
             stage.switchToScene (id);

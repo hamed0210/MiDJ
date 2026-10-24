@@ -24,6 +24,11 @@ VideoProgram::VideoProgram (VideoMix& m, int w, int h) : mix (m), width (w), hei
 {
 }
 
+bool VideoProgram::isMatte (const SceneItem& item)
+{
+    return item.type == SourceType::media && item.matte;   // la capturadora no tiene mate
+}
+
 juce::Point<int> VideoProgram::naturalSize (const SceneItem& item) const
 {
     switch (item.type)
@@ -44,7 +49,7 @@ juce::Point<int> VideoProgram::naturalSize (const SceneItem& item) const
         case SourceType::captureDevice:
             if (auto s = media != nullptr ? media->find (item.id) : nullptr)
                 if (const auto size = s->getSize(); size.x > 0 && size.y > 0)
-                    return size;
+                    return isMatte (item) ? juce::Point<int> (juce::jmax (1, size.x / 2), size.y) : size;   // con mate: la mitad izquierda
             return { width, height };
         case SourceType::screen:
         case SourceType::window:
@@ -200,6 +205,14 @@ void VideoProgram::previewTransition (const CustomTransition& t)
         mask = image;
         ++maskVersion;
     }
+    if (t.kind == CustomTransitionKind::luma && current != 0)
+    {
+        // Un barrido de la escena a ella misma no se ve: va a negro y vuelve (buildFrame).
+        const int scene = current;
+        beginTransition (scene, blankScene, &t);
+        previewReturnTo = transitioning ? scene : 0;
+        return;
+    }
     beginTransition (current, current, &t);
 }
 
@@ -211,6 +224,7 @@ void VideoProgram::setStinger (std::shared_ptr<FrameSource> source)
 
 void VideoProgram::beginTransition (int from, int to, const CustomTransition* chosen)
 {
+    previewReturnTo = 0;   // otra transicion corta la vuelta de una prueba
     transition = collection.transition;
     custom.reset();
     if (chosen != nullptr)
@@ -315,6 +329,7 @@ void VideoProgram::customLayers (const CustomTransition& c, float t, const Prepa
                     layer.image = stingerSource->getFrame();
                     layer.version = ((juce::uint64) 1 << 60) + stingerSource->getFrameNumber();
                 }
+                layer.matte = c.matte;   // con mate se ve la escena por donde el video es transparente
                 if (VideoMix::hasPicture (layer))
                     frame.layers.push_back (layer);
             }
@@ -328,7 +343,7 @@ std::set<int> VideoProgram::liveItems() const
     int sceneId = 0;
     {
         const std::lock_guard<std::mutex> sl (lock);
-        sceneId = current;
+        sceneId = current == blankScene ? previewReturnTo : current;   // probando un barrido: la que vuelve
     }
     std::set<int> ids;
     if (const auto* scene = collection.findScene (sceneId))
@@ -471,8 +486,10 @@ void VideoProgram::sceneLayers (const PreparedScene& scene, std::vector<Composit
                     layer.image = p.frames->getFrame();
                     layer.version = (1ull << 61) + p.frames->getFrameNumber();   // otra serie que las imagenes y el visualizador
                 }
+                layer.matte = isMatte (item);
+                const auto size = VideoMix::pictureSize (layer);
                 if (VideoMix::hasPicture (layer))
-                    add (layer, (float) VideoMix::pictureSize (layer).x, (float) VideoMix::pictureSize (layer).y);
+                    add (layer, (float) size.x * (layer.matte ? 0.5f : 1.0f), (float) size.y);
                 break;
             }
             case SourceType::visualizer:
@@ -565,7 +582,18 @@ void VideoProgram::buildFrame (Compositor::Frame& frame)
             const int ms = custom ? custom->milliseconds : transition.milliseconds;
             t = (float) ((juce::Time::getMillisecondCounterHiRes() - transitionStart) / juce::jmax (1, ms));
             if (t >= 1.0f)
+            {
                 transitioning = false;
+                if (previewReturnTo != 0)
+                {
+                    // Prueba de un barrido: llego a negro; ahora la vuelta a la escena.
+                    previous = blankScene;
+                    current = std::exchange (previewReturnTo, 0);
+                    transitionStart = juce::Time::getMillisecondCounterHiRes();
+                    transitioning = true;
+                    t = 0.0f;
+                }
+            }
         }
         cur = current;
         prev = previous;
@@ -586,6 +614,9 @@ void VideoProgram::buildFrame (Compositor::Frame& frame)
         soloLayers (*scenes, solo, frame.solo);
     auto find = [&] (int id) -> const PreparedScene*
     {
+        static const PreparedScene blank { blankScene, {} };   // la prueba de un barrido: negro
+        if (id == blankScene)
+            return &blank;
         for (const auto& s : *scenes)
             if (s.id == id)
                 return &s;

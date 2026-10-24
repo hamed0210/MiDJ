@@ -336,6 +336,14 @@ int VideoStage::addCustomTransition (CustomTransition t)
     return t.id;
 }
 
+void VideoStage::updateCustomTransition (const CustomTransition& t)
+{
+    for (auto& c : scenes.customTransitions)
+        if (c.id == t.id)
+            c = t;
+    scenesChanged();
+}
+
 void VideoStage::removeCustomTransition (int id)
 {
     auto& list = scenes.customTransitions;

@@ -64,6 +64,9 @@ public:
         juce::uint64 maskVersion = 0;
         int maskSlot = 0;
         float maskProgress = -1.0f, maskSoftness = 0.1f;
+        // Video con mate: la imagen lleva el color en la mitad izquierda y la transparencia (en
+        // grises, blanco = se ve) en la derecha; la capa es la mitad izquierda y 'uv' se refiere a ella.
+        bool matte = false;
     };
 
     // Lo que se dibuja en un fotograma.

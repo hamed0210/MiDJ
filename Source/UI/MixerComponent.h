@@ -70,6 +70,8 @@ private:
     void setUpChannel (int index);
     void selectTransition (int index);
     void selectCustom (int id);
+    void editCustomTransition (int id);           // abre la ventana con sus datos
+    juce::Component* removeButtonFor (int customId);   // su lapiz (para colocar el menu)
     juce::String centreText() const;
 
     Mixer& mixer;
@@ -88,7 +90,7 @@ private:
     CentredSlider crossfader { 0.0, 1.0, 0.02 };
     std::vector<std::unique_ptr<juce::TextButton>> transitionButtons;
     std::vector<int> transitionCustomIds;                       // 0 = una de las de siempre
-    std::vector<std::unique_ptr<IconButton>> removeButtons;     // la x de cada propia (nullptr en las de siempre)
+    std::vector<std::unique_ptr<IconButton>> removeButtons;     // el lapiz de cada propia (nullptr en las de siempre)
     juce::TextButton addTransitionButton { "+" };
     juce::TextButton transitionMs;   // la duracion ("600 ms"); al pulsarlo, la lista de duraciones
 

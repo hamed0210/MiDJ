@@ -41,8 +41,9 @@ public:
     // transicion, otra la termina de golpe y empieza la nueva.
     void switchTo (int sceneId);
     bool isInTransition() const;
-    int getCurrentScene() const { const std::lock_guard<std::mutex> sl (lock); return current; }
-    // Hilo de interfaz: probar una transicion propia sin cambiar de escena (de la escena al aire a ella misma).
+    int getCurrentScene() const { const std::lock_guard<std::mutex> sl (lock); return current == blankScene ? previewReturnTo : current; }
+    // Hilo de interfaz: probar una transicion propia sin cambiar de escena (de la escena al aire a
+    // ella misma; un barrido, que asi no se veria, va a negro y vuelve).
     void previewTransition (const CustomTransition& transition);
     // El video de los stingers (lo reproduce el escenario); nullptr = sin video.
     void setStinger (std::shared_ptr<FrameSource> source);
@@ -50,8 +51,10 @@ public:
     // propiedades), encajado entero sin recorte ni giro; 0 = ninguno.
     void setSoloItem (int itemId) { soloItem = itemId; }
 
-    // Tamano natural de la fuente de un elemento (lo que mide sin escalar ni recortar).
+    // Tamano natural de la fuente de un elemento (lo que mide sin escalar ni recortar; un video
+    // con mate, la mitad de ancho).
     juce::Point<int> naturalSize (const SceneItem& item) const;
+    static bool isMatte (const SceneItem& item);   // multimedia con mate
 
     // Hilo del compositor.
     void buildFrame (Compositor::Frame& frame);
@@ -114,6 +117,8 @@ private:
     mutable std::mutex lock;
     std::shared_ptr<const std::vector<PreparedScene>> published;
     int current = 0, previous = 0;
+    static constexpr int blankScene = -1;   // escena vacia (negro) para probar un barrido
+    int previewReturnTo = 0;                 // prueba de un barrido: la escena a la que se vuelve
     double transitionStart = 0.0;
     Transition transition;
     bool transitioning = false;
