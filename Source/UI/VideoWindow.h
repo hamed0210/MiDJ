@@ -59,6 +59,13 @@ public:
     ~VideoStage() override;
 
     std::function<juce::String (int deckIndex)> getTitle;   // "Artista - Titulo" de la cancion de un deck
+    // El video de YouTube abierto (titulo vacio = ninguno) y si suena (video o anuncio).
+    struct YouTubeNow
+    {
+        juce::String title, channel;
+        bool sounding = false;
+    };
+    std::function<YouTubeNow()> getYouTube;
 
     bool isReady() const { return compositor.isReady(); }
     juce::String getError() const { return compositor.getError(); }

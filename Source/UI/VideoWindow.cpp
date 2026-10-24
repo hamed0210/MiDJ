@@ -605,6 +605,21 @@ NowPlaying VideoStage::nowPlaying() const
     }
     if (t.isNotEmpty())
         now.bpm = std::round (decks[(size_t) d]->getCurrentBpm() * 10.0) / 10.0;
+
+    // YouTube: {yt_titulo} y {yt_canal} siempre que haya un video abierto; y si suena YouTube y
+    // ningun deck (como la escena automatica de YouTube), tambien {titulo} y {artista} (el canal).
+    if (getYouTube != nullptr)
+    {
+        const auto yt = getYouTube();
+        now.youtubeTitle = yt.title;
+        now.youtubeChannel = yt.channel;
+        if (yt.sounding && yt.title.isNotEmpty() && ! decks[0]->isPlaying() && ! decks[1]->isPlaying())
+        {
+            now.title = yt.title;
+            now.artist = yt.channel;
+            now.bpm = 0.0;
+        }
+    }
     return now;
 }
 

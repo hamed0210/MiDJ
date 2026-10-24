@@ -511,7 +511,9 @@ namespace SceneGeometry
     {
         auto s = text.replace ("{titulo}", now.title, true)
                      .replace ("{artista}", now.artist, true)
-                     .replace ("{bpm}", now.bpm > 0.0 ? juce::String (now.bpm, 1) : juce::String(), true);
+                     .replace ("{bpm}", now.bpm > 0.0 ? juce::String (now.bpm, 1) : juce::String(), true)
+                     .replace ("{yt_titulo}", now.youtubeTitle, true)
+                     .replace ("{yt_canal}", now.youtubeChannel, true);
         // Sin artista (o sin cancion), no quedan guiones sueltos: "{artista} - {titulo}" -> "Titulo".
         juce::StringArray lines;
         for (auto line : juce::StringArray::fromLines (s))

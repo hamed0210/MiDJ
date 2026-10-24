@@ -2492,6 +2492,11 @@ void testScenes()
     NowPlaying now { "La Maria", "Luister La Voz", 116.0 };
     check (SceneGeometry::resolveText ("{artista} - {titulo} ({bpm})", now) == "Luister La Voz - La Maria (116.0)",
            "escenas: {artista}, {titulo} y {bpm} en los textos", 0.0, 0.0);
+    NowPlaying yt;
+    yt.youtubeTitle = "Vallenato en vivo";
+    yt.youtubeChannel = "Canal Oficial";
+    check (SceneGeometry::resolveText ("En YouTube: {yt_titulo} ({yt_canal})", yt) == "En YouTube: Vallenato en vivo (Canal Oficial)",
+           "escenas: {yt_titulo} y {yt_canal} en los textos", 0.0, 0.0);
     check (SceneGeometry::resolveText ("{artista} - {titulo}", { "Solo titulo", "", 0.0 }) == "Solo titulo"
                && SceneGeometry::resolveText ("{artista} - {titulo}", {}).isEmpty(),
            "escenas: sin artista no quedan guiones sueltos", 0.0, 0.0);

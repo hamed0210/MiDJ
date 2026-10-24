@@ -130,6 +130,17 @@ MainComponent::MainComponent()
                                                std::array<const Deck*, 2> { &deckA, &deckB }, mixer, formatManager, videoSettings(),
                                                getDataFolder().getChildFile ("scenes.xml"));
     videoStage->getTitle = [this] (int d) { return videoTitleFor (d); };
+    videoStage->getYouTube = [this]
+    {
+        VideoStage::YouTubeNow yt;
+        if (youtubePlayer != nullptr && youtubePlayer->isOpen())
+        {
+            yt.title = youtubePlayer->getVideo().title;
+            yt.channel = youtubePlayer->getVideo().channel;
+            yt.sounding = youtubePlayer->isSounding();
+        }
+        return yt;
+    };
     mixerView.setVideoStage (videoStage.get());
     scenesPanel = std::make_unique<ScenesPanel> (*videoStage);
     sourcesPanel = std::make_unique<SourcesPanel> (*videoStage);

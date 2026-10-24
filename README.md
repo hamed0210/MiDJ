@@ -52,7 +52,7 @@ paquete de Microsoft), accesos directos y desinstalador. Los datos de `%APPDATA%
 ajustes) no se tocan ni al instalar ni al desinstalar.
 
 **Actualizar:** si MiDJ ya está instalado, el instalador lo detecta y muestra solo una página, *Actualizar
-MiDJ 0.3.1 -> 0.3.2*: usa la misma carpeta, el mismo modo (usuario o todos) y los mismos accesos directos, y
+MiDJ 0.3.2 -> 0.3.3*: usa la misma carpeta, el mismo modo (usuario o todos) y los mismos accesos directos, y
 cierra MiDJ si está abierto. Con la misma versión ofrece *Reinstalar*; si lo instalado es más nuevo, avisa antes
 de volver a la anterior. Para cada versión nueva basta con cambiar `AppVersion` en `Installer\MiDJ.iss` (y
 `VERSION` en `CMakeLists.txt`).
@@ -324,7 +324,9 @@ Abajo a la derecha están los paneles **Escenas** y **Fuentes**, como los de OBS
   o el engranaje: **Propiedades para 'fuente'**, con su imagen arriba, sus ajustes (se ven al momento), la
   colocación (opacidad, giro, recorte, Ajustar a la pantalla, Restablecer) y Por defecto / Aceptar /
   Cancelar (Cancelar deja todo como estaba). En el texto, `{titulo}`, `{artista}` y `{bpm}` se cambian por la
-  canción del deck que más se ve (por ejemplo "Ahora suena: {titulo}").
+  canción del deck que más se ve (por ejemplo "Ahora suena: {titulo}"); si suena YouTube y ningún deck, por el
+  video de YouTube (artista = el canal, sin BPM). `{yt_titulo}` y `{yt_canal}` son siempre los del video de
+  YouTube abierto (vacíos si no hay ninguno).
 - En la vista previa: clic para elegir una fuente (recuadro rojo), arrastrar para moverla (se pega a los
   bordes y al centro; Mayús para no pegarse), arrastrar una esquina para escalarla sin deformar (Mayús para
   deformar), flechas para mover de 1 en 1 (Mayús: de 10 en 10) y Supr para quitarla.

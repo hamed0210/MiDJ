@@ -13,7 +13,7 @@ enum class SourceType
     deckA,    // solo el deck A
     deckB,    // solo el deck B
     image,    // un archivo PNG/JPG/GIF
-    text,     // texto; {titulo}, {artista} y {bpm} se cambian por la cancion que suena
+    text,     // texto; {titulo}, {artista} y {bpm} se cambian por la cancion que suena ({yt_titulo}, {yt_canal}: YouTube)
     colour,   // un rectangulo de color
     screen,   // captura de una pantalla (monitor)
     window,   // captura de una ventana
@@ -147,11 +147,13 @@ struct Transition
     int custom = 0;                   // id de una transicion propia (0 = la de 'type')
 };
 
-// La cancion que suena (la del deck que mas se ve), para los textos con {titulo} etc.
+// La cancion que suena (la del deck que mas se ve; o la de YouTube si suena YouTube y ningun
+// deck), para los textos con {titulo} etc. Y el video de YouTube abierto ({yt_titulo}, {yt_canal}).
 struct NowPlaying
 {
     juce::String title, artist;
     double bpm = 0.0;
+    juce::String youtubeTitle, youtubeChannel;
     bool operator== (const NowPlaying&) const = default;
 };
 
@@ -207,7 +209,7 @@ namespace SceneGeometry
     // (si la imagen tiene el tamano natural, la llena). false si no queda nada visible.
     bool place (Compositor::Layer& layer, const SceneItem& item, juce::Point<int> natural, float pw, float ph);
 
-    // Texto de un elemento con {titulo}, {artista} y {bpm} sustituidos.
+    // Texto de un elemento con {titulo}, {artista}, {bpm}, {yt_titulo} y {yt_canal} sustituidos.
     juce::String resolveText (const juce::String& text, const NowPlaying& now);
     // Imagen del texto (ARGB, con margen para la sombra) a 'density' pixeles por pixel del lienzo:
     // el texto se dibuja a la escala a la que se ve, asi no se pixela al agrandarlo ni se dentea

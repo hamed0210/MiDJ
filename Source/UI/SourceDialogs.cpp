@@ -945,7 +945,8 @@ private:
         auto& text = make<juce::TextEditor>();
         text.setMultiLine (true);
         text.setReturnKeyStartsNewLine (true);
-        text.setTooltip ("{titulo}, {artista} y {bpm} se cambian por la cancion que suena");
+        text.setTooltip ("{titulo}, {artista} y {bpm} se cambian por la cancion que suena (la de YouTube si suena YouTube y "
+                         "ningun deck; artista = canal). {yt_titulo} y {yt_canal}: siempre el video de YouTube abierto");
         text.onTextChange = [this, &text] { edit ([&text] (SceneItem& i) { i.text = text.getText(); }); };
         loaders.push_back ([&text] (const SceneItem& i) { if (text.getText() != i.text) text.setText (i.text, false); });
         list.add ("Texto", text, 64);
