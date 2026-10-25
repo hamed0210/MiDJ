@@ -52,7 +52,7 @@ paquete de Microsoft), accesos directos y desinstalador. Los datos de `%APPDATA%
 ajustes) no se tocan ni al instalar ni al desinstalar.
 
 **Actualizar:** si MiDJ ya está instalado, el instalador lo detecta y muestra solo una página, *Actualizar
-MiDJ 0.3.4 -> 0.3.5*: usa la misma carpeta, el mismo modo (usuario o todos) y los mismos accesos directos, y
+MiDJ 0.3.5 -> 0.3.6*: usa la misma carpeta, el mismo modo (usuario o todos) y los mismos accesos directos, y
 cierra MiDJ si está abierto. Con la misma versión ofrece *Reinstalar*; si lo instalado es más nuevo, avisa antes
 de volver a la anterior. Para cada versión nueva basta con cambiar `AppVersion` en `Installer\MiDJ.iss` (y
 `VERSION` en `CMakeLists.txt`).
@@ -151,9 +151,11 @@ Diseño "Escenario" (oscuro, deck A en azul y B en ámbar), pensado para una pan
   audio; en rojo desde el 70 % o con cortes), el **sampler** (8 pads, volumen y Parar), las
   pestañas **AUDIO / PROGRAMA** del centro, **Proyector** (pantalla completa en un monitor), **MIDI**,
   **Atajos** y **Ajustes**.
-- **Tarjeta de sonido**: si la guardada no abre, se usa la predeterminada en estéreo; si ninguna abre, o la
-  abierta no pide audio (auriculares Bluetooth apagados, HDMI sin altavoces...: los decks "suenan" sin
-  avanzar), se avisa con un botón para elegir otra.
+- **Tarjeta de sonido**: si la guardada no abre, se usa la predeterminada en estéreo. Si ninguna abre, o la
+  abierta no pide audio (auriculares Bluetooth apagados, HDMI sin altavoces...), los decks siguen avanzando
+  en silencio con un reloj interno (arriba dice *audio sin tarjeta*) y cada 2 s se busca una que suene. Si
+  cambia la salida predeterminada de Windows (se conectan altavoces, una interfaz USB...), MiDJ pasa a ella
+  sin cerrarse; la elegida en Ajustes sigue guardada para el próximo arranque.
 - **Decks** a los lados: portada (un fotograma si es un video), título, artista, BPM y tiempo, la forma de
   onda delgada (lo ya sonado más apagado), el **pitch** ±16 % con el centro marcado (raya y 0 en verde cuando
   está en 0; se engancha al pasar cerca; doble clic: 0) y **KEY**, bucles 1-2-4-8, stems (Voz / Instrumental

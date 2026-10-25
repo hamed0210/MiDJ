@@ -230,23 +230,15 @@ MainComponent::MainComponent()
     mixerView.limiterSettingChanged();
     mixerView.onLimiterChanged = [this] { saveAudioSettings(); };
     setAudioChannels (0, 4, savedDevice.get());
-    // Sin tarjeta abierta los decks no avanzan (ni suenan ni se mueve la onda). Si la guardada o la
-    // predeterminada con 4 salidas no abre, la predeterminada en estereo; si tampoco, se avisa.
+    // Si la guardada o la predeterminada con 4 salidas no abre, la predeterminada en estereo; si
+    // tampoco, el reloj sin tarjeta mueve los decks (ver checkAudioDevice).
     if (deviceManager.getCurrentAudioDevice() == nullptr)
-    {
-        const auto error = deviceManager.initialiseWithDefaultDevices (0, 2);
-        if (deviceManager.getCurrentAudioDevice() == nullptr)
-            juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<MainComponent> (this), error]
-            {
-                if (safe == nullptr)
-                    return;
-                juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::WarningIcon, "MiDJ",
-                    "No se pudo abrir ninguna tarjeta de sonido, asi que los decks no sonaran"
-                        + (error.isNotEmpty() ? ":\n" + error : juce::String (".")) + "\n\nElige una en Ajustes > Audio y audifonos.",
-                    "Elegir tarjeta", "Cerrar", safe.getComponent(),
-                    juce::ModalCallbackFunction::create ([safe] (int result) { if (result == 1 && safe != nullptr) safe->showAudioSettings(); }));
-            });
-    }
+        deviceManager.initialiseWithDefaultDevices (0, 2);
+    // La tarjeta guardada manda al arrancar aunque no sea la predeterminada; solo un cambio
+    // posterior de la predeterminada la sustituye.
+    if (auto* type = deviceManager.getCurrentDeviceTypeObject())
+        lastDefaultOutput = type->getDeviceNames (false)[type->getDefaultDeviceIndex (false)];
+    deviceManager.addChangeListener (this);
     setHeadphoneMode ((HeadphoneMode) headphoneMode.load(), headphoneDevice);
 }
 
@@ -266,6 +258,8 @@ MainComponent::~MainComponent()
     scenesPanel.reset();
     sourcesPanel.reset();
     videoStage.reset();
+    deviceManager.removeChangeListener (this);
+    silentClock.stopThread (1000);
     shutdownAudio();
     stopTimer();
     saveSamplerBank();
@@ -661,11 +655,12 @@ void MainComponent::timerCallback()
         // Medidor del audio: rojo si el calculo se come casi todo el bloque o si hubo cortes.
         const int load = juce::roundToInt (audioLoad.load (std::memory_order_relaxed) * 100.0f);
         const int late = audioLate.load (std::memory_order_relaxed);
-        const auto text = "audio " + juce::String (load) + " %" + (late > 0 ? juce::String::fromUTF8 (" \xc2\xb7 ") + juce::String (late) + " cortes" : juce::String());
+        const auto text = silentClock.isThreadRunning() ? juce::String ("audio sin tarjeta (en silencio)")
+                        : "audio " + juce::String (load) + " %" + (late > 0 ? juce::String::fromUTF8 (" \xc2\xb7 ") + juce::String (late) + " cortes" : juce::String());
         if (text != audioMeterText)
         {
             audioMeterText = text;
-            audioMeterWarn = load >= 70 || late > 0;
+            audioMeterWarn = load >= 70 || late > 0 || silentClock.isThreadRunning();
             repaint (headerArea);
         }
     }
@@ -678,28 +673,82 @@ void MainComponent::timerCallback()
 void MainComponent::checkAudioDevice()
 {
     // Una tarjeta abierta que no pide audio (auriculares Bluetooth apagados, una salida HDMI sin
-    // altavoces...): Windows la da por buena, pero los decks "suenan" sin avanzar. A los 3 s se avisa.
+    // altavoces...): Windows la da por buena, pero no pide audio. Con ella o sin tarjeta, a los
+    // 0,5 s el reloj sin tarjeta mueve los decks en silencio, y cada 2 s se busca una que suene.
     const auto blocks = audioBlocks.load (std::memory_order_relaxed);
+    const bool requesting = blocks != lastAudioBlocks;
+    lastAudioBlocks = blocks;
     auto* device = deviceManager.getCurrentAudioDevice();
-    if (device == nullptr || blocks != lastAudioBlocks)
+    if (device != nullptr && requesting)
     {
-        lastAudioBlocks = blocks;
-        silentTicks = 0;
-        audioWarningShown = false;   // si vuelve a callarse, se avisa otra vez
+        silentTicks = reopenTicks = 0;
+        if (silentClock.isThreadRunning())
+            silentClock.stopThread (500);
         return;
     }
-    if (++silentTicks < 90 || audioWarningShown)   // 3 s a 30 Hz
+    if (device != nullptr && ++silentTicks < 15)   // 0,5 s a 30 Hz
         return;
-    audioWarningShown = true;
-    juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::WarningIcon, "MiDJ",
-        "La tarjeta de sonido \"" + device->getName() + "\" no esta pidiendo audio, asi que los decks no avanzan ni suenan.\n\n"
-            "Suele pasar con auriculares Bluetooth apagados o una salida HDMI sin altavoces. Elige otra en Ajustes > Audio y audifonos.",
-        "Elegir tarjeta", "Cerrar", this,
-        juce::ModalCallbackFunction::create ([safe = juce::Component::SafePointer<MainComponent> (this)] (int result)
+    if (! silentClock.isThreadRunning())
+        silentClock.startThread (juce::Thread::Priority::high);
+    if (++reopenTicks >= 60)
+    {
+        reopenTicks = 0;
+        if (auto* type = deviceManager.getCurrentDeviceTypeObject())
+            type->scanForDevices();
+        followDefaultOutput (true);
+    }
+}
+
+void MainComponent::followDefaultOutput (bool evenIfSeen)
+{
+    auto* type = deviceManager.getCurrentDeviceTypeObject();
+    if (type == nullptr)
+        return;
+    const auto name = type->getDeviceNames (false)[type->getDefaultDeviceIndex (false)];
+    if (name.isEmpty() || (name == lastDefaultOutput && ! evenIfSeen))
+        return;
+    lastDefaultOutput = name;
+    if (auto* device = deviceManager.getCurrentAudioDevice(); device != nullptr && device->getName() == name)
+        return;
+    // Sin "elegida" (false): lo guardado sigue siendo la tarjeta que eligio el usuario.
+    auto setup = deviceManager.getAudioDeviceSetup();
+    setup.outputDeviceName = name;
+    setup.useDefaultOutputChannels = true;
+    deviceManager.setAudioDeviceSetup (setup, false);
+}
+
+void MainComponent::SilentClock::run()
+{
+    juce::AudioBuffer<float> buffer;
+    auto next = juce::Time::getMillisecondCounterHiRes();
+    while (! threadShouldExit())
+    {
+        const auto now = juce::Time::getMillisecondCounterHiRes();
+        if (now < next)
         {
-            if (result == 1 && safe != nullptr)
-                safe->showAudioSettings();
-        }));
+            wait (juce::jmax (1, (int) (next - now)));
+            continue;
+        }
+        if (now - next > 200.0)   // muy atrasado (el equipo se paro): no se corre para alcanzar
+            next = now;
+        int blockSize = 0;
+        double rate = 0.0;
+        {
+            // Si la tarjeta esta calculando (acaba de volver), este bloque lo pone ella.
+            const juce::SpinLock::ScopedTryLockType lock (owner.renderLock);
+            if (lock.isLocked())
+            {
+                if (owner.preparedBlockSize <= 0)
+                    owner.prepareEngine (512, 44100.0);
+                blockSize = owner.preparedBlockSize;
+                rate = owner.audioRate;
+                buffer.setSize (2, blockSize, false, false, true);
+                buffer.clear();
+                owner.renderBlock (juce::AudioSourceChannelInfo (&buffer, 0, blockSize));
+            }
+        }
+        next += rate > 0.0 ? 1000.0 * blockSize / rate : 10.0;
+    }
 }
 
 void MainComponent::startMidiSimulation (const juce::File& script)
@@ -729,18 +778,26 @@ void MainComponent::startMidiSimulation (const juce::File& script)
 
 void MainComponent::prepareToPlay (int samplesPerBlockExpected, double sampleRate)
 {
-    mixer.prepareToPlay (samplesPerBlockExpected, sampleRate);
-    headphones.prepare (sampleRate);
-    audioRate = sampleRate;
-    lastBlockStart = 0;
+    const juce::SpinLock::ScopedLockType lock (renderLock);
+    prepareEngine (samplesPerBlockExpected, sampleRate);
     // El visualizador muestra lo que se oye: lo calculado hace la latencia de la tarjeta y un bloque.
     if (auto* device = deviceManager.getCurrentAudioDevice())
         mixer.getTap().setOutputLatency (device->getOutputLatencyInSamples() + samplesPerBlockExpected);
 }
 
+void MainComponent::prepareEngine (int samplesPerBlock, double sampleRate)
+{
+    mixer.prepareToPlay (samplesPerBlock, sampleRate);
+    headphones.prepare (sampleRate);
+    audioRate = sampleRate;
+    lastBlockStart = 0;
+    preparedBlockSize = samplesPerBlock;
+}
+
 void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
 {
     audioBlocks.fetch_add (1, std::memory_order_relaxed);
+    const juce::SpinLock::ScopedLockType lock (renderLock);
     const auto blockStart = juce::Time::getHighResolutionTicks();
     const double blockSeconds = audioRate > 0.0 ? info.numSamples / audioRate : 0.0;
     // Un bloque que llega mucho despues del anterior: la tarjeta se quedo sin audio (corte).
@@ -748,6 +805,13 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
         && juce::Time::highResolutionTicksToSeconds (blockStart - lastBlockStart) > 2.5 * blockSeconds)
         audioLate.fetch_add (1, std::memory_order_relaxed);
     lastBlockStart = blockStart;
+    renderBlock (info);
+}
+
+void MainComponent::renderBlock (const juce::AudioSourceChannelInfo& info)
+{
+    const auto blockStart = juce::Time::getHighResolutionTicks();
+    const double blockSeconds = audioRate > 0.0 ? info.numSamples / audioRate : 0.0;
     const juce::ScopeGuard measure { [this, blockStart, blockSeconds]
     {
         if (blockSeconds <= 0.0)
@@ -927,6 +991,7 @@ void MainComponent::showAudioSettings()
 
 void MainComponent::releaseResources()
 {
+    const juce::SpinLock::ScopedLockType lock (renderLock);
     mixer.releaseResources();
 }
 

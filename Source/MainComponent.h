@@ -33,6 +33,7 @@ namespace midj
 class MainComponent : public juce::AudioAppComponent,
                       public juce::DragAndDropContainer,
                       private juce::KeyListener,
+                      private juce::ChangeListener,
                       private juce::Timer
 {
 public:
@@ -107,12 +108,33 @@ private:
     std::atomic<int> headphoneMode { (int) HeadphoneMode::off };
     juce::String headphoneDevice;
     HeadphoneOutput headphones;
-    // Vigilante de la tarjeta: bloques que pide (hilo de audio); si deja de pedirlos, se avisa.
+    // Vigilante de la tarjeta: bloques que pide (hilo de audio). Si no hay tarjeta o no los pide,
+    // el reloj sin tarjeta mueve los decks en silencio y cada 2 s se intenta abrir una que suene.
     void checkAudioDevice();
+    // Salida predeterminada de Windows: si cambia (se conectan altavoces, una interfaz USB...) o la
+    // abierta no suena, se pasa a ella. Las salidas cambiadas llegan como cambio del deviceManager.
+    void followDefaultOutput (bool evenIfSeen);
+    void changeListenerCallback (juce::ChangeBroadcaster*) override { followDefaultOutput (false); }
+    juce::String lastDefaultOutput;
     std::atomic<juce::uint32> audioBlocks { 0 };
     juce::uint32 lastAudioBlocks = 0;
     int silentTicks = 0;
-    bool audioWarningShown = false;
+    int reopenTicks = 0;
+    // El calculo de un bloque (mezclador, audifonos y medidor), lo pida la tarjeta o el reloj.
+    void renderBlock (const juce::AudioSourceChannelInfo& info);
+    void prepareEngine (int samplesPerBlock, double sampleRate);
+    juce::SpinLock renderLock;           // tarjeta y reloj no calculan a la vez
+    int preparedBlockSize = 0;           // lo ultimo preparado (con renderLock)
+    // Reloj sin tarjeta: pide bloques al ritmo del audio y los tira.
+    class SilentClock : public juce::Thread
+    {
+    public:
+        explicit SilentClock (MainComponent& o) : juce::Thread ("MiDJ reloj sin tarjeta"), owner (o) {}
+        void run() override;
+    private:
+        MainComponent& owner;
+    };
+    SilentClock silentClock { *this };
     // Medidor del audio (barra de arriba): parte de cada bloque que tarda el calculo (pico que
     // baja despacio) y bloques que llegaron muy tarde (cortes que se oyen).
     std::atomic<float> audioLoad { 0.0f };
