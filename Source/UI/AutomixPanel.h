@@ -35,10 +35,13 @@ public:
     void paintOverChildren (juce::Graphics& g) override;
     void resized() override;
 
+    // Canciones de la biblioteca (al final) o filas de la propia lista (a otro sitio).
     bool isInterestedInDragSource (const SourceDetails& details) override;
-    void itemDragEnter (const SourceDetails&) override { dragOver = true; repaint(); }
-    void itemDragExit (const SourceDetails&) override  { dragOver = false; repaint(); }
+    void itemDragEnter (const SourceDetails& details) override;
+    void itemDragMove (const SourceDetails& details) override;
+    void itemDragExit (const SourceDetails&) override;
     void itemDropped (const SourceDetails& details) override;
+    static constexpr const char* rowDragPrefix = "automix-row:";
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
@@ -47,11 +50,14 @@ private:
     void listBoxItemClicked (int row, const juce::MouseEvent& e) override;
     void deleteKeyPressed (int row) override;
     juce::String getTooltipForRow (int row) override;   // el titulo entero
+    juce::var getDragSourceDescription (const juce::SparseSet<int>& rows) override;
+    void moveRow (int from, int to);   // y la seleccion la sigue
     void showListsMenu();
 
     Automix& automix;
     Library& library;
     bool dragOver = false;
+    int dropGap = -1;   // hueco donde caeria una fila arrastrada (-1 = ninguno)
     juce::Label title { {}, "AUTOMIX" }, status;
     juce::ListBox list;
     juce::TextButton onButton { "Apagado" }, listsButton { "Listas" };

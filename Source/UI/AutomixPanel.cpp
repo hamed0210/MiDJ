@@ -2,6 +2,7 @@
 #include "UI/DarkLookAndFeel.h"
 #include "UI/Icons.h"
 #include "UI/LibraryBrowser.h"
+#include "UI/QueueRows.h"
 #include "Video/DeckVideo.h"
 
 namespace midj
@@ -201,8 +202,7 @@ void AutomixPanel::paintListBoxItem (int row, juce::Graphics& g, int w, int h, b
     g.drawText (juce::String (row + 1), r.removeFromLeft (18.0f), juce::Justification::centredLeft, false);
     Icons::drawFileType (g, r.removeFromLeft (18.0f).reduced (1.0f, 10.0f), DeckVideo::isVideoFile (item.file));
     r.removeFromLeft (6.0f);
-    Icons::draw (g, r.removeFromRight (16.0f).withSizeKeepingCentre (12.0f, 12.0f), Icons::Glyph::close, DarkLookAndFeel::textQuiet);   // quitar
-    r.removeFromRight (6.0f);
+    QueueRows::drawButtons (g, r, row, (int) queue.size());   // subir, bajar y quitar
 
     // El titulo entero (hasta dos lineas) y debajo artista y BPM.
     const auto name = item.title.isNotEmpty() ? item.title : item.file.getFileNameWithoutExtension();
@@ -232,18 +232,42 @@ void AutomixPanel::listBoxItemClicked (int row, const juce::MouseEvent& e)
 {
     if (! juce::isPositiveAndBelow (row, getNumRows()))
         return;
-    // La x de la derecha de cada fila la quita de la lista.
-    if (! e.mods.isPopupMenu() && e.x >= list.getVisibleRowWidth() - 32)
+    // A la derecha de cada fila: subir, bajar y quitar.
+    if (! e.mods.isPopupMenu())
     {
-        automix.remove (row);
+        switch (QueueRows::hitTest (e.x, list.getVisibleRowWidth()))
+        {
+            case QueueRows::Hit::up:     moveRow (row, row - 1); break;
+            case QueueRows::Hit::down:   moveRow (row, row + 1); break;
+            case QueueRows::Hit::remove: automix.remove (row); break;
+            case QueueRows::Hit::none:   break;
+        }
         return;
     }
-    if (! e.mods.isPopupMenu())
-        return;
+    const int last = getNumRows() - 1;
     juce::PopupMenu menu;
+    menu.addItem ("Subir al principio", row > 0, false, [this, row] { moveRow (row, 0); });
+    menu.addItem ("Subir", row > 0, false, [this, row] { moveRow (row, row - 1); });
+    menu.addItem ("Bajar", row < last, false, [this, row] { moveRow (row, row + 1); });
+    menu.addItem ("Bajar al final", row < last, false, [this, row, last] { moveRow (row, last); });
+    menu.addSeparator();
     menu.addItem ("Quitar de la lista", [this, row] { automix.remove (row); });
     menu.addItem ("Vaciar la lista", [this] { automix.clearQueue(); });
     menu.showMenuAsync (juce::PopupMenu::Options().withMousePosition());
+}
+
+void AutomixPanel::moveRow (int from, int to)
+{
+    if (! juce::isPositiveAndBelow (to, getNumRows()) || from == to)
+        return;
+    automix.move (from, to);
+    list.updateContent();
+    list.selectRow (to);
+}
+
+juce::var AutomixPanel::getDragSourceDescription (const juce::SparseSet<int>& rows)
+{
+    return QueueRows::describe (rowDragPrefix, rows);
 }
 
 void AutomixPanel::deleteKeyPressed (int row)
@@ -254,13 +278,47 @@ void AutomixPanel::deleteKeyPressed (int row)
 
 bool AutomixPanel::isInterestedInDragSource (const SourceDetails& details)
 {
-    return details.description.toString().startsWith (LibraryBrowser::dragPrefix);
+    const auto text = details.description.toString();
+    return text.startsWith (LibraryBrowser::dragPrefix) || (text.startsWith (rowDragPrefix) && ! youtubeShown);
+}
+
+void AutomixPanel::itemDragEnter (const SourceDetails& details)
+{
+    itemDragMove (details);
+}
+
+void AutomixPanel::itemDragMove (const SourceDetails& details)
+{
+    // Una fila de la lista: raya donde caeria. Una cancion de la biblioteca: el borde del panel.
+    const bool row = QueueRows::draggedRow (rowDragPrefix, details.description) >= 0;
+    const int gap = row ? QueueRows::dropIndex (list, list.getLocalPoint (this, details.localPosition)) : -1;
+    if (gap != dropGap || dragOver != ! row)
+    {
+        dropGap = gap;
+        dragOver = ! row;
+        repaint();
+    }
+}
+
+void AutomixPanel::itemDragExit (const SourceDetails&)
+{
+    dragOver = false;
+    dropGap = -1;
+    repaint();
 }
 
 void AutomixPanel::itemDropped (const SourceDetails& details)
 {
+    const int gap = dropGap;
     dragOver = false;
+    dropGap = -1;
     repaint();
+    if (const int from = QueueRows::draggedRow (rowDragPrefix, details.description); from >= 0)
+    {
+        if (const int to = QueueRows::targetFor (from, gap); to >= 0)
+            moveRow (from, to);
+        return;
+    }
     const juce::File file (details.description.toString().fromFirstOccurrenceOf (LibraryBrowser::dragPrefix, false, false));
     Automix::Item item { file, file.getFileNameWithoutExtension(), {}, 0.0 };
     if (const auto t = library.findByFile (file))
@@ -296,6 +354,7 @@ void AutomixPanel::paintOverChildren (juce::Graphics& g)
         g.setColour (DarkLookAndFeel::accentA);
         g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (1.5f), 14.0f, 3.0f);
     }
+    QueueRows::drawDropLine (g, *this, list, dropGap);
 }
 
 void AutomixPanel::resized()

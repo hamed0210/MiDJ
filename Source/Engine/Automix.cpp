@@ -41,6 +41,17 @@ void Automix::remove (int index)
     sendChangeMessage();
 }
 
+void Automix::move (int from, int to)
+{
+    const int n = (int) queue.size();
+    if (! juce::isPositiveAndBelow (from, n) || ! juce::isPositiveAndBelow (to, n) || from == to)
+        return;
+    const auto item = queue[(size_t) from];
+    queue.erase (queue.begin() + from);
+    queue.insert (queue.begin() + to, item);
+    sendChangeMessage();
+}
+
 void Automix::clearQueue()
 {
     queue.clear();

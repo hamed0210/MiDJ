@@ -41,6 +41,7 @@ public:
     void add (const Item& item);
     void insertNext (const Item& item);
     void remove (int index);
+    void move (int from, int to);   // la de 'from' pasa a estar en 'to' (subir / bajar / arrastrar)
     void clearQueue();
     const std::vector<Item>& getQueue() const { return queue; }
     bool saveQueue (const juce::File& file) const;

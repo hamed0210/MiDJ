@@ -18,6 +18,7 @@ public:
     void add (const YouTubeVideo& v)        { items.push_back (v); sendChangeMessage(); }
     void insertNext (const YouTubeVideo& v) { items.insert (items.begin(), v); sendChangeMessage(); }
     void remove (int index);
+    void move (int from, int to);           // el de 'from' pasa a estar en 'to'
     void clear()                            { items.clear(); sendChangeMessage(); }
     void setEnabled (bool on)               { enabled = on; sendChangeMessage(); }
     bool isEnabled() const                  { return enabled; }
@@ -44,6 +45,7 @@ private:
 // Al terminar un video: con el automix encendido suena el siguiente de la lista; si no, el
 // reproductor se cierra (libera su memoria).
 class YouTubePanel : public juce::Component,
+                     public juce::DragAndDropTarget,
                      private juce::ChangeListener,
                      private juce::ListBoxModel
 {
@@ -56,8 +58,17 @@ public:
     void setAutomix (bool on);
 
     void paint (juce::Graphics& g) override;
+    void paintOverChildren (juce::Graphics& g) override;   // la raya donde caeria una fila arrastrada
     void resized() override;
     void mouseDown (const juce::MouseEvent& e) override;   // clic en la barra de avance: saltar ahi
+
+    // Arrastrar una fila de la lista a otro sitio de la lista.
+    bool isInterestedInDragSource (const SourceDetails& details) override;
+    void itemDragEnter (const SourceDetails& details) override { itemDragMove (details); }
+    void itemDragMove (const SourceDetails& details) override;
+    void itemDragExit (const SourceDetails&) override;
+    void itemDropped (const SourceDetails& details) override;
+    static constexpr const char* rowDragPrefix = "youtube-row:";
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster* source) override;
@@ -66,6 +77,9 @@ private:
     void listBoxItemClicked (int row, const juce::MouseEvent& e) override;
     void listBoxItemDoubleClicked (int row, const juce::MouseEvent&) override;
     void deleteKeyPressed (int row) override { queue.remove (row); }
+    juce::var getDragSourceDescription (const juce::SparseSet<int>& rows) override;
+    void moveRow (int from, int to);   // y la seleccion la sigue
+    int dropGap = -1;                  // hueco donde caeria una fila arrastrada (-1 = ninguno)
     void updateButtons();
     juce::String getTooltipForRow (int row) override;
     void showSettingsMenu();

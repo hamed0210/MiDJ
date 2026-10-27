@@ -488,8 +488,13 @@ void VideoProgram::sceneLayers (const PreparedScene& scene, std::vector<Composit
                 }
                 layer.matte = isMatte (item);
                 const auto size = VideoMix::pictureSize (layer);
-                if (VideoMix::hasPicture (layer))
-                    add (layer, (float) size.x * (layer.matte ? 0.5f : 1.0f), (float) size.y);
+                // El tamano natural, del fotograma (con mate, la mitad izquierda) y no de p.natural:
+                // al preparar la escena (p. ej. al abrir la app) el video aun no estaba abierto y
+                // p.natural seria el del programa entero, con la imagen encajada fuera de su sitio.
+                const juce::Point<int> natural { layer.matte ? juce::jmax (1, size.x / 2) : size.x, size.y };
+                if (VideoMix::hasPicture (layer) && natural.y > 0
+                    && SceneGeometry::place (layer, item, natural, (float) size.x * (layer.matte ? 0.5f : 1.0f), (float) size.y))
+                    layers.push_back (std::move (layer));
                 break;
             }
             case SourceType::visualizer:

@@ -1825,6 +1825,31 @@ struct AutomixRig
     }
 };
 
+void testAutomixQueueMove()
+{
+    AutomixRig rig;
+    for (const auto* name : { "a.wav", "b.wav", "c.wav", "d.wav" })
+        rig.automix.add (rig.item (name));
+    const auto order = [&rig]
+    {
+        juce::String s;
+        for (const auto& item : rig.automix.getQueue())
+            s << item.title.upToFirstOccurrenceOf (".", false, false);
+        return s;
+    };
+    rig.automix.move (2, 1);   // subir la c
+    check (order() == "acbd", "subir: la tercera pasa a segunda", order() == "acbd" ? 1.0 : 0.0, 1.0);
+    rig.automix.move (0, 3);   // arrastrar la primera al final
+    check (order() == "cbda", "arrastrar al final", order() == "cbda" ? 1.0 : 0.0, 1.0);
+    rig.automix.move (3, 0);   // y de vuelta al principio
+    check (order() == "acbd", "arrastrar al principio", order() == "acbd" ? 1.0 : 0.0, 1.0);
+    rig.automix.move (0, -1);
+    rig.automix.move (3, 4);
+    rig.automix.move (9, 0);
+    check (order() == "acbd" && rig.automix.getQueue().size() == 4, "fuera de la lista: no cambia nada",
+           (double) rig.automix.getQueue().size(), 4.0);
+}
+
 void testAutomixTempo()
 {
     AutomixRig rig;
@@ -4010,6 +4035,7 @@ int main (int argc, char* argv[])
 
     std::printf ("== Automix ==\n");
     testMixPoints();
+    testAutomixQueueMove();
     testAutomixTempo();
     testAutomixFadeAndMixNow();
 

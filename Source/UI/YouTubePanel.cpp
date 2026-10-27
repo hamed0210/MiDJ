@@ -1,5 +1,6 @@
 #include "UI/YouTubePanel.h"
 #include "UI/DarkLookAndFeel.h"
+#include "UI/QueueRows.h"
 
 namespace midj
 {
@@ -17,6 +18,17 @@ void YouTubeQueue::remove (int index)
         items.erase (items.begin() + index);
         sendChangeMessage();
     }
+}
+
+void YouTubeQueue::move (int from, int to)
+{
+    const int n = (int) items.size();
+    if (! juce::isPositiveAndBelow (from, n) || ! juce::isPositiveAndBelow (to, n) || from == to)
+        return;
+    const auto v = items[(size_t) from];
+    items.erase (items.begin() + from);
+    items.insert (items.begin() + to, v);
+    sendChangeMessage();
 }
 
 bool YouTubeQueue::takeNext (YouTubeVideo& out)
@@ -354,8 +366,7 @@ void YouTubePanel::paintListBoxItem (int row, juce::Graphics& g, int w, int h, b
     g.drawText (juce::String (row + 1), r.removeFromLeft (18.0f), juce::Justification::centredLeft, false);
     YouTubeThumbnails::draw (g, thumbnails->get (v.id), r.removeFromLeft (64.0f).withSizeKeepingCentre (64.0f, 36.0f), 4.0f);
     r.removeFromLeft (8.0f);
-    Icons::draw (g, r.removeFromRight (16.0f).withSizeKeepingCentre (12.0f, 12.0f), Icons::Glyph::close, DarkLookAndFeel::textQuiet);
-    r.removeFromRight (6.0f);
+    QueueRows::drawButtons (g, r, row, (int) items.size());   // subir, bajar y quitar
     // El titulo entero (hasta dos lineas) y debajo canal y duracion.
     const auto sub = r.removeFromBottom (16.0f);
     g.setColour (DarkLookAndFeel::text);
@@ -369,16 +380,71 @@ void YouTubePanel::paintListBoxItem (int row, juce::Graphics& g, int w, int h, b
 
 void YouTubePanel::listBoxItemClicked (int row, const juce::MouseEvent& e)
 {
-    // La x de la derecha la quita.
-    if (e.x >= list.getVisibleRowWidth() - 26)
-        queue.remove (row);
+    // A la derecha: subir, bajar y quitar.
+    switch (QueueRows::hitTest (e.x, list.getVisibleRowWidth()))
+    {
+        case QueueRows::Hit::up:     moveRow (row, row - 1); break;
+        case QueueRows::Hit::down:   moveRow (row, row + 1); break;
+        case QueueRows::Hit::remove: queue.remove (row); break;
+        case QueueRows::Hit::none:   break;
+    }
 }
 
-void YouTubePanel::listBoxItemDoubleClicked (int row, const juce::MouseEvent&)
+void YouTubePanel::moveRow (int from, int to)
 {
-    // Doble clic: que suene ya (sale de la lista).
+    if (! juce::isPositiveAndBelow (to, (int) queue.getItems().size()) || from == to)
+        return;
+    queue.move (from, to);
+    list.updateContent();
+    list.selectRow (to);
+}
+
+juce::var YouTubePanel::getDragSourceDescription (const juce::SparseSet<int>& rows)
+{
+    return QueueRows::describe (rowDragPrefix, rows);
+}
+
+bool YouTubePanel::isInterestedInDragSource (const SourceDetails& details)
+{
+    return QueueRows::draggedRow (rowDragPrefix, details.description) >= 0;
+}
+
+void YouTubePanel::itemDragMove (const SourceDetails& details)
+{
+    const int gap = QueueRows::dropIndex (list, list.getLocalPoint (this, details.localPosition));
+    if (gap != dropGap)
+    {
+        dropGap = gap;
+        repaint();
+    }
+}
+
+void YouTubePanel::itemDragExit (const SourceDetails&)
+{
+    dropGap = -1;
+    repaint();
+}
+
+void YouTubePanel::itemDropped (const SourceDetails& details)
+{
+    const int gap = dropGap;
+    dropGap = -1;
+    repaint();
+    if (const int to = QueueRows::targetFor (QueueRows::draggedRow (rowDragPrefix, details.description), gap); to >= 0)
+        moveRow (QueueRows::draggedRow (rowDragPrefix, details.description), to);
+}
+
+void YouTubePanel::paintOverChildren (juce::Graphics& g)
+{
+    QueueRows::drawDropLine (g, *this, list, dropGap);
+}
+
+void YouTubePanel::listBoxItemDoubleClicked (int row, const juce::MouseEvent& e)
+{
+    // Doble clic: que suene ya (sale de la lista). En subir / bajar / quitar no (pulsar dos veces
+    // subir no debe ponerlo a sonar).
     const auto& items = queue.getItems();
-    if (! juce::isPositiveAndBelow (row, (int) items.size()))
+    if (! juce::isPositiveAndBelow (row, (int) items.size()) || QueueRows::hitTest (e.x, list.getVisibleRowWidth()) != QueueRows::Hit::none)
         return;
     const auto v = items[(size_t) row];
     queue.remove (row);

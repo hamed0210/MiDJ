@@ -52,7 +52,7 @@ paquete de Microsoft), accesos directos y desinstalador. Los datos de `%APPDATA%
 ajustes) no se tocan ni al instalar ni al desinstalar.
 
 **Actualizar:** si MiDJ ya está instalado, el instalador lo detecta y muestra solo una página, *Actualizar
-MiDJ 0.3.6 -> 0.3.7*: usa la misma carpeta, el mismo modo (usuario o todos) y los mismos accesos directos, y
+MiDJ 0.3.7 -> 0.3.8*: usa la misma carpeta, el mismo modo (usuario o todos) y los mismos accesos directos, y
 cierra MiDJ si está abierto. Con la misma versión ofrece *Reinstalar*; si lo instalado es más nuevo, avisa antes
 de volver a la anterior. Para cada versión nueva basta con cambiar `AppVersion` en `Installer\MiDJ.iss` (y
 `VERSION` en `CMakeLists.txt`).
@@ -118,6 +118,7 @@ Source/
     AutomixPanel.*      panel del automix: pestanas AUTOMIX y YOUTUBE, lista, encender, mezclar ya, saltar
     YouTubePlayer.*     reproductor de YouTube: WebView2 en una ventana fuera de las pantallas
     YouTubePanel.*      pestana YOUTUBE: lo que suena, avance, volumen y lista del automix de YouTube
+    QueueRows.h         filas de las dos listas del automix: subir, bajar, quitar y arrastrar
     EffectsRow.*        fila FX de un deck: elegir efecto, encender y mando
     MidiLearnOverlay.*  capa del modo aprender MIDI
     SamplerPanel.*      panel del sampler: pads, volumen y STOP
@@ -279,7 +280,9 @@ Panel **AUTOMIX** abajo, entre las canciones y las escenas: se le arrastran canc
 canción > **Agregar a automix**, o tecla A). Encendido/Apagado, Mezclar ya, Saltar, Quitar, Vaciar y la
 duración del fundido. **Listas**: reproducir (la lista pasa a ser esa y se enciende) o añadir al final los
 Favoritos, los Más reproducidos o una lista propia. La pestaña **YOUTUBE** es el automix de YouTube, con su
-propia lista (ver YouTube).
+propia lista (ver YouTube). En las dos listas cada fila tiene **▲ ▼** (subir / bajar) y **x** (quitar), y se
+puede **arrastrar** a otro sitio de la lista (una raya marca dónde cae); en la de los decks, clic derecho también
+para subirla al principio o bajarla al final.
 Cada transición se planifica como el modo Smart de VirtualDJ: **a tempo** (16 pulsos, compases alineados y el
 tempo deslizándose de una canción a la otra) si la actual tiene fin de parte rítmica, la siguiente tiene inicio
 y sus BPM difieren menos de un 6 %; si no, **fundido**. La lista se guarda al cerrar.
