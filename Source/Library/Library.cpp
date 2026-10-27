@@ -136,13 +136,13 @@ public:
             if (scanRequested.exchange (false))
             {
                 library.scanning = true;
-                library.sendChangeMessage();
+                library.contentChanged();
                 for (const auto& folder : library.getFolders())
                     if (! threadShouldExit())
                         library.scanFolder (folder, this);
                 library.scanning = false;
                 library.startPendingCount();
-                library.sendChangeMessage();
+                library.contentChanged();
             }
             if (threadShouldExit())
                 break;
@@ -235,7 +235,7 @@ void Library::setDurationLimits (const DurationLimits& limits)
     startPendingCount();   // lo que vuelve a verse puede estar sin analizar
     if (worker != nullptr)
         worker->notify();
-    sendChangeMessage();
+    contentChanged();
 }
 
 bool Library::acceptsFile (const juce::File& file) const
@@ -335,7 +335,7 @@ void Library::includeFolder (const juce::File& folder)
         Statement (db, "DELETE FROM excluded WHERE substr (path, 1, length (?1)) = ?1 OR substr (?1, 1, length (path)) = path")
             .bind (1, prefix).run();
     }
-    sendChangeMessage();
+    contentChanged();
 }
 
 void Library::removeFolder (const juce::File& folder)
@@ -350,7 +350,7 @@ void Library::removeFolder (const juce::File& folder)
                        "(SELECT 1 FROM folders f WHERE substr (tracks.path, 1, length (f.path) + 1) = f.path || ?2)")
             .bind (1, prefix).bind (2, juce::String::charToString (juce::File::getSeparatorChar())).run();
     }
-    sendChangeMessage();
+    contentChanged();
 }
 
 juce::Array<juce::File> Library::getFolders() const
@@ -474,7 +474,7 @@ void Library::scanFolder (const juce::File& folder, juce::Thread* thread)
                 .bind (9, juce::Time::currentTimeMillis()).bind (10, search).run();
         }
         if (++changes % 20 == 0)
-            sendChangeMessage();
+            contentChanged();
     }
 
     // Archivos que estaban en la base y ya no existen.
@@ -484,7 +484,7 @@ void Library::scanFolder (const juce::File& folder, juce::Thread* thread)
             if (seen.count (path) == 0)
                 Statement (db, "DELETE FROM tracks WHERE path = ?").bind (1, path).run();
     }
-    sendChangeMessage();
+    contentChanged();
 }
 
 bool Library::analyseOne (juce::Thread* thread)
@@ -527,7 +527,7 @@ bool Library::analyseOne (juce::Thread* thread)
             .bind (1, analysis.bpm).bind (2, analysis.firstBeat).bind (3, (juce::int64) (readable ? 1 : -1)).bind (4, id).run();
     }
     ++pendingDone;
-    sendChangeMessage();
+    sendChangeMessage();   // solo el BPM: la lista no se rehace (ver getContentVersion)
     return true;
 }
 
@@ -614,7 +614,7 @@ Library::Removal Library::removeFromLibrary (const juce::File& folder)
         Statement (db, "INSERT OR IGNORE INTO excluded (path) VALUES (?)").bind (1, prefix).run();
         Statement (db, "UPDATE tracks SET hidden = 1 WHERE substr (path, 1, length (?1)) = ?1").bind (1, prefix).run();
     }
-    sendChangeMessage();
+    contentChanged();
     return removal;
 }
 
@@ -628,7 +628,7 @@ void Library::undoRemoval (const Removal& removal)
         for (const auto& root : removal.roots)
             Statement (db, "INSERT OR IGNORE INTO folders (path) VALUES (?)").bind (1, root.getFullPathName()).run();
     }
-    sendChangeMessage();
+    contentChanged();
 }
 
 void Library::setHidden (const juce::StringArray& paths, bool hidden)
@@ -638,7 +638,7 @@ void Library::setHidden (const juce::StringArray& paths, bool hidden)
         for (const auto& path : paths)
             Statement (db, "UPDATE tracks SET hidden = ? WHERE path = ?").bind (1, (juce::int64) (hidden ? 1 : 0)).bind (2, path).run();
     }
-    sendChangeMessage();
+    contentChanged();
 }
 
 juce::StringArray Library::getTrackPaths() const
@@ -740,7 +740,24 @@ void Library::setAnalysis (const juce::File& file, const TempoAnalysis& analysis
         Statement (db, "UPDATE tracks SET bpm = ?, first_beat = ?, analysed = 1 WHERE path = ?")
             .bind (1, analysis.bpm).bind (2, analysis.firstBeat).bind (3, file.getFullPathName()).run();
     }
-    sendChangeMessage();
+    sendChangeMessage();   // solo el BPM
+}
+
+bool Library::updateAnalysis (TrackInfo& track) const
+{
+    const juce::ScopedLock sl (lock);
+    Statement s (db, "SELECT bpm, first_beat, analysed FROM tracks WHERE id = ?");
+    s.bind (1, track.id);
+    if (! s.next())
+        return false;
+    const double bpm = s.real (0), firstBeat = s.real (1);
+    const bool analysed = s.integer (2) == 1;
+    if (bpm == track.bpm && firstBeat == track.firstBeat && analysed == track.analysed)
+        return false;
+    track.bpm = bpm;
+    track.firstBeat = firstBeat;
+    track.analysed = analysed;
+    return true;
 }
 
 void Library::setFavorite (const juce::File& file, bool favorite)
@@ -750,7 +767,7 @@ void Library::setFavorite (const juce::File& file, bool favorite)
         Statement (db, "UPDATE tracks SET favorite = ? WHERE path = ?")
             .bind (1, (juce::int64) (favorite ? 1 : 0)).bind (2, file.getFullPathName()).run();
     }
-    sendChangeMessage();
+    contentChanged();
 }
 
 void Library::addPlay (const juce::File& file)
@@ -760,7 +777,7 @@ void Library::addPlay (const juce::File& file)
         Statement (db, "UPDATE tracks SET plays = plays + 1, last_played = ? WHERE path = ?")
             .bind (1, (juce::int64) juce::Time::currentTimeMillis()).bind (2, file.getFullPathName()).run();
     }
-    sendChangeMessage();
+    contentChanged();
 }
 
 std::vector<TrackInfo> Library::getFavorites() const
@@ -819,7 +836,7 @@ juce::int64 Library::createPlaylist (const juce::String& name)
         if (Statement (db, "INSERT INTO playlists (name) VALUES (?)").bind (1, name).run())
             id = sqlite3_last_insert_rowid (db);
     }
-    sendChangeMessage();
+    contentChanged();
     return id;
 }
 
@@ -829,7 +846,7 @@ void Library::renamePlaylist (juce::int64 id, const juce::String& name)
         const juce::ScopedLock sl (lock);
         Statement (db, "UPDATE playlists SET name = ? WHERE id = ?").bind (1, name).bind (2, id).run();
     }
-    sendChangeMessage();
+    contentChanged();
 }
 
 void Library::deletePlaylist (juce::int64 id)
@@ -839,7 +856,7 @@ void Library::deletePlaylist (juce::int64 id)
         Statement (db, "DELETE FROM playlist_items WHERE playlist_id = ?").bind (1, id).run();
         Statement (db, "DELETE FROM playlists WHERE id = ?").bind (1, id).run();
     }
-    sendChangeMessage();
+    contentChanged();
 }
 
 bool Library::addToPlaylist (juce::int64 id, const juce::File& file)
@@ -860,7 +877,7 @@ bool Library::addToPlaylist (juce::int64 id, const juce::File& file)
         added = insert.run() && sqlite3_changes (db) > 0;
     }
     if (added)
-        sendChangeMessage();
+        contentChanged();
     return added;
 }
 
@@ -870,7 +887,7 @@ void Library::removeFromPlaylist (juce::int64 id, juce::int64 trackId)
         const juce::ScopedLock sl (lock);
         Statement (db, "DELETE FROM playlist_items WHERE playlist_id = ? AND track_id = ?").bind (1, id).bind (2, trackId).run();
     }
-    sendChangeMessage();
+    contentChanged();
 }
 
 void Library::moveInPlaylist (juce::int64 id, juce::int64 trackId, int newIndex)
@@ -891,7 +908,7 @@ void Library::moveInPlaylist (juce::int64 id, juce::int64 trackId, int newIndex)
                 .bind (1, (juce::int64) i).bind (2, id).bind (3, tracks[i].id).run();
         exec ("COMMIT");
     }
-    sendChangeMessage();
+    contentChanged();
 }
 
 std::vector<TrackInfo> Library::getPlaylistTracks (juce::int64 id) const

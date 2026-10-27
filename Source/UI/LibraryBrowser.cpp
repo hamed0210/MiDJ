@@ -319,7 +319,10 @@ LibraryBrowser::LibraryBrowser (Library& l) : library (l)
     {
         clearSearchButton.setVisible (searchBox.getTotalNumChars() > 0);
         if (filterKind != 6)
-            startTimer (200);   // espera a que se deje de teclear (YouTube: con Intro)
+        {
+            listBuilt = false;   // el texto cambio: la lista se rehace aunque la biblioteca no
+            startTimer (200);    // espera a que se deje de teclear (YouTube: con Intro)
+        }
     };
     searchBox.onEscapeKey = [this] { clearSearch(); unfocusAllComponents(); };
     searchBox.onReturnKey = [this]
@@ -898,6 +901,8 @@ void LibraryBrowser::refresh()
     // Se conserva la cancion elegida (por id) aunque la lista cambie.
     const int row = table.getSelectedRow();
     const auto selectedId = row >= 0 && row < (int) tracks.size() ? tracks[(size_t) row].id : 0;
+    listBuilt = true;
+    listVersion = library.getContentVersion();   // antes de leer: un cambio a mitad vuelve a rehacerla
 
     if (filterKind == 6)
     {
@@ -957,6 +962,22 @@ void LibraryBrowser::refresh()
     repaint (footerArea);
 }
 
+void LibraryBrowser::updateVisibleAnalysis()
+{
+    // Un BPM nuevo: solo las filas en pantalla (el orden por BPM se pone al dia en el proximo
+    // cambio de la lista) y el texto de abajo con el avance.
+    repaint (footerArea);
+    if (filterKind == 6 || tracks.empty())
+        return;
+    auto* viewport = table.getViewport();
+    const int rowHeight = juce::jmax (1, table.getRowHeight());
+    const int first = juce::jmax (0, viewport->getViewPositionY() / rowHeight);
+    const int last = juce::jmin ((int) tracks.size(), first + viewport->getViewHeight() / rowHeight + 2);
+    for (int row = first; row < last; ++row)
+        if (library.updateAnalysis (tracks[(size_t) row]))
+            table.repaintRow (row);
+}
+
 void LibraryBrowser::moveSelection (int steps)
 {
     if (tracks.empty())
@@ -1010,11 +1031,20 @@ void LibraryBrowser::timerCallback()
         return;               // el temporizador sigue a 100 ms mientras busca
     }
     stopTimer();
-    // Mientras busca archivos el arbol cambiaria a cada aviso (y parpadea al rehacerse): se
-    // rehace al terminar la busqueda, que tambien avisa.
-    if (! library.isScanning())
+    // Con una biblioteca grande rehacer el arbol y la lista lleva mucho: solo si cambio el
+    // contenido. Mientras busca archivos el arbol cambiaria a cada aviso (y parpadea al
+    // rehacerse): se rehace al terminar la busqueda, que tambien avisa.
+    const auto version = library.getContentVersion();
+    if (! library.isScanning() && (! treeBuilt || version != treeVersion))
+    {
+        treeBuilt = true;
+        treeVersion = version;
         rebuildTree (false);
-    refresh();
+    }
+    if (! listBuilt || version != listVersion)
+        refresh();
+    else
+        updateVisibleAnalysis();
     // El aviso se va solo a los 15 s.
     if (toastLabel.isVisible() && juce::Time::getMillisecondCounter() - toastShownAt > 15000)
         showToast ({}, false);

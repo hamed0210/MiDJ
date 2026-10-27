@@ -52,7 +52,7 @@ paquete de Microsoft), accesos directos y desinstalador. Los datos de `%APPDATA%
 ajustes) no se tocan ni al instalar ni al desinstalar.
 
 **Actualizar:** si MiDJ ya está instalado, el instalador lo detecta y muestra solo una página, *Actualizar
-MiDJ 0.3.5 -> 0.3.6*: usa la misma carpeta, el mismo modo (usuario o todos) y los mismos accesos directos, y
+MiDJ 0.3.6 -> 0.3.7*: usa la misma carpeta, el mismo modo (usuario o todos) y los mismos accesos directos, y
 cierra MiDJ si está abierto. Con la misma versión ofrece *Reinstalar*; si lo instalado es más nuevo, avisa antes
 de volver a la anterior. Para cada versión nueva basta con cambiar `AppVersion` en `Installer\MiDJ.iss` (y
 `VERSION` en `CMakeLists.txt`).
@@ -236,7 +236,9 @@ dice **LIM** en rojo. Todo se guarda en `%APPDATA%\MiDJ\audio.xml`.
   carpeta o un disco lo quita de la biblioteca sin borrar archivos (las canciones quedan ocultas con su
   análisis y no vuelven al re-escanear) y sale un aviso con **Deshacer**. **Sincronizar** (flechas en círculo)
   busca música y/o video en los discos elegidos (sin Windows, Archivos de programa ni AppData) y añade las
-  carpetas nuevas, que se analizan en segundo plano.
+  carpetas nuevas, que se analizan en segundo plano. Mientras se analiza el BPM, el árbol y la lista no se
+  rehacen: solo cambian el BPM de las filas que se ven y el avance de abajo (así va fluida con cientos de
+  miles de canciones; el orden por BPM se pone al día al buscar o elegir otra carpeta).
 
 Cada canción tiene **A** / **B** (cargar en ese deck) y **+** (al automix); doble clic la carga en el deck libre.
 Favoritos, reproducciones y listas se guardan en `library.db`.

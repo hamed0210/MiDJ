@@ -822,7 +822,15 @@ void testLibrary()
                (double) library.search ("", music.getChildFile ("sub")).size(), 1.0);
         check (library.search ("100%").empty() && library.search ("_").empty(), "buscar % y _ no son comodines", 0.0, 0.0);
 
+        auto beforeAnalysis = library.search ("", {}, Library::SortColumn::title, true);
+        const auto contentBefore = library.getContentVersion();
         check (library.analysePendingNow() == 4, "analisis: 4 pendientes", 4.0, 4.0);
+        // Un BPM analizado no cambia el contenido (la lista no se rehace), pero se puede releer.
+        check (library.getContentVersion() == contentBefore, "analisis: no cambia la version del contenido",
+               (double) library.getContentVersion(), (double) contentBefore);
+        check (! beforeAnalysis.empty() && library.updateAnalysis (beforeAnalysis.front()) && beforeAnalysis.front().bpm > 0.0
+                   && ! library.updateAnalysis (beforeAnalysis.front()),
+               "updateAnalysis: trae el BPM nuevo una vez", beforeAnalysis.empty() ? 0.0 : beforeAnalysis.front().bpm, 1.0);
         const auto bpmOf = [&] (const juce::File& f) { auto x = library.findByFile (f); return x ? x->bpm : 0.0; };
         check (std::abs (bpmOf (maria) - 120.0) < 0.05 && std::abs (bpmOf (slow) - 100.0) < 0.05
                    && std::abs (bpmOf (deep) - 128.0) < 0.05,
@@ -850,7 +858,10 @@ void testLibrary()
         writeClickWav (slow, 90.0, 25.0);
         slow.setLastModificationTime (juce::Time::getCurrentTime() + juce::RelativeTime::minutes (1));
         loose.deleteFile();
+        const auto contentBeforeScan = library.getContentVersion();
         library.scanNow();
+        check (library.getContentVersion() != contentBeforeScan, "escanear con cambios: sube la version del contenido",
+               (double) library.getContentVersion(), (double) contentBeforeScan + 1.0);
         check (library.getNumTracks() == 3, "archivo borrado: sale de la biblioteca", library.getNumTracks(), 3);
         const int reanalysed = library.analysePendingNow();
         check (reanalysed == 1 && std::abs (bpmOf (slow) - 90.0) < 0.05,

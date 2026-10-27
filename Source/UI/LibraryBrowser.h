@@ -124,6 +124,11 @@ private:
     juce::TreeView tree;
     std::unique_ptr<Node> rootNode;
     juce::String treeSignature;           // para no rehacer el arbol si no cambio nada
+    // Version del contenido de la biblioteca con la que se hicieron el arbol y la lista: si no
+    // cambio, un aviso es solo un BPM analizado y basta con releer las filas que se ven.
+    juce::uint32 treeVersion = 0, listVersion = 0;
+    bool treeBuilt = false, listBuilt = false;
+    void updateVisibleAnalysis();
     juce::File filterFolder;              // lo elegido en el arbol
     int filterKind = 0;                   // 0 todo, 1 solo audio, 2 solo video, 3 favoritos, 4 mas reproducidos, 5 una lista
     juce::int64 filterPlaylist = 0;       // la lista elegida (filterKind 5)

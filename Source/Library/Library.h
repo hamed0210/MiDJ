@@ -124,6 +124,11 @@ public:
 
     // Guarda el analisis hecho fuera (por ejemplo al cargar un archivo en un deck).
     void setAnalysis (const juce::File& file, const TempoAnalysis& analysis);
+    // Sube con cada cambio de canciones, carpetas, favoritos o listas, pero no con un BPM
+    // analizado: si no cambio, basta con releer el BPM de lo que se ve (updateAnalysis).
+    juce::uint32 getContentVersion() const { return contentVersion.load(); }
+    // Relee el BPM, el primer golpe y si esta analizada; true si algo cambio.
+    bool updateAnalysis (TrackInfo& track) const;
 
     // Favoritos y mas reproducidos (audio y video juntos).
     void setFavorite (const juce::File& file, bool favorite);
@@ -164,6 +169,7 @@ private:
     void scanFolder (const juce::File& folder, juce::Thread* thread);   // thread: para poder parar
     bool analyseOne (juce::Thread* thread);                              // false = no quedaba nada
     void startPendingCount();
+    void contentChanged() { ++contentVersion; sendChangeMessage(); }
 
     juce::AudioFormatManager& formats;
     sqlite3* db = nullptr;
@@ -171,6 +177,7 @@ private:
     std::unique_ptr<Worker> worker;
     std::atomic<int> pendingTotal { 0 }, pendingDone { 0 };
     std::atomic<bool> scanning { false };
+    std::atomic<juce::uint32> contentVersion { 0 };
     DurationLimits durations;            // con el cerrojo
 };
 }
