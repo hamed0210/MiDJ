@@ -115,6 +115,12 @@ struct Scene
     std::vector<SceneItem> items;   // el primero es el de abajo
     int autoWhen = 0;               // SceneAuto combinados (0 = nunca)
     bool switchesOn (SceneAuto when) const { return (autoWhen & (int) when) != 0; }
+    bool muted = false;             // sin sonido: sus fuentes multimedia y capturadoras no suenan
+    // Si tiene fuentes con sonido (multimedia o capturadora), para mostrar su altavoz.
+    bool hasSound() const;
+    // Con una capturadora a la vista no se cambia sola de escena (al poner musica se sigue
+    // viendo la capturadora); a mano, si.
+    bool holdsAutoSwitch() const;
 };
 
 enum class TransitionType { cut, fade, fadeToBlack, slide, swipe };

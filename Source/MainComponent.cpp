@@ -603,6 +603,11 @@ void MainComponent::updateAutoScene()
         return;
     autoKind = kind;
     pendingAutoKind = 0;
+    // Con la capturadora al aire se queda en su escena (poner musica no la quita); el cambio
+    // cuenta como visto: al salir a mano no salta enseguida a otra.
+    if (const auto* onAir = videoStage->getScenes().findScene (videoStage->getScenes().currentScene);
+        onAir != nullptr && onAir->holdsAutoSwitch())
+        return;
     const auto wanted = kind == 4 ? SceneAuto::youtube : kind == 2 ? SceneAuto::video : kind == 1 ? SceneAuto::audio : SceneAuto::idle;
     for (const auto& scene : videoStage->getScenes().scenes)
         if (scene.switchesOn (wanted))

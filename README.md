@@ -52,7 +52,7 @@ paquete de Microsoft), accesos directos y desinstalador. Los datos de `%APPDATA%
 ajustes) no se tocan ni al instalar ni al desinstalar.
 
 **Actualizar:** si MiDJ ya está instalado, el instalador lo detecta y muestra solo una página, *Actualizar
-MiDJ 0.3.7 -> 0.3.8*: usa la misma carpeta, el mismo modo (usuario o todos) y los mismos accesos directos, y
+MiDJ 0.3.8 -> 0.3.9*: usa la misma carpeta, el mismo modo (usuario o todos) y los mismos accesos directos, y
 cierra MiDJ si está abierto. Con la misma versión ofrece *Reinstalar*; si lo instalado es más nuevo, avisa antes
 de volver a la anterior. Para cada versión nueva basta con cambiar `AppVersion` en `Installer\MiDJ.iss` (y
 `VERSION` en `CMakeLists.txt`).
@@ -136,6 +136,7 @@ Tests/
                         MiDJTests --mixpoints canciones...    puntos de automix
                         MiDJTests --stems cancion [cpu|gpu] [s] separa voz e instrumental (WAV)
                         MiDJTests --video archivo             coste de decodificar un video en la GPU y en la CPU
+                        MiDJTests --media-idle video [compartido]  CPU de una fuente de video abierta fuera del aire
                         MiDJTests --benchmark                 CPU del keylock y de los efectos
 Installer/
   MiDJ.iss              instalador (Inno Setup): instala o actualiza
@@ -239,7 +240,11 @@ dice **LIM** en rojo. Todo se guarda en `%APPDATA%\MiDJ\audio.xml`.
   busca música y/o video en los discos elegidos (sin Windows, Archivos de programa ni AppData) y añade las
   carpetas nuevas, que se analizan en segundo plano. Mientras se analiza el BPM, el árbol y la lista no se
   rehacen: solo cambian el BPM de las filas que se ven y el avance de abajo (así va fluida con cientos de
-  miles de canciones; el orden por BPM se pone al día al buscar o elegir otra carpeta).
+  miles de canciones; el orden por BPM se pone al día al buscar o elegir otra carpeta). El análisis va en
+  un hilo de prioridad baja (el disco se lee a ritmo normal: el modo segundo plano de Windows lo frenaba
+  demasiado), sigue desde la última canción sin
+  recorrer la tabla y lee el audio a mono por trozos (menos memoria). Una reproducción contada solo cambia
+  "Más reproducidos", y mientras busca canciones la lista se rehace como mucho cada 5 s.
 
 Cada canción tiene **A** / **B** (cargar en ese deck) y **+** (al automix); doble clic la carga en el deck libre.
 Favoritos, reproducciones y listas se guardan en `library.db`.
@@ -328,7 +333,11 @@ Abajo a la derecha están los paneles **Escenas** y **Fuentes**, como los de OBS
   para duplicar y para **Pasar a esta escena
   automáticamente**: cuando lo que más se oye de los decks es una canción de audio, un video, cuando no suena
   nada (tras 1,5 s) o cuando suena YouTube (un icono en la lista lo indica). Solo actúa al cambiar: una escena
-  elegida a mano se respeta hasta el próximo cambio.
+  elegida a mano se respeta hasta el próximo cambio. Con una **capturadora** visible en la escena al aire no
+  se cambia sola: se puede poner música y se sigue viendo la capturadora (a mano sí se cambia).
+  **Altavoz** (en las escenas con multimedia o capturadora): clic para silenciar la escena o devolverle el
+  sonido (también en el clic derecho); sin sonido, sus fuentes no se oyen por el master. Una fuente que
+  está en varias escenas suena como la de la escena al aire.
 - **Fuentes** de la escena (la de arriba se ve encima), con su ojo (mostrar u ocultar) y su candado (no se
   mueve en la vista previa). Botones: **+** abre **Añadir fuente** (a la izquierda los tipos: Mezcla de decks,
   Deck A, Deck B, YouTube, Captura de pantalla, Captura de ventana, Dispositivo de captura de video, Imagen,

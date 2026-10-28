@@ -267,7 +267,15 @@ void DeckComponent::changeListenerCallback (juce::ChangeBroadcaster*)
 void DeckComponent::timerCallback()
 {
     updateLabels();
-    repaint (waveformArea);
+    // En pausa la onda no se mueve: basta con 5 veces por segundo (marcas, bucles que cambian)
+    // en vez de 30. Sonando, cargando o si la posicion cambio (salto, scratch), a cada vuelta.
+    const double position = deck.getPositionSeconds();
+    if (deck.isPlaying() || deck.isLoading() || position != lastWavePosition || ++idleWaveTicks >= 6)
+    {
+        lastWavePosition = position;
+        idleWaveTicks = 0;
+        repaint (waveformArea);
+    }
     if (titleScrolls)
         repaint (titleArea);
 }

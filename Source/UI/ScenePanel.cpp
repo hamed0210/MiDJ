@@ -7,6 +7,13 @@ namespace
 {
     const juce::Colour live (0xff26262b);   // la escena al aire / la fuente elegida
 
+    // El altavoz de una fila de escena (solo si tiene fuentes con sonido), antes del atajo.
+    constexpr int speakerWidth = 22;
+    juce::Rectangle<int> speakerArea (const Scene& scene, int w, int h)
+    {
+        return scene.hasSound() ? juce::Rectangle<int> (w - 54 - speakerWidth, 0, speakerWidth, h) : juce::Rectangle<int>();
+    }
+
     void setUpTitle (juce::Label& l)
     {
         l.setFont (DarkLookAndFeel::sans (14.0f, true));
@@ -308,9 +315,16 @@ void ScenesPanel::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bo
     for (auto a : allSceneAutos)
         autoCount += scene.switchesOn (a) ? 1 : 0;
     const int autoW = autoCount * 18 + (autoCount > 0 ? 4 : 0);
-    g.drawText (scene.name, 26, 0, w - 74 - autoW, h, juce::Justification::centredLeft, true);
+    const auto speaker = speakerArea (scene, w, h);
+    const int right = w - 54 - speaker.getWidth() - autoW;   // donde empiezan los iconos
+    g.drawText (scene.name, 26, 0, right - 30, h, juce::Justification::centredLeft, true);
+    // Altavoz: clic = silenciar la escena (sus fuentes multimedia y capturadoras) o devolverle el sonido.
+    if (! speaker.isEmpty())
+        Icons::draw (g, speaker.toFloat().withSizeKeepingCentre (15.0f, 15.0f),
+                     scene.muted ? Icons::Glyph::speakerOff : Icons::Glyph::speaker,
+                     scene.muted ? DarkLookAndFeel::danger : (onAir ? juce::Colours::white.withAlpha (0.8f) : DarkLookAndFeel::textQuiet));
     // Cambios automaticos: nota (audio), pelicula (video), pausa (no suena nada) o YouTube.
-    float x = (float) (w - 54 - autoW);
+    float x = (float) right;
     for (auto when : allSceneAutos)
     {
         if (! scene.switchesOn (when))
@@ -339,11 +353,20 @@ void ScenesPanel::listBoxItemClicked (int row, const juce::MouseEvent& e)
     if (! juce::isPositiveAndBelow (row, (int) scenes.size()))
         return;
     const int id = scenes[(size_t) row].id;
+    // El altavoz silencia la escena sin pasar a ella.
+    if (! e.mods.isPopupMenu() && e.eventComponent != nullptr
+        && speakerArea (scenes[(size_t) row], e.eventComponent->getWidth(), e.eventComponent->getHeight()).contains (e.getPosition()))
+    {
+        toggleMuted (id);
+        return;
+    }
     stage.switchToScene (id);
     if (e.mods.isPopupMenu())
     {
         juce::PopupMenu menu;
         menu.addItem ("Renombrar", [this, id] { rename (id); });
+        if (const auto* scene = stage.getScenes().findScene (id); scene != nullptr && scene->hasSound())
+            menu.addItem ("Silenciar la escena", true, scene->muted, [this, id] { toggleMuted (id); });
         menu.addItem ("Duplicar", [this, id]
         {
             auto& sc = stage.getScenes();
@@ -355,6 +378,7 @@ void ScenesPanel::listBoxItemClicked (int row, const juce::MouseEvent& e)
             for (auto& i : items)
                 i.id = sc.newId();   // mismos ajustes: comparte capturas y multimedia
             copy.items = std::move (items);
+            copy.muted = sc.findScene (id)->muted;
             const int newId = copy.id;
             stage.scenesChanged();
             stage.switchToScene (newId);
@@ -367,11 +391,25 @@ void ScenesPanel::listBoxItemClicked (int row, const juce::MouseEvent& e)
     }
 }
 
-void ScenesPanel::listBoxItemDoubleClicked (int row, const juce::MouseEvent&)
+void ScenesPanel::listBoxItemDoubleClicked (int row, const juce::MouseEvent& e)
 {
     const auto& scenes = stage.getScenes().scenes;
-    if (juce::isPositiveAndBelow (row, (int) scenes.size()))
-        rename (scenes[(size_t) row].id);
+    if (! juce::isPositiveAndBelow (row, (int) scenes.size()))
+        return;
+    // Doble clic en el altavoz: son dos clics de silenciar, no renombrar.
+    if (e.eventComponent != nullptr
+        && speakerArea (scenes[(size_t) row], e.eventComponent->getWidth(), e.eventComponent->getHeight()).contains (e.getPosition()))
+        return;
+    rename (scenes[(size_t) row].id);
+}
+
+void ScenesPanel::toggleMuted (int sceneId)
+{
+    if (auto* scene = stage.getScenes().findScene (sceneId))
+    {
+        scene->muted = ! scene->muted;
+        stage.scenesChanged();
+    }
 }
 
 void ScenesPanel::paint (juce::Graphics& g)

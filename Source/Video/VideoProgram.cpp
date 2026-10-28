@@ -145,7 +145,14 @@ void VideoProgram::republish()
         for (const auto& item : s.items)
         {
             alive.insert (item.id);
-            ps.items.push_back (prepare (item));
+            if (s.muted && ! item.muted)
+            {
+                auto silent = item;   // escena silenciada: sus fuentes no suenan
+                silent.muted = true;
+                ps.items.push_back (prepare (silent));
+            }
+            else
+                ps.items.push_back (prepare (item));
         }
         scenes->push_back (std::move (ps));
     }

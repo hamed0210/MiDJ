@@ -128,6 +128,8 @@ private:
     // cambio, un aviso es solo un BPM analizado y basta con releer las filas que se ven.
     juce::uint32 treeVersion = 0, listVersion = 0;
     bool treeBuilt = false, listBuilt = false;
+    juce::uint32 listPlaysVersion = 0, treePlaysVersion = 0;
+    juce::uint32 listRefreshedAt = 0;     // cuando se rehizo la lista (mientras escanea, no mas de cada 5 s)
     void updateVisibleAnalysis();
     juce::File filterFolder;              // lo elegido en el arbol
     int filterKind = 0;                   // 0 todo, 1 solo audio, 2 solo video, 3 favoritos, 4 mas reproducidos, 5 una lista

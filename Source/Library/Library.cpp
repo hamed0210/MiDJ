@@ -68,7 +68,8 @@ namespace
             file_size  INTEGER, file_mtime INTEGER,
             added      INTEGER,
             search     TEXT);                  -- todo el texto en minusculas y sin acentos
-        CREATE INDEX IF NOT EXISTS tracks_pending ON tracks (analysed);
+        DROP INDEX IF EXISTS tracks_pending;
+        CREATE INDEX IF NOT EXISTS tracks_pending_added ON tracks (analysed, added);   -- la siguiente por analizar sin ordenar toda la tabla
         CREATE TABLE IF NOT EXISTS excluded (       -- carpetas quitadas del arbol (no se re-escanean)
             path  TEXT PRIMARY KEY);
         CREATE TABLE IF NOT EXISTS playlists (      -- listas de reproduccion propias
@@ -370,7 +371,7 @@ void Library::startBackgroundWork()
     if (worker == nullptr)
     {
         worker = std::make_unique<Worker> (*this);
-        worker->startThread (juce::Thread::Priority::low);
+        worker->startThread (juce::Thread::Priority::low);   // por debajo del audio, el video y la interfaz; el disco, normal
     }
     else
     {
@@ -480,9 +481,11 @@ void Library::scanFolder (const juce::File& folder, juce::Thread* thread)
     // Archivos que estaban en la base y ya no existen.
     {
         const juce::ScopedLock sl (lock);
+        exec ("BEGIN");   // en una sola escritura: borrar una carpeta grande no escribe el disco miles de veces
         for (const auto& [path, info] : known)
             if (seen.count (path) == 0)
                 Statement (db, "DELETE FROM tracks WHERE path = ?").bind (1, path).run();
+        exec ("COMMIT");
     }
     contentChanged();
 }
@@ -493,32 +496,58 @@ bool Library::analyseOne (juce::Thread* thread)
     juce::String path;
     {
         const juce::ScopedLock sl (lock);
-        Statement s (db, ("SELECT id, path FROM tracks WHERE analysed = 0 AND " + visibleClause() + " ORDER BY added LIMIT 1").toRawUTF8());
-        if (! s.next())
+        // Por el indice (analysed, added): sin ordenar toda la tabla con el cerrojo puesto (con
+        // cientos de miles de canciones eso frenaba las busquedas de la interfaz en cada cancion).
+        const auto visible = visibleClause();
+        for (int attempt = 0; attempt < 2 && id == 0; ++attempt)
         {
+            const bool fromCursor = hasCursor && attempt == 0;
+            Statement s (db, ("SELECT id, path, added FROM tracks WHERE analysed = 0"
+                              + juce::String (fromCursor ? " AND (added, id) > (?1, ?2)" : "")
+                              + " AND " + visible + " ORDER BY added, id LIMIT 1").toRawUTF8());
+            if (fromCursor)
+                s.bind (1, cursorAdded).bind (2, cursorId);
+            if (s.next())
+            {
+                id = s.integer (0);
+                path = s.text (1);
+                cursorAdded = s.integer (2);
+                cursorId = id;
+                hasCursor = true;
+            }
+            else if (! fromCursor)
+                break;
+        }
+        if (id == 0)
+        {
+            hasCursor = false;
             pendingDone = pendingTotal.load();   // lo que quedaba lo analizo otro (p. ej. un deck)
             return false;
         }
-        id = s.integer (0);
-        path = s.text (1);
     }
 
-    // Se decodifican los primeros 2 minutos por trozos, para poder parar a mitad si se cierra.
+    // Se decodifican los primeros 2 minutos por trozos de 5 s y se mezclan a mono sobre la
+    // marcha (como BpmDetector::analyse con un bufer: suma de los dos canales). Asi no se
+    // guardan los 2 minutos en estereo (40 MB por cancion, mucho en un equipo con poca memoria)
+    // y se puede parar a mitad si se cierra.
     TempoAnalysis analysis;
     bool readable = false;
     if (std::unique_ptr<juce::AudioFormatReader> reader { formats.createReaderFor (juce::File (path)) })
     {
         const double rate = reader->sampleRate;
         const int length = (int) std::min ((double) reader->lengthInSamples, analysisSeconds * rate);
-        juce::AudioBuffer<float> audio (2, juce::jmax (1, length));
-        const int chunk = (int) (5.0 * rate);
+        const int chunk = juce::jmax (1, (int) (5.0 * rate));
+        std::vector<float> mono ((size_t) juce::jmax (0, length), 0.0f);
+        juce::AudioBuffer<float> part (2, juce::jmin (chunk, juce::jmax (1, length)));
         for (int start = 0; start < length; start += chunk)
         {
             if (thread != nullptr && thread->threadShouldExit())
                 return false;
-            reader->read (&audio, start, juce::jmin (chunk, length - start), start, true, true);
+            const int n = juce::jmin (chunk, length - start);
+            reader->read (&part, 0, n, start, true, true);
+            juce::FloatVectorOperations::add (mono.data() + start, part.getReadPointer (0), part.getReadPointer (1), n);
         }
-        analysis = BpmDetector::analyse (audio, rate, analysisSeconds);
+        analysis = BpmDetector::analyse (mono.data(), length, rate);
         readable = length > 0;
     }
     {
@@ -777,7 +806,8 @@ void Library::addPlay (const juce::File& file)
         Statement (db, "UPDATE tracks SET plays = plays + 1, last_played = ? WHERE path = ?")
             .bind (1, (juce::int64) juce::Time::currentTimeMillis()).bind (2, file.getFullPathName()).run();
     }
-    contentChanged();
+    ++playsVersion;        // solo cambia "Mas reproducidos": el resto de la lista no se rehace
+    sendChangeMessage();
 }
 
 std::vector<TrackInfo> Library::getFavorites() const

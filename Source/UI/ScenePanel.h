@@ -26,6 +26,7 @@ private:
     void rename (int sceneId);
     void editAuto (int sceneId);   // nombre y cambios automaticos de una escena
     void moveCurrent (int delta);
+    void toggleMuted (int sceneId);   // silenciar la escena o devolverle el sonido
 
     int getNumRows() override;
     void paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool selected) override;

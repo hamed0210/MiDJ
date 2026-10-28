@@ -617,7 +617,26 @@ std::shared_ptr<FrameSource> MediaSourceManager::get (const SceneItem& item)
         }
     }
     s->update (item);
+    gains[item.id] = item.muted ? 0.0f : juce::jlimit (0.0f, 2.0f, item.volume);
     return s;
+}
+
+void MediaSourceManager::applyGains()
+{
+    std::map<FrameSource*, std::pair<bool, float>> chosen;   // al aire, volumen
+    for (const auto& [id, s] : sources)
+    {
+        if (s == nullptr)
+            continue;
+        const bool on = onAirItems.count (id) > 0;
+        const auto g = gains.find (id);
+        const float gain = g != gains.end() ? g->second : 1.0f;
+        auto [it, added] = chosen.try_emplace (s.get(), on, gain);
+        if (! added && (on > it->second.first || (on == it->second.first && gain > it->second.second)))
+            it->second = { on, gain };
+    }
+    for (const auto& [s, c] : chosen)
+        s->setGain (c.second);
 }
 
 std::shared_ptr<FrameSource> MediaSourceManager::find (int itemId) const
@@ -631,6 +650,8 @@ void MediaSourceManager::keepOnly (const std::set<int>& itemIds)
 {
     for (auto it = sources.begin(); it != sources.end();)
         it = itemIds.count (it->first) > 0 ? std::next (it) : sources.erase (it);
+    std::erase_if (gains, [&itemIds] (const auto& g) { return itemIds.count (g.first) == 0; });
+    applyGains();
 }
 
 void MediaSourceManager::setOnAir (const std::set<int>& itemIds)
@@ -642,6 +663,8 @@ void MediaSourceManager::setOnAir (const std::set<int>& itemIds)
             state[s.get()] = state[s.get()] || itemIds.count (id) > 0;
     for (const auto& [s, on] : state)
         s->setOnAir (on);
+    onAirItems = itemIds;
+    applyGains();
 }
 
 void MediaSourceManager::setViewing (bool v)

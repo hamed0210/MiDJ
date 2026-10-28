@@ -31,7 +31,11 @@ void AuxBus::prepare (double sampleRate, int blockSize)
 
 void AuxBus::addTo (float* left, float* right, int n)
 {
-    const juce::ScopedLock sl (lock);
+    // Hilo de audio: si la interfaz esta anadiendo o preparando una fuente (abrir un video puede
+    // tardar), este bloque va sin ellas en vez de esperar y cortar el master.
+    const juce::ScopedTryLock sl (lock);
+    if (! sl.isLocked())
+        return;
     for (auto* s : sources)
         s->addTo (left, right, n);
 }

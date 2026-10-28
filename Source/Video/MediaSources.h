@@ -33,6 +33,9 @@ public:
 
     // Hilo de interfaz: los ajustes que cambian sin volver a abrir (volumen, bucle...).
     virtual void update (const SceneItem& item) = 0;
+    // Hilo de interfaz: el volumen (0 = sin sonido). update() pone el del elemento; el gestor lo
+    // cambia si la fuente esta en varios elementos o en una escena silenciada.
+    virtual void setGain (float) {}
     // Hilo de interfaz: si sale en la escena al aire (en OBS, "activa") y si alguien mira el video.
     virtual void setOnAir (bool onAir) = 0;
     virtual void setViewing (bool viewing) = 0;
@@ -68,6 +71,7 @@ public:
 
     juce::String getStatus() const override;
     void update (const SceneItem& item) override;
+    void setGain (float g) override { gain = g; }
     void setOnAir (bool onAir) override;
     void setViewing (bool viewing) override;
     void tick() override;
@@ -145,6 +149,7 @@ public:
 
     juce::String getStatus() const override;
     void update (const SceneItem& item) override;
+    void setGain (float g) override { audio.setGain (g); }
     void setOnAir (bool onAir) override;
     void setViewing (bool viewing) override;
     float getAudioLevel() const { return audio.getLevel(); }
@@ -191,11 +196,17 @@ public:
     void tick();
 
 private:
+    // Una fuente en varios elementos suena como el que esta al aire (si hay varios, el mas alto);
+    // si ninguno lo esta, como el mas alto de todos.
+    void applyGains();
+
     AuxBus& bus;
     juce::AudioFormatManager& formats;
     const int maxWidth;
     juce::TimeSliceThread readAhead { "MiDJ multimedia" };
     std::map<int, std::shared_ptr<FrameSource>> sources;
+    std::map<int, float> gains;   // el volumen de cada elemento (0 = silenciado)
+    std::set<int> onAirItems;
     bool viewing = false;
 };
 }

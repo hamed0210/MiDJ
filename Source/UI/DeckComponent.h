@@ -118,6 +118,8 @@ private:
     juce::Image poster;
     juce::Image waveBright, waveDim;   // la onda ya dibujada (ver renderWaveCache)
     bool waveDirty = true;
+    double lastWavePosition = -1.0;   // para no repintar la onda en pausa a cada vuelta
+    int idleWaveTicks = 0;
     int waveCacheSize = 0;
     float waveCacheScale = 0.0f;
     juce::Rectangle<int> headerArea, posterArea, infoArea, waveformArea, pitchLabelArea, pitchScaleArea, loopLabelArea;

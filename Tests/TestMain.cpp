@@ -2526,6 +2526,28 @@ void testScenes()
                && back.currentScene == second.id && back.newId() > text.id,
            "escenas: se guardan y se leen en XML", s != nullptr ? (double) s->items.size() : 0.0, 2.0);
 
+    // Escena silenciada y con capturadora: se guarda el silencio; la capturadora visible y
+    // encendida no deja que la escena cambie sola.
+    {
+        auto& capture = c.addScene ("Capturadora");
+        auto device = c.makeItem (SourceType::captureDevice, 1280, 720);
+        capture.items.push_back (device);
+        capture.muted = true;
+        const int captureId = capture.id;
+        const auto again = SceneCollection::fromXml (*c.toXml(), 1280, 720);
+        const auto* cs = again.findScene (captureId);
+        const auto* fin = again.findScene (c.currentScene);
+        check (cs != nullptr && cs->muted && fin != nullptr && ! fin->muted && cs->hasSound() && ! fin->hasSound(),
+               "escenas: el silencio de una escena se guarda en XML", 0.0, 0.0);
+        auto hidden = *cs;
+        hidden.items[0].visible = false;
+        auto off = *cs;
+        off.items[0].deviceActive = false;
+        check (cs->holdsAutoSwitch() && ! fin->holdsAutoSwitch() && ! hidden.holdsAutoSwitch() && ! off.holdsAutoSwitch(),
+               "escenas: con la capturadora a la vista no se cambia sola", 0.0, 0.0);
+        std::erase_if (c.scenes, [captureId] (const Scene& sc) { return sc.id == captureId; });
+    }
+
     NowPlaying now { "La Maria", "Luister La Voz", 116.0 };
     check (SceneGeometry::resolveText ("{artista} - {titulo} ({bpm})", now) == "Luister La Voz - La Maria (116.0)",
            "escenas: {artista}, {titulo} y {bpm} en los textos", 0.0, 0.0);
@@ -3234,6 +3256,14 @@ void testMediaSource()
     auto copy = item;
     copy.id = c.newId();
     check (manager.get (copy) == source, "multimedia: el mismo archivo en otra escena es la misma fuente", 0.0, 0.0);
+    // Compartida con un elemento silenciado (o en una escena silenciada): suena como el que esta al aire.
+    copy.muted = true;
+    manager.get (copy);
+    manager.setOnAir ({ copy.id });
+    const double mutedRms = playFor (0.5);
+    manager.setOnAir ({ item.id });
+    const double liveRms = playFor (0.5);
+    check (mutedRms < 0.01 && liveRms > 0.15, "multimedia: compartida, suena como el elemento al aire (silenciado o no)", mutedRms, 0.0);
     manager.keepOnly ({});
     std::weak_ptr<MediaFileSource> weak = source;
     source.reset();
@@ -3607,6 +3637,59 @@ int videoInfo (const juce::File& file)
     return 0;
 }
 
+// MiDJTests --media-idle archivo [compartido]: CPU de una fuente multimedia abierta fuera del aire y
+// en pausa (no deberia decodificar sin parar) y lo que devuelve el decodificador al pedir lo mismo.
+int mediaIdle (const juce::File& file, bool shared)
+{
+    using namespace midj;
+    std::unique_ptr<Compositor> compositor;
+    if (shared)
+    {
+        compositor = std::make_unique<Compositor> (Compositor::Settings { 1280, 720, 30, true });
+        MediaFoundation::shareDevice (compositor->getDevice());
+    }
+    juce::AudioFormatManager formats;
+    formats.registerFormat (new MediaFoundationAudioFormat(), true);
+    AuxBus bus;
+    bus.prepare (48000.0, 512);
+    {
+        MediaSourceManager manager (bus, formats, 1280);
+        SceneCollection c;
+        auto item = c.makeItem (SourceType::media, 1280, 720);
+        item.file = file;
+        item.loop = true;
+        item.closeWhenInactive = false;
+        item.visible = false;
+        auto source = manager.get (item);
+        manager.setViewing (true);
+        manager.setOnAir ({});
+        juce::Thread::sleep (1000);
+        const double cpu0 = processCpuSeconds();
+        juce::uint64 frames0 = source->getFrameNumber();
+        juce::Thread::sleep (5000);
+        std::printf ("%s: CPU %.0f %% de un nucleo, %d fotogramas publicados en 5 s, estado '%s'\n", shared ? "compartido" : "propio",
+                     (processCpuSeconds() - cpu0) / 5.0 * 100.0, (int) (source->getFrameNumber() - frames0), source->getStatus().toRawUTF8());
+    }
+    MediaFoundation::shareDevice (nullptr);
+    for (const bool gpu : { true, false })
+    {
+        juce::String error;
+        auto decoder = VideoDecoder::open (file, 1280, error, gpu);
+        if (decoder == nullptr)
+            continue;
+        std::printf ("decodificador %s (gpu %d), duracion %.3f:\n", gpu ? "GPU" : "CPU", (int) decoder->isUsingGpu(), decoder->getDuration());
+        juce::Image image;
+        for (const double t : { 0.0, 0.0, 0.0, 0.5, 0.5 })
+        {
+            const auto start = juce::Time::getMillisecondCounterHiRes();
+            const bool got = decoder->frameAt (t, image, 6);
+            std::printf ("  frameAt(%.1f) = %d, fotograma %.3f, %.0f ms\n", t, (int) got, decoder->getCurrentFrameTime(),
+                         juce::Time::getMillisecondCounterHiRes() - start);
+        }
+    }
+    return 0;
+}
+
 // --- Biblioteca: favoritos, mas reproducidos y listas propias -----------------------------------
 
 void testLibraryLists()
@@ -3975,6 +4058,8 @@ int main (int argc, char* argv[])
     if (args[0] == "--stems" && args.size() >= 2)
         return stemsFile (args[1], args[2] == "gpu", args.size() >= 4 ? args[3].getDoubleValue() : 30.0,
                           juce::File ("D:/Hamed/VirtualDJ/Pruebas stems"));
+    if (args[0] == "--media-idle" && args.size() >= 2)   // fuente multimedia fuera del aire: CPU
+        return mediaIdle (juce::File (args[1]), args.size() >= 3 && args[2] == "compartido");
     if (args[0] == "--video" && args.size() >= 2)
         return videoInfo (juce::File (args[1]));
     if (args[0] == "--benchmark")

@@ -27,17 +27,17 @@ namespace
     std::vector<float> lowPass (const float* mono, int numSamples, double sampleRate)
     {
         constexpr double cutoff = 150.0;
-        std::vector<float> filtered (mono, mono + numSamples);
+        std::vector<float> out (mono, mono + numSamples);   // se filtra y se adelanta en el mismo vector
         for (int stage = 0; stage < 2; ++stage)
         {
             juce::IIRFilter filter;
             filter.setCoefficients (juce::IIRCoefficients::makeLowPass (sampleRate, cutoff));
-            filter.processSamples (filtered.data(), numSamples);
+            filter.processSamples (out.data(), numSamples);
         }
-        const auto delay = (size_t) std::lround (2.0 * std::sqrt (2.0) / (2.0 * juce::MathConstants<double>::pi * cutoff) * sampleRate);
-        std::vector<float> out ((size_t) numSamples, 0.0f);
-        if ((size_t) numSamples > delay)
-            std::copy (filtered.begin() + (std::ptrdiff_t) delay, filtered.end(), out.begin());
+        const auto delay = std::min ((size_t) numSamples,
+                                     (size_t) std::lround (2.0 * std::sqrt (2.0) / (2.0 * juce::MathConstants<double>::pi * cutoff) * sampleRate));
+        std::move (out.begin() + (std::ptrdiff_t) delay, out.end(), out.begin());
+        std::fill (out.end() - (std::ptrdiff_t) delay, out.end(), 0.0f);
         return out;
     }
     // Ataques: subidas del logaritmo de la energia medida en una ventana de 23 ms que termina
@@ -49,20 +49,35 @@ namespace
     std::vector<float> rises (const float* signal, int numSamples, int hop)
     {
         constexpr int window = 1024;
-        std::vector<double> energy ((size_t) numSamples + 1, 0.0);   // suma acumulada de x^2
-        for (int i = 0; i < numSamples; ++i)
-            energy[(size_t) i + 1] = energy[(size_t) i] + (double) signal[i] * signal[i];
-
+        jassert (window % hop == 0);
+        const int blocksPerWindow = window / hop;
         const int frames = numSamples / hop;
+        // Energia (x^2) de cada bloque de 'hop' muestras: la ventana de un fotograma es la suma de
+        // sus ultimos bloques (asi no hace falta una suma acumulada por muestra, 40 MB en 2 minutos).
+        std::vector<double> blockEnergy ((size_t) frames, 0.0);
+        double allEnergy = 0.0;
+        for (int b = 0; b < frames; ++b)
+        {
+            double e = 0.0;
+            for (const float* x = signal + b * hop, * end = x + hop; x < end; ++x)
+                e += (double) *x * *x;
+            blockEnergy[(size_t) b] = e;
+            allEnergy += e;
+        }
+        for (int i = frames * hop; i < numSamples; ++i)   // la cola que no llena un bloque cuenta para el suelo
+            allEnergy += (double) signal[i] * signal[i];
+
         // Suelo de ruido: una diezmilesima de la energia media (-40 dB), para que el silencio
         // no genere subidas enormes en el logaritmo.
-        const double floor = 1e-4 * energy[(size_t) numSamples] / std::max (1, numSamples) + 1e-12;
+        const double floor = 1e-4 * allEnergy / std::max (1, numSamples) + 1e-12;
         std::vector<float> out ((size_t) frames, 0.0f);
         double previous = 0.0, total = 0.0;
         for (int f = 0; f < frames; ++f)
         {
-            const int end = (f + 1) * hop, start = std::max (0, end - window);
-            const double level = std::log ((energy[(size_t) end] - energy[(size_t) start]) / window + floor);
+            double windowEnergy = 0.0;
+            for (int k = std::max (0, f - blocksPerWindow + 1); k <= f; ++k)
+                windowEnergy += blockEnergy[(size_t) k];
+            const double level = std::log (windowEnergy / window + floor);
             out[(size_t) f] = f > 0 ? (float) std::max (0.0, level - previous) : 0.0f;
             previous = level;
             total += out[(size_t) f];

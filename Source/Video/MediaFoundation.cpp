@@ -378,6 +378,10 @@ struct VideoDecoder::Impl
     int width = 0, height = 0, stride = 0;
     double frameRate = 25.0, duration = 0.0;
     double currentTime = -1.0, currentEnd = -1.0;
+    // Desde donde vale el fotograma actual: su inicio o, si se pidio un tiempo anterior y este fue
+    // el primero que llego (el primer fotograma de muchos MP4 empieza en 0,133 s), ese tiempo. Asi
+    // pedir otra vez lo mismo no vuelve a buscar (una fuente en pausa en 0 decodificaba sin parar).
+    double currentFrom = -1.0;
     bool ended = false;
     bool catchingUp = false;    // tras buscar, aun no se ha llegado al instante pedido
     double seekTarget = 0.0;
@@ -468,6 +472,7 @@ struct VideoDecoder::Impl
             if (! deliver (sample.Get()))
                 continue;
             currentTime = start;
+            currentFrom = std::min (start, target);
             currentEnd = end;
             if (! early)
                 catchingUp = false;
@@ -626,11 +631,11 @@ void VideoDecoder::Impl::seekIfNeeded (double seconds)
 {
     auto& m = *this;
     const bool farAhead = m.catchingUp ? seconds > m.seekTarget + 5.0 : seconds > m.currentEnd + 2.0;
-    if (seconds < m.currentTime || farAhead || m.ended)
+    if (seconds < m.currentFrom || farAhead || m.ended)
     {
         seekTo (m.reader.Get(), seconds);
         m.ended = false;
-        m.currentTime = m.currentEnd = -1.0;
+        m.currentTime = m.currentEnd = m.currentFrom = -1.0;
         m.catchingUp = true;
         m.seekTarget = seconds;
     }
@@ -639,7 +644,7 @@ void VideoDecoder::Impl::seekIfNeeded (double seconds)
 bool VideoDecoder::frameAt (double seconds, juce::Image& image, int maxFrames)
 {
     auto& m = *impl;
-    if (seconds >= m.currentTime && seconds < m.currentEnd && image.isValid())
+    if (seconds >= m.currentFrom && seconds < m.currentEnd && image.isValid())
         return true;   // sigue siendo el mismo fotograma
     m.seekIfNeeded (seconds);
     return m.readFrameAtOrAfter (seconds, maxFrames, [&m, &image] (IMFSample* sample)
@@ -655,7 +660,7 @@ bool VideoDecoder::frameAt (double seconds, std::shared_ptr<GpuVideoFrame>& fram
     auto& m = *impl;
     if (! m.shared)
         return false;
-    if (seconds >= m.currentTime && seconds < m.currentEnd && frame != nullptr)
+    if (seconds >= m.currentFrom && seconds < m.currentEnd && frame != nullptr)
         return true;   // sigue siendo el mismo fotograma
     m.seekIfNeeded (seconds);
     return m.readFrameAtOrAfter (seconds, maxFrames, [&m, &frame] (IMFSample* sample)

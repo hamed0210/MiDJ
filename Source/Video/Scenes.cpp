@@ -148,6 +148,22 @@ SceneItem SceneCollection::makeItem (SourceType type, int w, int h)
     return item;
 }
 
+bool Scene::hasSound() const
+{
+    return std::any_of (items.begin(), items.end(), [] (const SceneItem& i)
+    {
+        return i.type == SourceType::media || i.type == SourceType::captureDevice;
+    });
+}
+
+bool Scene::holdsAutoSwitch() const
+{
+    return std::any_of (items.begin(), items.end(), [] (const SceneItem& i)
+    {
+        return i.type == SourceType::captureDevice && i.visible && i.deviceActive;
+    });
+}
+
 juce::String SceneCollection::autoName (SceneAuto when)
 {
     switch (when)
@@ -249,6 +265,8 @@ std::unique_ptr<juce::XmlElement> SceneCollection::toXml() const
                     when.add (autoId (a));
             se->setAttribute ("auto", when.joinIntoString (","));
         }
+        if (s.muted)
+            se->setAttribute ("muted", true);
         for (const auto& i : s.items)
         {
             auto* e = se->createNewChildElement ("ITEM");
@@ -348,6 +366,7 @@ SceneCollection SceneCollection::fromXml (const juce::XmlElement& xml, int w, in
             for (auto a : allSceneAutos)
                 if (when.trim() == autoId (a))
                     s.autoWhen |= (int) a;
+        s.muted = se->getBoolAttribute ("muted");
         c.lastId = juce::jmax (c.lastId, s.id);
         for (auto* e : se->getChildWithTagNameIterator ("ITEM"))
         {

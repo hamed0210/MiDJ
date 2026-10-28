@@ -127,6 +127,8 @@ public:
     // Sube con cada cambio de canciones, carpetas, favoritos o listas, pero no con un BPM
     // analizado: si no cambio, basta con releer el BPM de lo que se ve (updateAnalysis).
     juce::uint32 getContentVersion() const { return contentVersion.load(); }
+    // Sube con cada reproduccion contada (addPlay): solo cambia la vista "Mas reproducidos".
+    juce::uint32 getPlaysVersion() const { return playsVersion.load(); }
     // Relee el BPM, el primer golpe y si esta analizada; true si algo cambio.
     bool updateAnalysis (TrackInfo& track) const;
 
@@ -177,7 +179,12 @@ private:
     std::unique_ptr<Worker> worker;
     std::atomic<int> pendingTotal { 0 }, pendingDone { 0 };
     std::atomic<bool> scanning { false };
-    std::atomic<juce::uint32> contentVersion { 0 };
+    std::atomic<juce::uint32> contentVersion { 0 }, playsVersion { 0 };
     DurationLimits durations;            // con el cerrojo
+    // Por donde va el analisis (added, id): la siguiente se busca desde ahi y no desde el
+    // principio, que con muchas pendientes que no se ven (cortas) las recorreria todas cada vez.
+    // Con el cerrojo; sin resultado, se vuelve a empezar (lo que volvio a quedar pendiente atras).
+    juce::int64 cursorAdded = 0, cursorId = 0;
+    bool hasCursor = false;
 };
 }

@@ -903,6 +903,8 @@ void LibraryBrowser::refresh()
     const auto selectedId = row >= 0 && row < (int) tracks.size() ? tracks[(size_t) row].id : 0;
     listBuilt = true;
     listVersion = library.getContentVersion();   // antes de leer: un cambio a mitad vuelve a rehacerla
+    listRefreshedAt = juce::Time::getMillisecondCounter();
+    listPlaysVersion = library.getPlaysVersion();
 
     if (filterKind == 6)
     {
@@ -1041,14 +1043,36 @@ void LibraryBrowser::timerCallback()
         treeVersion = version;
         rebuildTree (false);
     }
-    if (! listBuilt || version != listVersion)
-        refresh();
+    // Mientras busca archivos el contenido cambia a cada momento y rehacer la lista (con cientos
+    // de miles de canciones) lleva casi un segundo: como mucho cada 5 s. Lo que se teclea o se
+    // elige (listBuilt = false) se rehace ya.
+    bool later = false;
+    // Una reproduccion contada: en el arbol solo cambia el numero de "Mas reproducidos" (sin
+    // rehacerlo entero) y la lista solo si es esa la que se ve.
+    if (const auto plays = library.getPlaysVersion(); plays != treePlaysVersion && rootNode != nullptr)
+    {
+        treePlaysVersion = plays;
+        for (int i = 0; i < rootNode->getNumSubItems(); ++i)
+            if (auto* node = dynamic_cast<Node*> (rootNode->getSubItem (i)); node != nullptr && node->kind == Node::Kind::mostPlayed)
+                node->count = library.countPlayed();
+        tree.repaint();
+    }
+    const bool playsChanged = filterKind == 4 && library.getPlaysVersion() != listPlaysVersion;
+    if (! listBuilt || version != listVersion || playsChanged)
+    {
+        if (listBuilt && library.isScanning() && juce::Time::getMillisecondCounter() - listRefreshedAt < 5000)
+            later = true;
+        else
+            refresh();
+    }
     else
         updateVisibleAnalysis();
     // El aviso se va solo a los 15 s.
     if (toastLabel.isVisible() && juce::Time::getMillisecondCounter() - toastShownAt > 15000)
         showToast ({}, false);
     else if (toastLabel.isVisible())
+        startTimer (1000);
+    if (later && ! isTimerRunning())
         startTimer (1000);
 }
 

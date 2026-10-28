@@ -246,6 +246,27 @@ void Icons::draw (juce::Graphics& g, R area, Glyph glyph, juce::Colour colour)
             g.fillRoundedRectangle (R (at (0.08f, 0.55f), at (0.3f, 0.9f)), s * 0.06f);
             g.fillRoundedRectangle (R (at (0.7f, 0.55f), at (0.92f, 0.9f)), s * 0.06f);
             break;
+        case Glyph::speaker:      // altavoz con dos ondas
+        case Glyph::speakerOff:   // altavoz con una X
+        {
+            juce::Path body;
+            body.startNewSubPath (at (0.06f, 0.36f)); body.lineTo (at (0.24f, 0.36f)); body.lineTo (at (0.48f, 0.14f));
+            body.lineTo (at (0.48f, 0.86f)); body.lineTo (at (0.24f, 0.64f)); body.lineTo (at (0.06f, 0.64f));
+            body.closeSubPath();
+            g.fillPath (body);
+            if (glyph == Glyph::speaker)
+            {
+                p.addCentredArc (at (0.5f, 0.5f).x, at (0.5f, 0.5f).y, s * 0.18f, s * 0.18f, 0.0f, 0.75f, 2.39f, true);
+                p.addCentredArc (at (0.5f, 0.5f).x, at (0.5f, 0.5f).y, s * 0.36f, s * 0.36f, 0.0f, 0.75f, 2.39f, true);
+            }
+            else
+            {
+                p.startNewSubPath (at (0.62f, 0.34f)); p.lineTo (at (0.92f, 0.66f));
+                p.startNewSubPath (at (0.92f, 0.34f)); p.lineTo (at (0.62f, 0.66f));
+            }
+            stroke (g, p, w);
+            break;
+        }
     }
 }
 
