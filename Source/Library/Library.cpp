@@ -1,5 +1,6 @@
 #include "Library/Library.h"
 #include "Library/TagReader.h"
+#include "Engine/AudioFormats.h"
 
 #include <sqlite3.h>
 
@@ -138,6 +139,7 @@ public:
             {
                 library.scanning = true;
                 library.contentChanged();
+                library.fixMpeg2Durations (this);
                 for (const auto& folder : library.getFolders())
                     if (! threadShouldExit())
                         library.scanFolder (folder, this);
@@ -399,6 +401,42 @@ void Library::startPendingCount()
     Statement s (db, ("SELECT COUNT(*) FROM tracks WHERE analysed = 0 AND " + visibleClause()).toRawUTF8());
     pendingTotal = s.next() ? (int) s.integer (0) : 0;
     pendingDone = 0;
+}
+
+void Library::fixMpeg2Durations (juce::Thread* thread)
+{
+    std::vector<std::pair<juce::int64, juce::String>> mp3s;
+    {
+        const juce::ScopedLock sl (lock);
+        if (Statement (db, "SELECT 1 FROM settings WHERE key = 'mpeg2_durations'").next())
+            return;   // ya hecho
+        Statement s (db, "SELECT id, path FROM tracks WHERE lower (substr (path, -4)) = '.mp3'");
+        while (s.next())
+            mp3s.emplace_back (s.integer (0), s.text (1));
+    }
+    // Fuera del cerrojo: solo la cabecera de cada MP3 (64 KB) y, si es MPEG-2, su duracion.
+    std::vector<std::pair<juce::int64, double>> fixes;
+    for (const auto& [id, path] : mp3s)
+    {
+        if (thread != nullptr && thread->threadShouldExit())
+            return;   // sin marcar: se termina la proxima vez
+        juce::FileInputStream in ((juce::File (path)));
+        if (! in.openedOk() || Mp3Format::samplesPerFrame (in) != 576)
+            continue;
+        if (std::unique_ptr<juce::AudioFormatReader> reader { formats.createReaderFor (juce::File (path)) }; reader != nullptr && reader->sampleRate > 0.0)
+            fixes.emplace_back (id, (double) reader->lengthInSamples / reader->sampleRate);
+    }
+    {
+        const juce::ScopedLock sl (lock);
+        exec ("BEGIN");
+        for (const auto& [id, seconds] : fixes)
+            Statement (db, "UPDATE tracks SET duration = ? WHERE id = ?").bind (1, seconds).bind (2, id).run();
+        Statement (db, "INSERT OR REPLACE INTO settings (key, value) VALUES ('mpeg2_durations', ?)")
+            .bind (1, juce::String ((int) fixes.size())).run();
+        exec ("COMMIT");
+    }
+    if (! fixes.empty())
+        contentChanged();
 }
 
 void Library::scanNow()

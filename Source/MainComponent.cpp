@@ -1,5 +1,6 @@
 #include "MainComponent.h"
 #include "Brand/Logo.h"
+#include "Engine/AudioFormats.h"
 #include "UI/AlphaConvertDialog.h"
 
 namespace midj
@@ -8,7 +9,7 @@ MainComponent::MainComponent()
 {
     setLookAndFeel (&lookAndFeel);
     juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);   // tambien las ventanas sueltas (dialogos, menus, ajustes)
-    formatManager.registerBasicFormats();   // WAV, AIFF, FLAC, Ogg y MP3
+    registerAudioFormats (formatManager);   // WAV, AIFF, FLAC, Ogg y MP3 (con la duracion bien en MPEG-2)
     formatManager.registerFormat (new MediaFoundationAudioFormat(), false);   // el sonido de MP4/MOV/WMV y M4A
 
     // Biblioteca: lo que un deck analiza se guarda para la proxima vez.

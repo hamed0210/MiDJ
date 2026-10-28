@@ -118,6 +118,8 @@ private:
     juce::Image poster;
     juce::Image waveBright, waveDim;   // la onda ya dibujada (ver renderWaveCache)
     bool waveDirty = true;
+    bool waveStale = false;            // la onda se esta leyendo: rehacerla cuando toque (cada 0,5 s)
+    juce::uint32 waveRenderedAt = 0;   // cuando se rehizo la imagen de la onda
     double lastWavePosition = -1.0;   // para no repintar la onda en pausa a cada vuelta
     int idleWaveTicks = 0;
     int waveCacheSize = 0;

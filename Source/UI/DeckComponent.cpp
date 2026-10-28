@@ -257,9 +257,18 @@ void DeckComponent::updateLabels()
         styleToggle (loopButtons[i], deck.getLoopBeats() == loopSizes[i]);
 }
 
-void DeckComponent::changeListenerCallback (juce::ChangeBroadcaster*)
+void DeckComponent::changeListenerCallback (juce::ChangeBroadcaster* source)
 {
-    waveDirty = true;   // cancion nueva, onda cargando o BPM analizado: rehacer la imagen de la onda
+    // La onda se va leyendo y avisa a cada trozo: redibujarla entera a cada aviso (en una
+    // cancion larga, ~0,1 s cada vez) frenaba la interfaz. Mientras carga, como mucho cada 0,5 s
+    // (timerCallback); al terminar, enseguida.
+    if (source == &deck.getThumbnail() && ! deck.getThumbnail().isFullyLoaded())
+    {
+        waveStale = true;
+        return;
+    }
+    waveDirty = true;   // cancion nueva, onda completa o BPM analizado: rehacer la imagen de la onda
+    waveStale = false;
     updateLabels();
     repaint();
 }
@@ -267,6 +276,12 @@ void DeckComponent::changeListenerCallback (juce::ChangeBroadcaster*)
 void DeckComponent::timerCallback()
 {
     updateLabels();
+    if (waveStale && juce::Time::getMillisecondCounter() - waveRenderedAt >= 500)
+    {
+        waveStale = false;
+        waveDirty = true;
+        repaint (waveformArea);
+    }
     // En pausa la onda no se mueve: basta con 5 veces por segundo (marcas, bucles que cambian)
     // en vez de 30. Sonando, cargando o si la posicion cambio (salto, scratch), a cada vuelta.
     const double position = deck.getPositionSeconds();
@@ -324,11 +339,24 @@ void DeckComponent::renderWaveCache (float scale)
     waveCacheSize = waveformArea.getWidth() * 10000 + waveformArea.getHeight();
     waveCacheScale = scale;
     waveDirty = false;
+    waveRenderedAt = juce::Time::getMillisecondCounter();
     waveBright = waveDim = {};
     if (w <= 0 || h <= 0 || ! deck.hasTrack())
         return;
     auto& thumb = deck.getThumbnail();
     const double length = deck.getLengthSeconds();
+    // La onda (lo caro: recorre toda la cancion) se dibuja una vez en una mascara y se pinta en
+    // las dos imagenes con su color.
+    juce::Image mask;
+    if (thumb.getTotalLength() > 0.0)
+    {
+        mask = juce::Image (juce::Image::SingleChannel, w, h, true, juce::SoftwareImageType());
+        juce::Graphics mg (mask);
+        mg.addTransform (juce::AffineTransform::scale (scale));
+        mg.setColour (juce::Colours::white);
+        thumb.drawChannel (mg, juce::Rectangle<int> (0, 0, waveformArea.getWidth(), waveformArea.getHeight()).reduced (2, 3),
+                           0.0, thumb.getTotalLength(), 0, 1.0f);   // una sola onda (no una por canal)
+    }
     for (auto* target : { &waveDim, &waveBright })
     {
         *target = juce::Image (juce::Image::RGB, w, h, true);
@@ -351,10 +379,13 @@ void DeckComponent::renderWaveCache (float scale)
                 g.drawVerticalLine ((int) (t / length * area.getWidth()), 0.0f, (float) area.getHeight());
             }
         }
-        if (thumb.getTotalLength() > 0.0)
+        if (mask.isValid())
         {
+            // Sin la escala: la mascara ya tiene los pixeles de la imagen.
+            juce::Graphics::ScopedSaveState s (g);
+            g.addTransform (juce::AffineTransform::scale (1.0f / scale));
             g.setColour (target == &waveDim ? accent().withAlpha (0.35f) : accent());
-            thumb.drawChannel (g, area.reduced (2, 3), 0.0, thumb.getTotalLength(), 0, 1.0f);   // una sola onda (no una por canal)
+            g.drawImageAt (mask, 0, 0, true);   // la mascara rellena con el color
         }
     }
 }

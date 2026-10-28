@@ -171,6 +171,9 @@ private:
     void scanFolder (const juce::File& folder, juce::Thread* thread);   // thread: para poder parar
     bool analyseOne (juce::Thread* thread);                              // false = no quedaba nada
     void startPendingCount();
+    // Una vez: los MP3 MPEG-2 (22 050 Hz...) se guardaron con el doble de duracion (fallo del MP3
+    // de JUCE, ver Mp3Format); se corrige sin volver a analizar (el BPM ya era bueno).
+    void fixMpeg2Durations (juce::Thread* thread);
     void contentChanged() { ++contentVersion; sendChangeMessage(); }
 
     juce::AudioFormatManager& formats;

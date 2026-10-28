@@ -4,6 +4,7 @@
 #include "Control/ControlSurface.h"
 #include "Control/MidiController.h"
 #include "Control/MidiMapping.h"
+#include "Engine/AudioFormats.h"
 #include "Engine/Automix.h"
 #include "Engine/BpmDetector.h"
 #include "Engine/MixPoints.h"
@@ -584,7 +585,7 @@ std::unique_ptr<juce::AudioBuffer<float>> readFile (juce::AudioFormatManager& fo
 int analyseFiles (const juce::StringArray& paths)
 {
     juce::AudioFormatManager formats;
-    formats.registerBasicFormats();
+    midj::registerAudioFormats (formats);   // como la app (MP3 MPEG-2 con su duracion)
     formats.registerFormat (new midj::MediaFoundationAudioFormat(), false);   // MP4, M4A...
     for (const auto& p : paths)
     {
@@ -709,6 +710,52 @@ void testDeckPlayWhileLoading()
     check (deck.hasTrack() && ! deck.isPlaying() && ! deck.isPlayPending(), "deck: Pausa durante la carga lo anula",
            deck.isPlaying() ? 1.0 : 0.0, 0.0);
     file.deleteFile();
+}
+
+void testMp3Length()
+{
+    std::printf ("== MP3: muestras por trama (MPEG-1 / MPEG-2) ==\n");
+    using midj::Mp3Format;
+    // Cabeceras de trama: FF FB 90 (MPEG-1 Layer III, 128 kbps, 44 100 Hz) y FF F3 50 (MPEG-2
+    // Layer III, 22 050 Hz), con basura delante; la segunda tras una etiqueta ID3v2 de 300 bytes
+    // que contiene algo parecido a una cabecera MPEG-1 (no se debe mirar dentro de la etiqueta).
+    auto frameAfter = [] (std::initializer_list<juce::uint8> header, bool withTag)
+    {
+        juce::MemoryOutputStream out;
+        if (withTag)
+        {
+            const juce::uint8 tag[10] = { 'I', 'D', '3', 3, 0, 0, 0, 0, 2, 44 };   // 2 * 128 + 44 = 300
+            out.write (tag, 10);
+            for (int i = 0; i < 300; ++i)
+                out.writeByte ((char) (i == 10 ? 0xff : i == 11 ? 0xfb : i == 12 ? 0x90 : 0));
+        }
+        out.writeByte (0x12);
+        out.writeByte (0x34);
+        for (auto b : header)
+            out.writeByte ((char) b);
+        for (int i = 0; i < 400; ++i)
+            out.writeByte (0);
+        return out.getMemoryBlock();
+    };
+    const auto mpeg1 = frameAfter ({ 0xff, 0xfb, 0x90, 0x00 }, false);
+    const auto mpeg2 = frameAfter ({ 0xff, 0xf3, 0x50, 0x00 }, true);
+    juce::MemoryInputStream s1 (mpeg1, false), s2 (mpeg2, false);
+    s2.setPosition (0);
+    const int a = Mp3Format::samplesPerFrame (s1), b = Mp3Format::samplesPerFrame (s2);
+    check (a == 1152 && b == 576 && s2.getPosition() == 0, "mp3: 1152 muestras por trama en MPEG-1, 576 en MPEG-2 (tras ID3v2)", b, 576.0);
+
+    // Con el archivo real que salia al doble (17:41 en vez de 8:48), si esta en este equipo.
+    const juce::File real (juce::String (juce::CharPointer_UTF8 ("D:/Music/MUSICA MAS/Ma\xc3\xb1" "anita De Invierno ft. Silvestre Dangond (1).mp3")));
+    if (real.existsAsFile())
+    {
+        juce::AudioFormatManager formats;
+        midj::registerAudioFormats (formats);
+        std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (real));
+        const double seconds = reader != nullptr ? (double) reader->lengthInSamples / reader->sampleRate : 0.0;
+        // Sin cabecera Xing JUCE estima las tramas por el tamano del archivo (con las etiquetas):
+        // un poco de mas, como en cualquier MP3 asi; lo que importa es que no salga al doble.
+        check (std::abs (seconds - 528.2) < 528.2 * 0.01, "mp3: MPEG-2 real dura 8:48 (FFmpeg: 528,2 s; margen 1 %)", seconds, 528.2);
+    }
 }
 
 void testTagReader()
@@ -3690,6 +3737,64 @@ int mediaIdle (const juce::File& file, bool shared)
     return 0;
 }
 
+// MiDJTests --load-cost cancion: lo que cuesta cada paso de cargar una cancion en un deck (lo que
+// va en el hilo de la interfaz y lo que va en el de carga) y la memoria de la pista.
+int loadCost (const juce::File& file)
+{
+    juce::AudioFormatManager formats;
+    midj::registerAudioFormats (formats);   // como la app (MP3 MPEG-2 con su duracion)
+    formats.registerFormat (new midj::MediaFoundationAudioFormat(), false);
+    auto ms = [] (double since) { return juce::Time::getMillisecondCounterHiRes() - since; };
+
+    auto t = juce::Time::getMillisecondCounterHiRes();
+    std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
+    if (reader == nullptr)
+    {
+        std::printf ("no se puede abrir %s\n", file.getFullPathName().toRawUTF8());
+        return 1;
+    }
+    const double open = ms (t);
+    const int length = (int) reader->lengthInSamples;
+    std::printf ("%s: %.1f min, %.0f Hz\n", file.getFileName().toRawUTF8(), length / reader->sampleRate / 60.0, reader->sampleRate);
+    std::printf ("  [interfaz] abrir el archivo (createReaderFor): %.0f ms\n", open);
+
+    juce::AudioThumbnailCache cache (2);
+    juce::AudioThumbnail thumb (512, formats, cache);
+    t = juce::Time::getMillisecondCounterHiRes();
+    thumb.setSource (new juce::FileInputSource (file));
+    std::printf ("  [interfaz] forma de onda: setSource %.0f ms\n", ms (t));
+    const auto thumbStart = juce::Time::getMillisecondCounterHiRes();
+
+    t = juce::Time::getMillisecondCounterHiRes();
+    juce::AudioBuffer<float> audio (2, length);
+    reader->read (&audio, 0, length, 0, true, true);
+    std::printf ("  [carga] decodificar todo: %.0f ms, %.0f MB en memoria\n", ms (t), 2.0 * length * sizeof (float) / (1024.0 * 1024.0));
+    t = juce::Time::getMillisecondCounterHiRes();
+    const auto tempo = midj::BpmDetector::analyse (audio, reader->sampleRate);
+    std::printf ("  [carga] BPM (%.2f): %.0f ms\n", tempo.bpm, ms (t));
+    t = juce::Time::getMillisecondCounterHiRes();
+    midj::MixPointAnalyser::analyse (audio, reader->sampleRate, tempo);
+    std::printf ("  [carga] puntos de automix: %.0f ms\n", ms (t));
+
+    while (! thumb.isFullyLoaded() && ms (thumbStart) < 120000.0)
+        juce::Thread::sleep (20);
+    std::printf ("  [hilo de la onda] onda completa a los %.0f ms (decodifica el archivo otra vez)\n", ms (thumbStart));
+    // Como DeckComponent::renderWaveCache: la onda una vez en una mascara y dos rellenos de color.
+    juce::Image image (juce::Image::RGB, 1200, 120, true);
+    juce::Graphics g (image);
+    t = juce::Time::getMillisecondCounterHiRes();
+    juce::Image mask (juce::Image::SingleChannel, 1200, 120, true, juce::SoftwareImageType());
+    {
+        juce::Graphics mg (mask);
+        mg.setColour (juce::Colours::white);
+        thumb.drawChannel (mg, { 0, 0, 1200, 120 }, 0.0, thumb.getTotalLength(), 0, 1.0f);
+    }
+    for (int i = 0; i < 2; ++i)
+        g.drawImageAt (mask, 0, 0, true);
+    std::printf ("  [interfaz] dibujar la onda en las dos imagenes del deck: %.0f ms (mientras carga, como mucho cada 0,5 s)\n", ms (t));
+    return 0;
+}
+
 // --- Biblioteca: favoritos, mas reproducidos y listas propias -----------------------------------
 
 void testLibraryLists()
@@ -4006,7 +4111,7 @@ int main (int argc, char* argv[])
     if (args[0] == "--compare" && args.size() >= 3)   // dos grabaciones: BPM de cada una y tono de B respecto de A
     {
         juce::AudioFormatManager formats;
-        formats.registerBasicFormats();
+        midj::registerAudioFormats (formats);   // como la app (MP3 MPEG-2 con su duracion)
         formats.registerFormat (new midj::MediaFoundationAudioFormat(), false);   // MP4, M4A...
         double rateA = 0.0, rateB = 0.0;
         auto a = readFile (formats, juce::File (args[1]), rateA);
@@ -4022,7 +4127,7 @@ int main (int argc, char* argv[])
     if (args[0] == "--sample" && args.size() >= 2)   // datos de un sonido para el sampler (.vdjsample o audio)
     {
         juce::AudioFormatManager formats;
-        formats.registerBasicFormats();
+        midj::registerAudioFormats (formats);   // como la app (MP3 MPEG-2 con su duracion)
         formats.registerFormat (new midj::MediaFoundationAudioFormat(), false);   // MP4, M4A...
         const auto s = midj::SampleData::loadFile (juce::File (args[1]), formats);
         if (s == nullptr)
@@ -4039,7 +4144,7 @@ int main (int argc, char* argv[])
     if (args[0] == "--mixpoints")   // puntos de automix de canciones reales
     {
         juce::AudioFormatManager formats;
-        formats.registerBasicFormats();
+        midj::registerAudioFormats (formats);   // como la app (MP3 MPEG-2 con su duracion)
         formats.registerFormat (new midj::MediaFoundationAudioFormat(), false);   // MP4, M4A...
         for (int i = 1; i < args.size(); ++i)
         {
@@ -4058,6 +4163,8 @@ int main (int argc, char* argv[])
     if (args[0] == "--stems" && args.size() >= 2)
         return stemsFile (args[1], args[2] == "gpu", args.size() >= 4 ? args[3].getDoubleValue() : 30.0,
                           juce::File ("D:/Hamed/VirtualDJ/Pruebas stems"));
+    if (args[0] == "--load-cost" && args.size() >= 2)   // lo que cuesta cargar una cancion en un deck
+        return loadCost (juce::File (args[1]));
     if (args[0] == "--media-idle" && args.size() >= 2)   // fuente multimedia fuera del aire: CPU
         return mediaIdle (juce::File (args[1]), args.size() >= 3 && args[2] == "compartido");
     if (args[0] == "--video" && args.size() >= 2)
@@ -4140,6 +4247,7 @@ int main (int argc, char* argv[])
     testEffectRack();
 
     std::printf ("== Biblioteca: etiquetas, SQLite, busqueda y analisis ==\n");
+    testMp3Length();
     testTagReader();
     testLibrary();
 

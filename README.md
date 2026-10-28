@@ -52,7 +52,7 @@ paquete de Microsoft), accesos directos y desinstalador. Los datos de `%APPDATA%
 ajustes) no se tocan ni al instalar ni al desinstalar.
 
 **Actualizar:** si MiDJ ya está instalado, el instalador lo detecta y muestra solo una página, *Actualizar
-MiDJ 0.3.8 -> 0.3.9*: usa la misma carpeta, el mismo modo (usuario o todos) y los mismos accesos directos, y
+MiDJ 0.3.9 -> 0.3.10*: usa la misma carpeta, el mismo modo (usuario o todos) y los mismos accesos directos, y
 cierra MiDJ si está abierto. Con la misma versión ofrece *Reinstalar*; si lo instalado es más nuevo, avisa antes
 de volver a la anterior. Para cada versión nueva basta con cambiar `AppVersion` en `Installer\MiDJ.iss` (y
 `VERSION` en `CMakeLists.txt`).
@@ -83,6 +83,7 @@ Source/
     AuxAudio.*          sonidos que no son de los decks al master (multimedia, capturadora)
     HeadphoneOutput.*   audifonos por otra tarjeta de sonido (cola con correccion de reloj)
     ChannelStrip.*      canal de un deck: ganancia, EQ de 3 bandas, filtro, volumen
+    AudioFormats.*      formatos de audio: WAV, AIFF, FLAC, Ogg y MP3 (con la duración bien en los MPEG-2)
     BpmDetector.*       detección de tempo y del primer pulso
     TimeStretcher.*     keylock: cambio de tempo sin cambio de tono (Rubber Band)
     Effects.*           efectos sincronizados al tempo y rack de 3 ranuras por deck
@@ -137,6 +138,7 @@ Tests/
                         MiDJTests --stems cancion [cpu|gpu] [s] separa voz e instrumental (WAV)
                         MiDJTests --video archivo             coste de decodificar un video en la GPU y en la CPU
                         MiDJTests --media-idle video [compartido]  CPU de una fuente de video abierta fuera del aire
+                        MiDJTests --load-cost cancion         lo que cuesta cada paso de cargar una canción en un deck
                         MiDJTests --benchmark                 CPU del keylock y de los efectos
 Installer/
   MiDJ.iss              instalador (Inno Setup): instala o actualiza
@@ -244,7 +246,9 @@ dice **LIM** en rojo. Todo se guarda en `%APPDATA%\MiDJ\audio.xml`.
   un hilo de prioridad baja (el disco se lee a ritmo normal: el modo segundo plano de Windows lo frenaba
   demasiado), sigue desde la última canción sin
   recorrer la tabla y lee el audio a mono por trozos (menos memoria). Una reproducción contada solo cambia
-  "Más reproducidos", y mientras busca canciones la lista se rehace como mucho cada 5 s.
+  "Más reproducidos", y mientras busca canciones la lista se rehace como mucho cada 5 s. Los MP3 de 22 050,
+  24 000 o 16 000 Hz (MPEG-2) salían con el doble de duración (el MP3 de JUCE cuenta mal sus tramas); ahora se
+  leen bien y, la primera vez que se abre esta versión, se corrige la duración guardada de los que ya estaban.
 
 Cada canción tiene **A** / **B** (cargar en ese deck) y **+** (al automix); doble clic la carga en el deck libre.
 Favoritos, reproducciones y listas se guardan en `library.db`.

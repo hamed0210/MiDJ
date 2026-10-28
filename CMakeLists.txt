@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(MiDJ VERSION 0.3.9 LANGUAGES C CXX)
+project(MiDJ VERSION 0.3.10 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -63,6 +63,7 @@ add_library(MiDJEngine STATIC
     Source/Control/ControlSurface.cpp
     Source/Control/MidiController.cpp
     Source/Control/MidiMapping.cpp
+    Source/Engine/AudioFormats.cpp
     Source/Engine/Automix.cpp
     Source/Engine/BpmDetector.cpp
     Source/Engine/ChannelStrip.cpp
