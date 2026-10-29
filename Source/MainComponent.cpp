@@ -515,13 +515,13 @@ void MainComponent::updateAutoCrossfader()
     // Al empezar a sonar un deck (con clic, espacio o MIDI), el crossfader se desliza a su lado en
     // ~0,4 s: si el otro no suena, solo cuando lo deja sin volumen (o casi); si el otro ya sonaba,
     // del todo y el otro se pausa al llegar (un cambio de cancion). Si arrancan los dos a la vez
-    // (el espacio que vuelve a poner los dos) no se toca. El automix maneja el crossfader solo.
+    // (el espacio que vuelve a poner los dos) no se toca. Mientras el automix mezcla, lo maneja el.
     const auto before = wasPlaying;
     for (int d = 0; d < 2; ++d)
     {
         const bool playing = (d == 0 ? deckA : deckB).isPlaying();
         const bool otherPlaying = (d == 0 ? deckB : deckA).isPlaying();
-        if (playing && ! before[(size_t) d] && panels.autoCrossfader && ! automix.isEnabled())
+        if (playing && ! before[(size_t) d] && panels.autoCrossfader && automix.getState() != Automix::State::mixing)
         {
             const float cross = mixer.getCrossfader();
             const float gain = juce::jmin (1.0f, 2.0f * (d == 0 ? 1.0f - cross : cross));
@@ -542,7 +542,7 @@ void MainComponent::updateAutoCrossfader()
     }
     if (crossfaderTarget < 0.0f)
         return;
-    if (mixerView.getCrossfader().isMouseButtonDown() || automix.isEnabled())
+    if (mixerView.getCrossfader().isMouseButtonDown() || automix.getState() == Automix::State::mixing)
     {
         crossfaderTarget = -1.0f;   // la mano (o el automix) manda: tampoco se pausa nada
         pauseWhenCrossed = false;

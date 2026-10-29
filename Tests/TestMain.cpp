@@ -1947,6 +1947,76 @@ void testAutomixTempo()
     check (! rig.automix.isEnabled(), "automix: al acabar la ultima cancion se apaga", 0.0, 0.0);
 }
 
+void testAutomixManualPause()
+{
+    // Pausar a mano la que suena no es que acabe: el otro deck no arranca y el automix sigue.
+    AutomixRig rig;
+    rig.addSong ("a.wav", songWithSections (120.0), gridFor (120.0, 8.0));
+    rig.addSong ("b.wav", songWithSections (124.0), gridFor (124.0, 8.0));
+    rig.automix.loadTrack (0, rig.item ("a.wav").file);
+    rig.a.setPositionSeconds (10.0);
+    rig.a.play();
+    rig.automix.add (rig.item ("b.wav"));
+    rig.automix.setEnabled (true);
+    rig.step();
+    rig.a.pause();
+    for (int k = 0; k < (int) (2.0 * sr) / blockSize; ++k)
+        rig.step();
+    check (! rig.b.isPlaying() && rig.automix.getState() == midj::Automix::State::playing,
+           "automix: pausar el deck que suena no pone a sonar el otro", rig.b.isPlaying() ? 1.0 : 0.0, 0.0);
+    // Pausada en plena zona de mezcla tampoco.
+    rig.a.setPositionSeconds (35.0);
+    for (int k = 0; k < (int) (1.0 * sr) / blockSize; ++k)
+        rig.step();
+    check (! rig.b.isPlaying() && rig.automix.isEnabled(), "automix: pausada pasado el punto de mezcla, el otro sigue parado",
+           rig.b.isPlaying() ? 1.0 : 0.0, 0.0);
+    // Al volver a darle Play, la mezcla sigue normal.
+    rig.a.play();
+    for (int k = 0; k < (int) (1.0 * sr) / blockSize; ++k)
+        rig.step();
+    check (rig.b.isPlaying(), "automix: al volver a dar Play sigue la mezcla", rig.b.isPlaying() ? 1.0 : 0.0, 1.0);
+    // Play a mano al otro deck (con la siguiente ya cargada): el automix no lo toca mientras
+    // suenan los dos y, al pausarse el anterior, sigue desde ese deck.
+    AutomixRig rig2;
+    rig2.addSong ("a.wav", songWithSections (120.0), gridFor (120.0, 8.0));
+    rig2.addSong ("b.wav", songWithSections (124.0), gridFor (124.0, 8.0));
+    rig2.addSong ("c.wav", songWithSections (122.0), gridFor (122.0, 8.0));
+    rig2.automix.loadTrack (0, rig2.item ("a.wav").file);
+    rig2.a.setPositionSeconds (10.0);
+    rig2.a.play();
+    rig2.automix.add (rig2.item ("b.wav"));
+    rig2.automix.add (rig2.item ("c.wav"));
+    rig2.automix.setEnabled (true);
+    for (int k = 0; k < 4 && ! rig2.b.hasTrack(); ++k)
+        rig2.step();
+    rig2.b.setPositionSeconds (3.0);
+    rig2.b.play();
+    for (int k = 0; k < (int) (1.0 * sr) / blockSize; ++k)
+        rig2.step();
+    check (rig2.a.isPlaying() && rig2.b.isPlaying() && std::abs (rig2.b.getPositionSeconds() - 4.0) < 0.05
+               && rig2.automix.getState() == midj::Automix::State::playing,
+           "automix: Play a mano al otro deck, suenan los dos sin saltos", rig2.b.getPositionSeconds(), 4.0);
+    rig2.a.pause();
+    for (int k = 0; k < 4; ++k)
+        rig2.step();
+    check (rig2.automix.getCurrentDeck() == 1 && rig2.b.isPlaying() && rig2.automix.isEnabled()
+               && rig2.a.getTrackName() == "c.wav",
+           "automix: al pausarse el anterior sigue desde el otro deck y prepara la siguiente",
+           (double) rig2.automix.getCurrentDeck(), 1.0);
+    // Y el automix sigue funcionando: al final de B mezcla solo con C, que queda sonando.
+    bool mixed = false;
+    rig2.b.setPositionSeconds (25.0);
+    for (int k = 0; k < (int) (30.0 * sr) / blockSize; ++k)
+    {
+        rig2.step();
+        mixed = mixed || rig2.automix.getState() == midj::Automix::State::mixing;
+    }
+    check (mixed && rig2.automix.getCurrentDeck() == 0 && rig2.a.isPlaying() && ! rig2.b.isPlaying(),
+           "automix: despues de tomarlo a mano sigue mezclando solo con la siguiente",
+           (double) rig2.automix.getCurrentDeck(), 0.0);
+}
+
+
 void testAutomixFadeAndMixNow()
 {
     // B sin tempo (solo el acorde): fundido de 6 s que acaba en el fadeEnd de A.
@@ -4230,6 +4300,7 @@ int main (int argc, char* argv[])
     testAutomixQueueMove();
     testAutomixTempo();
     testAutomixFadeAndMixNow();
+    testAutomixManualPause();
 
     std::printf ("== Sampler ==\n");
     testSampleData();

@@ -52,7 +52,7 @@ paquete de Microsoft), accesos directos y desinstalador. Los datos de `%APPDATA%
 ajustes) no se tocan ni al instalar ni al desinstalar.
 
 **Actualizar:** si MiDJ ya está instalado, el instalador lo detecta y muestra solo una página, *Actualizar
-MiDJ 0.3.9 -> 0.3.10*: usa la misma carpeta, el mismo modo (usuario o todos) y los mismos accesos directos, y
+MiDJ 0.3.10 -> 0.3.11*: usa la misma carpeta, el mismo modo (usuario o todos) y los mismos accesos directos, y
 cierra MiDJ si está abierto. Con la misma versión ofrece *Reinstalar*; si lo instalado es más nuevo, avisa antes
 de volver a la anterior. Para cada versión nueva basta con cambiar `AppVersion` en `Installer\MiDJ.iss` (y
 `VERSION` en `CMakeLists.txt`).
@@ -180,7 +180,7 @@ Diseño "Escenario" (oscuro, deck A en azul y B en ámbar), pensado para una pan
 - **Crossfader**: al arrancar MiDJ está del todo en A. **Automático** (con clic en Play, espacio o MIDI): al
   dar Play a un deck, si el otro no suena y el crossfader lo deja apagado, pasa a su lado en 0,4 s; si el otro
   ya sonaba, pasa del todo a su lado y el otro se pausa al llegar (un cambio de canción). Si arrancan los dos
-  a la vez, o se agarra el crossfader con el ratón, no se toca nada; tampoco con el automix encendido. Se
+  a la vez, o se agarra el crossfader con el ratón, no se toca nada; tampoco mientras el automix mezcla. Se
   quita en Ajustes ("Play: crossfader al deck, pausa el otro").
 
 El **deck activo** (marco del color del deck) es el de los atajos: se elige con un clic en el deck, con
@@ -295,6 +295,9 @@ para subirla al principio o bajarla al final.
 Cada transición se planifica como el modo Smart de VirtualDJ: **a tempo** (16 pulsos, compases alineados y el
 tempo deslizándose de una canción a la otra) si la actual tiene fin de parte rítmica, la siguiente tiene inicio
 y sus BPM difieren menos de un 6 %; si no, **fundido**. La lista se guarda al cerrar.
+Con el automix encendido se puede **pausar** la canción que suena: se queda parada (no pasa a la siguiente)
+y al darle Play sigue. Si se da Play a mano al otro deck, el crossfader pasa a ese, el anterior se pausa y el
+automix sigue desde ahí, con la siguiente de la lista en el deck que quedó libre.
 
 ## Stems (voz / instrumental)
 

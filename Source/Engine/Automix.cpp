@@ -18,6 +18,12 @@ namespace
         const int s = (int) std::max (0.0, std::round (seconds));
         return juce::String::formatted ("%d:%02d", s / 60, s % 60);
     }
+
+    // La cancion acabo sola (no se pauso a mano): parada y al final.
+    bool reachedEnd (const Deck& d)
+    {
+        return ! d.isPlaying() && d.hasTrack() && d.getPositionSeconds() >= d.getLengthSeconds() - 0.5;
+    }
 }
 
 Automix::Automix (Deck& a, Deck& b, Mixer& m) : deckA (a), deckB (b), mixer (m) {}
@@ -290,6 +296,23 @@ void Automix::update()
         return;
     }
 
+    // Se dio Play a mano al otro deck: manda la mano. Mientras suenan los dos no se toca nada (el
+    // crossfader automatico se desliza y pausa el anterior); cuando el anterior se para, el
+    // automix sigue desde el deck nuevo y prepara la siguiente en el que quedo libre.
+    if (nxt.isPlaying())
+    {
+        if (cur.isPlaying())
+            return;
+        // Sono otra cancion (se cargo otro archivo a mano): la preparada vuelve a la lista.
+        const auto loaded = nxt.getLoadedFile();
+        if (nextRequested && loaded != juce::File() && loaded != next.file)
+            queue.insert (queue.begin(), next);
+        current = 1 - current;
+        nextRequested = planned = mixNowRequested = false;
+        sendChangeMessage();
+        return;
+    }
+
     // Preparar la siguiente en el deck libre.
     if (! nextRequested)
         requestNext();
@@ -297,7 +320,7 @@ void Automix::update()
     if (nextReady && ! planned)
         makePlan();
 
-    if (nextReady && planned && (mixNowRequested || cur.getPositionSeconds() >= plan.start || ! cur.isPlaying()))
+    if (nextReady && planned && (mixNowRequested || (cur.isPlaying() && cur.getPositionSeconds() >= plan.start) || reachedEnd (cur)))
     {
         if (mixNowRequested)
         {
@@ -309,8 +332,9 @@ void Automix::update()
         return;
     }
 
-    // Lista terminada: cuando la ultima cancion acaba, el automix se apaga.
-    if (! nextRequested && ! cur.isPlaying())
+    // Lista terminada: cuando la ultima cancion acaba, el automix se apaga. Pausar a mano no
+    // cuenta como acabar: ni pasa a la siguiente ni se apaga (vuelve al dar Play).
+    if (! nextRequested && reachedEnd (cur))
         setEnabled (false);
 }
 
