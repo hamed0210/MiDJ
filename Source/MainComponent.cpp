@@ -2,6 +2,7 @@
 #include "Brand/Logo.h"
 #include "Engine/AudioFormats.h"
 #include "UI/AlphaConvertDialog.h"
+#include "UI/UpdateDialog.h"
 
 namespace midj
 {
@@ -241,6 +242,13 @@ MainComponent::MainComponent()
         lastDefaultOutput = type->getDeviceNames (false)[type->getDefaultDeviceIndex (false)];
     deviceManager.addChangeListener (this);
     setHeadphoneMode ((HeadphoneMode) headphoneMode.load(), headphoneDevice);
+
+    // Actualizaciones: unos segundos despues de abrir (que no compita con el arranque), en segundo plano.
+    juce::Timer::callAfterDelay (5000, [safe = juce::Component::SafePointer<MainComponent> (this)]
+    {
+        if (safe != nullptr)
+            UpdateDialog::checkOnStartup (*safe);
+    });
 }
 
 MainComponent::~MainComponent()
@@ -1176,7 +1184,14 @@ void MainComponent::showSettings()
             addAndMakeVisible (reset);
             audioButton.onClick = [this] { owner.showAudioSettings(); };
             addAndMakeVisible (audioButton);
-            setSize (320, widthsY + 58 + 34 + 8 + 34 + 14);
+            autoUpdates.setToggleState (UpdateDialog::getCheckOnStartup(), juce::dontSendNotification);
+            autoUpdates.setTooltip ("Al abrir MiDJ (una vez al dia) mirar en GitHub si hay una version nueva");
+            autoUpdates.onClick = [this] { UpdateDialog::setCheckOnStartup (autoUpdates.getToggleState()); };
+            addAndMakeVisible (autoUpdates);
+            updatesButton.setTooltip ("Buscar ahora una version nueva de MiDJ");
+            updatesButton.onClick = [this] { UpdateDialog::checkNow (owner); };
+            addAndMakeVisible (updatesButton);
+            setSize (320, widthsY + 58 + 34 + 8 + 34 + 8 + 30 + 14);
         }
 
         void paint (juce::Graphics& g) override
@@ -1184,6 +1199,9 @@ void MainComponent::showSettings()
             g.setColour (DarkLookAndFeel::text);
             g.setFont (DarkLookAndFeel::sans (16.0f, true));
             g.drawText ("Ajustes", 16, 12, getWidth() - 32, 24, juce::Justification::centredLeft);
+            g.setColour (DarkLookAndFeel::textFaint);
+            g.setFont (DarkLookAndFeel::mono (11.0f));
+            g.drawText ("MiDJ " + UpdateDialog::currentVersion(), 16, 12, getWidth() - 32, 24, juce::Justification::centredRight);
             g.setColour (DarkLookAndFeel::textQuiet);
             g.setFont (DarkLookAndFeel::sans (11.0f, true).withKerningFactor (0.08f));
             g.drawText ("PANELES Y OPCIONES", 16, 44, getWidth() - 32, 16, juce::Justification::centredLeft);
@@ -1207,6 +1225,8 @@ void MainComponent::showSettings()
             }
             reset.setBounds (16, widthsY + 58, 220, 34);
             audioButton.setBounds (16, widthsY + 58 + 42, 220, 34);
+            autoUpdates.setBounds (16, widthsY + 58 + 84, getWidth() - 32 - 104, 30);
+            updatesButton.setBounds (getWidth() - 16 - 100, widthsY + 58 + 84, 100, 30);
         }
 
     private:
@@ -1214,6 +1234,8 @@ void MainComponent::showSettings()
         MainComponent& owner;
         std::array<juce::ToggleButton, numToggles> toggles;
         juce::TextButton reset { "Mostrar todo y restablecer anchos" }, audioButton { "Audio y audifonos..." };
+        juce::ToggleButton autoUpdates { "Buscar actualizaciones al abrir" };
+        juce::TextButton updatesButton { "Buscar ahora" };
     };
 
     juce::CallOutBox::launchAsynchronously (std::make_unique<Content> (*this), settingsButton.getScreenBounds(), nullptr);

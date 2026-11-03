@@ -1,6 +1,7 @@
 // Pruebas automaticas del motor. Se ejecutan con: ctest --preset debug
 // Devuelven codigo 0 si todo pasa y 1 si algo falla. No necesitan tarjeta de sonido:
 // el audio se "reproduce" pidiendo bloques al deck directamente.
+#include "App/Updates.h"
 #include "Control/ControlSurface.h"
 #include "Control/MidiController.h"
 #include "Control/MidiMapping.h"
@@ -3997,6 +3998,53 @@ void testAlphaVideo()
     folder.deleteRecursively();
 }
 
+void testUpdates()
+{
+    std::printf ("== Actualizaciones ==\n");
+    using midj::Updates::compareVersions;
+    check (compareVersions ("0.3.10", "0.3.9") > 0 && compareVersions ("0.3.9", "0.3.10") < 0 && compareVersions ("v0.4.0", "0.4.0") == 0
+               && compareVersions ("1.0", "1.0.0") == 0 && compareVersions ("1.0.1", "1.0") > 0 && compareVersions ("0.10.0", "0.9.9") > 0,
+           "versiones: 0.3.10 > 0.3.9, v delante, partes que faltan", 0.0, 0.0);
+
+    // Lo que responde GitHub (recortado): la version, sus novedades y dos archivos, uno el instalador.
+    const juce::String json = R"json({"tag_name":"v0.4.0","name":"MiDJ 0.4.0","draft":false,"prerelease":false,
+      "html_url":"https://github.com/hamed0210/MiDJ/releases/tag/v0.4.0",
+      "body":"## Instalar o actualizar\r\n\r\nDescarga el instalador.\r\n\r\n## Novedades\r\n\r\n### Actualizaciones\r\n- **Buscar** en `Ajustes`\r\n\r\n\r\n- Otra",
+      "assets":[{"name":"notas.txt","size":10,"browser_download_url":"https://x/notas.txt"},
+                {"name":"MiDJ-Setup-0.4.0.exe","size":64266236,"browser_download_url":"https://github.com/hamed0210/MiDJ/releases/download/v0.4.0/MiDJ-Setup-0.4.0.exe"}]})json";
+    midj::Updates::Release r;
+    const bool ok = midj::Updates::parseLatestRelease (json, r);
+    check (ok && r.version == "0.4.0" && r.name == "MiDJ 0.4.0" && r.installerSize == 64266236
+               && r.installerUrl.endsWith ("/v0.4.0/MiDJ-Setup-0.4.0.exe") && r.pageUrl.endsWith ("/tag/v0.4.0"),
+           "respuesta de GitHub: version, instalador y pagina", (double) r.installerSize, 64266236.0);
+    midj::Updates::Release ignored;
+    check (! midj::Updates::parseLatestRelease (R"({"tag_name":"v0.5.0","prerelease":true})", ignored)
+               && ! midj::Updates::parseLatestRelease (R"({"message":"Not Found"})", ignored)
+               && ! midj::Updates::parseLatestRelease ("no es json", ignored),
+           "previas, sin versiones o respuesta rota: no cuentan", 0.0, 0.0);
+    const auto notes = midj::Updates::plainNotes (r.notes);
+    check (notes.contains ("Novedades\n\nActualizaciones\n") && notes.contains (juce::String::fromUTF8 ("\xc2\xb7 Buscar en Ajustes\n\n\xc2\xb7 Otra"))
+               && ! notes.contains ("#") && ! notes.contains ("**") && ! notes.contains ("\n\n\n"),
+           "novedades en texto simple (sin #, ** ni lineas en blanco de mas)", 0.0, 0.0);
+
+    // Ajustes: se guardan y una vez al dia como mucho.
+    const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("midj-updates-prueba.xml");
+    midj::Updates::Settings s;
+    s.checkOnStartup = false;
+    s.skippedVersion = "0.4.0";
+    s.lastCheckMs = 1700000000000LL;
+    s.save (file);
+    const auto back = midj::Updates::Settings::load (file);
+    file.deleteFile();
+    const auto now = s.lastCheckMs + 21LL * 3600 * 1000;
+    midj::Updates::Settings on = back;
+    on.checkOnStartup = true;
+    check (! back.checkOnStartup && back.skippedVersion == "0.4.0" && back.lastCheckMs == s.lastCheckMs
+               && ! back.dueForCheck (now) && on.dueForCheck (now) && ! on.dueForCheck (s.lastCheckMs + 3600 * 1000)
+               && midj::Updates::Settings::load (file).checkOnStartup,
+           "ajustes: guardados, desactivado, una vez al dia y por defecto activado", 0.0, 0.0);
+}
+
 void testYouTubeSearch()
 {
     std::printf ("== YouTube: busqueda ==\n");
@@ -4239,6 +4287,19 @@ int main (int argc, char* argv[])
         return mediaIdle (juce::File (args[1]), args.size() >= 3 && args[2] == "compartido");
     if (args[0] == "--video" && args.size() >= 2)
         return videoInfo (juce::File (args[1]));
+    if (args[0] == "--updates")   // la ultima version publicada en GitHub (lo que ve Buscar ahora)
+    {
+        midj::Updates::Release r;
+        juce::String error;
+        if (! midj::Updates::fetchLatest (r, error))
+        {
+            std::printf ("No se pudo: %s\n", error.toRawUTF8());
+            return 1;
+        }
+        std::printf ("Ultima: %s (%s)\nPagina: %s\nInstalador: %s (%lld bytes)\n\n%s\n", r.version.toRawUTF8(), r.name.toRawUTF8(),
+                     r.pageUrl.toRawUTF8(), r.installerUrl.toRawUTF8(), (long long) r.installerSize, midj::Updates::plainNotes (r.notes).toRawUTF8());
+        return 0;
+    }
     if (args[0] == "--benchmark")
     {
         benchmarkKeyLock (midj::TimeStretcher::Engine::finer);
@@ -4276,6 +4337,7 @@ int main (int argc, char* argv[])
     testLimiterAndHeadphones();
     testLibraryLists();
     testYouTubeSearch();
+    testUpdates();
     testAlphaVideo();
 
     std::printf ("== Video ==\n");

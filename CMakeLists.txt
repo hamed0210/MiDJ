@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(MiDJ VERSION 0.3.11 LANGUAGES C CXX)
+project(MiDJ VERSION 0.4.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -58,6 +58,7 @@ endfunction()
 
 # Motor de audio: independiente de la interfaz para poder probarlo solo
 add_library(MiDJEngine STATIC
+    Source/App/Updates.cpp
     Source/Brand/Logo.cpp
     Source/Control/Actions.cpp
     Source/Control/ControlSurface.cpp
@@ -128,6 +129,7 @@ target_sources(MiDJ PRIVATE
     Source/UI/ScenePanel.cpp
     Source/UI/SourceDialogs.cpp
     Source/UI/AutomixPanel.cpp
+    Source/UI/UpdateDialog.cpp
     Source/UI/Icons.cpp
     Source/UI/Widgets.cpp
     Source/UI/TransitionDialog.cpp
@@ -141,6 +143,8 @@ target_sources(MiDJ PRIVATE
 set(WEBVIEW2_DIR "D:/Tools/WebView2" CACHE PATH "Carpeta del SDK de WebView2 (include y x64)")
 target_include_directories(MiDJ PRIVATE ${WEBVIEW2_DIR}/include)
 target_link_libraries(MiDJ PRIVATE MiDJEngine ${WEBVIEW2_DIR}/x64/WebView2LoaderStatic.lib version.lib)
+# La version del programa sale de project(... VERSION): la que se compara con GitHub al buscar actualizaciones.
+target_compile_definitions(MiDJ PRIVATE MIDJ_VERSION="${PROJECT_VERSION}")
 midj_copy_runtime(MiDJ)
 
 # Pruebas automaticas (ctest)
