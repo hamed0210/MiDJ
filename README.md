@@ -56,7 +56,11 @@ crossfader, buscas canciones (en tu biblioteca o en YouTube) y las cargas en un 
 los pads y cambias de escena.
 El celular tiene que estar en el **mismo Wi-Fi** que el PC.
 
-<img src="docs/capturas/remoto.png" alt="Panel del control remoto con el código QR" width="300">
+<p>
+  <img src="docs/capturas/remoto.png" alt="Panel del control remoto con el código QR" width="300">
+  &nbsp;&nbsp;
+  <img src="docs/capturas/movil.png" alt="El control remoto en el celular: decks, volúmenes, crossfader y master" width="260">
+</p>
 
 ### 📚 Biblioteca
 
