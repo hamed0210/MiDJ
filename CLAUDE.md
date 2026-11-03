@@ -153,6 +153,11 @@ Apuntar aquí lo que el usuario pida y tacharlo al terminarlo.
   usuarios). rekordbox, Serato, djay (y según una fuente VirtualDJ desde sep-2026) lo tienen por acuerdo
   privado con Spotify, no por la API. Lo viable: importar listas de Spotify (solo títulos) para buscar
   esas canciones en la biblioteca local o en YouTube, o pedir ser socio de Spotify.
+  **Decidido (2-nov-2026): NO se implementa.** Se estudió hacerlo como YouTube, para uso personal: Web
+  Playback SDK en WebView2 (Widevine L3 parece ir en el runtime 156), con búsqueda por la Web API (en modo
+  desarrollo, máximo 10 resultados por página, Premium del dueño y 5 usuarios). Su sonido no podría pasar
+  por el mezclador en este Windows 10 19045: la captura del sonido de un solo programa necesita la
+  compilación 20348. El usuario no lo quiere: no volver a proponerlo.
 
 Candidatos que salen de las limitaciones de arriba (sin confirmar):
 - Sonido de YouTube por el mezclador de MiDJ (EQ, crossfader).
