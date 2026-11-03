@@ -48,7 +48,7 @@ paquete de Microsoft), accesos directos y desinstalador. Los datos de `%APPDATA%
 ajustes) no se tocan ni al instalar ni al desinstalar.
 
 **Actualizar:** si MiDJ ya está instalado, el instalador lo detecta y muestra solo una página, *Actualizar
-MiDJ 0.3.11 -> 0.4.0*: usa la misma carpeta, el mismo modo (usuario o todos) y los mismos accesos directos, y
+MiDJ 0.4.0 -> 0.5.0*: usa la misma carpeta, el mismo modo (usuario o todos) y los mismos accesos directos, y
 cierra MiDJ si está abierto. Con la misma versión ofrece *Reinstalar*; si lo instalado es más nuevo, avisa antes
 de volver a la anterior. Para cada versión nueva basta con cambiar `VERSION` en `CMakeLists.txt` (de ahí la
 toma el programa) y `AppVersion` en `Installer\MiDJ.iss`.
@@ -87,6 +87,8 @@ Source/
   Main.cpp              arranque de la aplicación y ventana
   MainComponent.*       ventana principal: une motor e interfaz
   App/Updates.*         actualizaciones: ultima version en GitHub, comparar versiones y ajustes
+  Remote/RemoteServer.*  control remoto: servidor HTTP y WebSocket en la red local (pagina, clave, celulares)
+  ThirdParty/qrcodegen/ generador de codigos QR (Project Nayuki, MIT)
   Brand/Logo.*          el logo dibujado (disco y nombre)
   Engine/               motor de audio (sin interfaz, se puede probar solo)
     Deck.*              un plato: carga, reproduce, velocidad, BPM
@@ -130,6 +132,7 @@ Source/
     LibraryBrowser.*    navegador: carpetas, favoritos, listas, YouTube, buscador y lista
     AutomixPanel.*      panel del automix: pestanas AUTOMIX y YOUTUBE, lista, encender, mezclar ya, saltar
     UpdateDialog.*      aviso de version nueva, descarga del instalador y Buscar ahora
+    RemotePanel.*       panel del control remoto: encender, codigo QR, direccion y clave
     YouTubePlayer.*     reproductor de YouTube: WebView2 en una ventana fuera de las pantallas
     YouTubePanel.*      pestana YOUTUBE: lo que suena, avance, volumen y lista del automix de YouTube
     QueueRows.h         filas de las dos listas del automix: subir, bajar, quitar y arrastrar
@@ -158,6 +161,7 @@ Installer/
   MiDJ.iss              instalador (Inno Setup): instala o actualiza
 Resources/
   Logo/                 logo: SVG originales, render.ps1 y las imagenes que genera
+  Remote/remote.html    la pagina del control remoto (va dentro de MiDJ.exe)
   Tools/alpha-a-mate.ps1  video con transparencia -> MP4 con mate (con FFmpeg)
 ```
 
@@ -173,6 +177,7 @@ Rubber Band es GPL. Para uso propio no hay problema; para vender MiDJ hace falta
 comercial o cambiarla por otra librería (por ejemplo SoundTouch, LGPL). Solo `TimeStretcher.*` la usa.
 SQLite es de dominio público. ONNX Runtime es MIT; DirectML.dll es redistribuible según su licencia de Microsoft;
 los pesos de Spleeter son de Deezer con licencia MIT (exportados a ONNX por el proyecto sherpa-onnx, Apache 2.0).
+El generador de códigos QR (`Source/ThirdParty/qrcodegen`) es de Project Nayuki, con licencia MIT.
 
 ## Registro de cambios
 
@@ -205,3 +210,5 @@ los pesos de Spleeter son de Deezer con licencia MIT (exportados a ONNX por el p
 - Logo: disco de vinilo con su brazo, como icono del programa y del instalador, en la barra de arriba y en el fondo de la salida de video.
 - Automix: pausar a mano la canción que suena ya no pasa a la siguiente (al dar Play sigue); el crossfader automático también funciona con el automix encendido, salvo mientras mezcla, y el automix sigue desde el deck que se puso a sonar.
 - Actualizaciones: MiDJ mira en GitHub si hay una versión nueva al abrir (una vez al día, se quita en Ajustes) o con *Ajustes > Buscar ahora*; muestra las novedades y descarga e instala el instalador. La versión del programa sale de `CMakeLists.txt`.
+- Control remoto desde el celular por la red local: MiDJ sirve la página (`Resources/Remote/remote.html`) y habla con ella por WebSocket con una clave que lleva el código QR; mezcla, automix, búsqueda y carga, pads y escenas. Usa las mismas acciones que las controladoras MIDI.
+- Etiquetas con la ñ y los acentos bien: el texto de 8 bits se reconoce como UTF-8, Windows-1252 o la página 850 de DOS (la ñ grabada como A4), y se repara el que otro programa ya convirtió mal ("Ma¤anita"); la biblioteca se corrige una vez al abrir. Automix con los botones más pequeños abajo (más alto para la lista), números de las carpetas separados de la barra de desplazamiento, sin "Ver en GitHub" en el aviso de actualización y búsqueda de YouTube y tipo de archivo en el control remoto.

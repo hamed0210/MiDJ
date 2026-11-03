@@ -374,20 +374,19 @@ void AutomixPanel::resized()
     r.removeFromTop (8);
     if (youtube != nullptr)
         youtube->setBounds (r);
-    status.setBounds (r.removeFromBottom (30));
-    r.removeFromBottom (4);
-    auto buttons = r.removeFromBottom (40);
-    r.removeFromBottom (8);
+    // Abajo y compacto (asi la lista tiene el alto): una linea de estado y debajo Mezclar ya | Saltar |
+    // Vaciar como iconos pequenos y, a la derecha, la duracion del fundido.
+    r.setBottom (getHeight() - 8);   // hasta casi el borde de la tarjeta
+    auto buttons = r.removeFromBottom (28);
+    r.removeFromBottom (2);
+    status.setBounds (r.removeFromBottom (18));
+    r.removeFromBottom (6);
     list.setBounds (r);
-    // Mezclar ya | Saltar | Vaciar como iconos y, a la derecha, la duracion del fundido.
-    auto fade = buttons.removeFromRight (juce::jmin (120, buttons.getWidth() / 3));
-    fadeBox.setBounds (fade.withSizeKeepingCentre (fade.getWidth(), 30));
-    buttons.removeFromRight (8);
-    const int w = (buttons.getWidth() - 12) / 3;
-    mixNowButton.setBounds (buttons.removeFromLeft (w));
-    buttons.removeFromLeft (6);
-    skipButton.setBounds (buttons.removeFromLeft (w));
-    buttons.removeFromLeft (6);
-    clearButton.setBounds (buttons);
+    fadeBox.setBounds (buttons.removeFromRight (juce::jmin (110, buttons.getWidth() / 3)));
+    for (auto* b : { &mixNowButton, &skipButton, &clearButton })
+    {
+        b->setBounds (buttons.removeFromLeft (36));
+        buttons.removeFromLeft (6);
+    }
 }
 }

@@ -76,6 +76,7 @@ public:
             case Kind::root: break;
         }
         r.removeFromLeft (8.0f);
+        r.removeFromRight ((float) rightMargin);   // que los numeros y la x no queden pegados a la barra del scroll
         if (removable())
         {
             // La x para quitarla de la biblioteca (clic: ver itemClicked).
@@ -99,9 +100,9 @@ public:
     {
         if (e.mods.isPopupMenu() && (kind == Kind::playlists || kind == Kind::playlist))
             owner.showPlaylistMenu (kind == Kind::playlist ? playlistId : 0, label);
-        // Solo la x (los ultimos 26 px de lo pintado). getItemWidth() es -1 (todo el ancho): con
+        // Solo la x (los 26 px antes del margen derecho). getItemWidth() es -1 (todo el ancho): con
         // el, cualquier clic en la carpeta la quitaba.
-        else if (removable() && ! e.mods.isPopupMenu() && paintedWidth > 0 && e.x >= paintedWidth - 26)
+        else if (removable() && ! e.mods.isPopupMenu() && paintedWidth > 0 && e.x >= paintedWidth - rightMargin - 26)
             owner.removeNode (*this);
     }
 
@@ -139,6 +140,7 @@ public:
     int count;
     juce::int64 playlistId;
     int paintedWidth = 0;   // el ancho de la fila al pintarla (donde esta la x)
+    static constexpr int rightMargin = 10;
 };
 
 // --- Botones de cada fila: A, B y + -------------------------------------------------------------

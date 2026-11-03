@@ -2,7 +2,9 @@
 #include "Brand/Logo.h"
 #include "Engine/AudioFormats.h"
 #include "UI/AlphaConvertDialog.h"
+#include "UI/RemotePanel.h"
 #include "UI/UpdateDialog.h"
+#include "RemotePage.h"
 
 namespace midj
 {
@@ -184,6 +186,25 @@ MainComponent::MainComponent()
     settingsButton.setBordered (true);
     settingsButton.onClick = [this] { showSettings(); };
     addAndMakeVisible (settingsButton);
+    remoteButton.setBordered (true);
+    remoteButton.onClick = [this] { showRemote(); };
+    addAndMakeVisible (remoteButton);
+    // Control remoto: lo que llega de los celulares se hace en el hilo de la interfaz.
+    remote.setPage (juce::String::fromUTF8 (RemotePage::remote_html, RemotePage::remote_htmlSize));
+    remote.onMessage = [safe = juce::Component::SafePointer<MainComponent> (this)] (int client, const juce::var& message)
+    {
+        juce::MessageManager::callAsync ([safe, client, message] { if (safe != nullptr) safe->remoteMessage (client, message); });
+    };
+    remote.onClientsChanged = [safe = juce::Component::SafePointer<MainComponent> (this)]
+    {
+        juce::MessageManager::callAsync ([safe]
+        {
+            if (safe == nullptr)
+                return;
+            safe->lastRemoteState = {};   // al que llega se le manda todo enseguida
+        });
+    };
+    loadRemoteSettings();
     for (auto* view : { &deckViewA, &deckViewB })
         view->describe = [this] (const juce::File& file)
         {
@@ -253,6 +274,7 @@ MainComponent::MainComponent()
 
 MainComponent::~MainComponent()
 {
+    remote.stop();   // antes que nada: sus hilos ya no mandan mensajes
     saveLayout();
     saveAudioSettings();
     headphones.close();
@@ -680,6 +702,20 @@ void MainComponent::timerCallback()
     }
     if (timerTicks % 6 == 0)
         updateAutoScene();
+    // Control remoto: el boton en verde con algun celular conectado y el estado a los celulares 5
+    // veces por segundo, solo si cambio algo.
+    if (timerTicks % 15 == 7)
+        if (const bool phones = remote.getNumClients() > 0; phones != remoteButtonLit)
+        {
+            remoteButtonLit = phones;
+            remoteButton.setBordered (true, phones ? DarkLookAndFeel::good : juce::Colour());
+        }
+    if (timerTicks % 6 == 3 && remote.getNumClients() > 0)
+        if (auto state = remoteState(); state != lastRemoteState)
+        {
+            lastRemoteState = state;
+            remote.broadcast (state);
+        }
     if (++timerTicks % 8 == 0)
         automixPanel.updateStatus();
 }
@@ -1070,6 +1106,8 @@ void MainComponent::resized()
         auto h = headerArea.reduced (14, 8);
         settingsButton.setBounds (h.removeFromRight (32));
         h.removeFromRight (6);
+        remoteButton.setBounds (h.removeFromRight (32));
+        h.removeFromRight (6);
         helpButton.setBounds (h.removeFromRight (70));
         h.removeFromRight (6);
         midiButton.setBounds (h.removeFromRight (58));
@@ -1358,5 +1396,247 @@ Compositor::Settings MainComponent::videoSettings()
         s.fps = xml->getIntAttribute ("fps", s.fps);
     }
     return s;
+}
+
+//==============================================================================
+// Control remoto desde el celular (ver el protocolo en MainComponent.h).
+void MainComponent::loadRemoteSettings()
+{
+    const auto xml = juce::XmlDocument::parse (getDataFolder().getChildFile ("remote.xml"));
+    remoteKey = xml != nullptr ? xml->getStringAttribute ("key") : juce::String();
+    if (remoteKey.length() < 8)
+        remoteKey = RemoteServer::randomKey();
+    setRemoteEnabled (xml != nullptr && xml->getBoolAttribute ("enabled", false));   // apagado hasta que se pida
+}
+
+void MainComponent::saveRemoteSettings()
+{
+    juce::XmlElement xml ("REMOTE");
+    xml.setAttribute ("enabled", remoteEnabled);
+    xml.setAttribute ("key", remoteKey);
+    xml.writeTo (getDataFolder().getChildFile ("remote.xml"));
+}
+
+void MainComponent::setRemoteEnabled (bool on)
+{
+    remoteEnabled = on;
+    if (on && ! remote.isRunning())
+        remote.start (8765, remoteKey);
+    else if (! on)
+        remote.stop();
+    saveRemoteSettings();
+}
+
+void MainComponent::showRemote()
+{
+    RemotePanel::Hooks hooks;
+    hooks.isEnabled = [this] { return remoteEnabled; };
+    hooks.setEnabled = [this] (bool on) { setRemoteEnabled (on); };
+    hooks.getKey = [this] { return remoteKey; };
+    hooks.newKey = [this]
+    {
+        remoteKey = RemoteServer::randomKey();
+        remote.setKey (remoteKey);
+        saveRemoteSettings();
+    };
+    juce::CallOutBox::launchAsynchronously (std::make_unique<RemotePanel> (remote, std::move (hooks)), remoteButton.getScreenBounds(), nullptr);
+}
+
+void MainComponent::remoteMessage (int clientId, const juce::var& message)
+{
+    const auto type = message["t"].toString();
+    const auto id = message["id"].toString();
+    if (type == "press" || type == "release")
+    {
+        // Solo acciones de boton conocidas (las mismas que se asignan por MIDI).
+        if (const auto* action = Actions::find (id); action != nullptr && action->type == ActionType::button)
+        {
+            if (type == "press")
+                controlSurface.pressButton (id);
+            else
+                controlSurface.releaseButton (id);
+        }
+    }
+    else if (type == "set")
+    {
+        const double v = juce::jlimit (0.0, 1.0, (double) message["v"]);
+        if (id == "master")
+            mixer.setMasterVolume ((float) v);
+        else if (const auto* action = Actions::find (id); action != nullptr && action->type == ActionType::absolute)
+            controlSurface.setAbsolute (id, v);
+    }
+    else if (type == "scene")
+    {
+        if (videoStage != nullptr && videoStage->getScenes().findScene ((int) message["id"]) != nullptr)
+            videoStage->switchToScene ((int) message["id"]);
+    }
+    else if (type == "search")
+    {
+        const auto query = message["q"].toString().trim().substring (0, 100);
+        juce::Array<juce::var> items;
+        if (query.isNotEmpty())
+            for (const auto& track : library.search (query))
+            {
+                if (items.size() >= 40)
+                    break;
+                remoteTracks[track.id] = track.getFile();
+                auto* item = new juce::DynamicObject();
+                item->setProperty ("id", track.id);
+                item->setProperty ("title", track.title.isNotEmpty() ? track.title : track.getFile().getFileNameWithoutExtension());
+                item->setProperty ("artist", track.artist);
+                item->setProperty ("bpm", track.bpm);
+                item->setProperty ("dur", track.duration);
+                item->setProperty ("video", DeckVideo::isVideoFile (track.getFile()));
+                items.add (juce::var (item));
+            }
+        auto* reply = new juce::DynamicObject();
+        reply->setProperty ("t", "results");
+        reply->setProperty ("q", query);
+        reply->setProperty ("items", items);
+        remote.send (clientId, juce::JSON::toString (juce::var (reply), true));
+    }
+    else if (type == "ytsearch" || type == "ytmore")
+    {
+        // Por internet: en un hilo aparte y la respuesta solo al que busco. "ytmore": los siguientes
+        // de su ultima busqueda (lo que hace YouTube al bajar hasta el final), que se anaden.
+        const bool more = type == "ytmore";
+        auto& next = remoteYtNext[clientId];
+        const auto query = more ? next.query : message["q"].toString().trim().substring (0, 100);
+        if (query.isEmpty() || (more && next.continuation.isEmpty()))
+            return;
+        const auto continuation = next.continuation, clientVersion = next.clientVersion;
+        if (more)
+            next.continuation = {};   // pedida: no se vuelve a pedir hasta que llegue
+        juce::Thread::launch ([safe = juce::Component::SafePointer<MainComponent> (this), clientId, query, more, continuation, clientVersion]
+        {
+            juce::String error;
+            auto page = more ? YouTubeSearch::searchMore (continuation, clientVersion, error) : YouTubeSearch::search (query, error);
+            juce::MessageManager::callAsync ([safe, clientId, query, more, page = std::move (page), error]
+            {
+                if (safe == nullptr)
+                    return;
+                auto& stored = safe->remoteYtNext[clientId];
+                if (more && stored.query != query)
+                    return;   // entre tanto busco otra cosa
+                stored = { query, page.continuation, page.clientVersion };
+                juce::Array<juce::var> items;
+                for (const auto& v : page.videos)
+                {
+                    safe->remoteVideos[v.id] = v;
+                    auto* item = new juce::DynamicObject();
+                    item->setProperty ("id", v.id);
+                    item->setProperty ("title", v.title);
+                    item->setProperty ("channel", v.channel);
+                    item->setProperty ("dur", v.seconds);
+                    items.add (juce::var (item));
+                }
+                auto* reply = new juce::DynamicObject();
+                reply->setProperty ("t", "ytresults");
+                reply->setProperty ("q", query);
+                reply->setProperty ("items", items);
+                reply->setProperty ("append", more);
+                reply->setProperty ("more", page.continuation.isNotEmpty());
+                reply->setProperty ("error", items.isEmpty() ? error : juce::String());
+                safe->remote.send (clientId, juce::JSON::toString (juce::var (reply), true));
+            });
+        });
+    }
+    else if (type == "ytplay" || type == "ytqueue")
+    {
+        const auto it = remoteVideos.find (message["id"].toString());
+        if (it == remoteVideos.end())
+            return;
+        if (type == "ytplay")
+            browser->onYouTubePlay (it->second);
+        else
+            browser->onYouTubeQueue (it->second, false);
+    }
+    else if (type == "load" || type == "queue")
+    {
+        const auto it = remoteTracks.find ((juce::int64) message["track"]);
+        if (it == remoteTracks.end() || ! it->second.existsAsFile())
+            return;
+        if (type == "load")
+            loadIntoDeck ((int) message["deck"] == 1 ? deckB : deckA, it->second);
+        else if (const auto track = library.findByFile (it->second))
+            automix.add ({ track->getFile(), track->title, track->artist, track->bpm });
+    }
+}
+
+juce::String MainComponent::remoteState()
+{
+    auto* root = new juce::DynamicObject();
+    root->setProperty ("t", "state");
+    juce::Array<juce::var> decks;
+    for (int d = 0; d < 2; ++d)
+    {
+        const auto& deck = d == 0 ? deckA : deckB;
+        auto& view = d == 0 ? deckViewA : deckViewB;
+        auto& titles = remoteTitles[(size_t) d];
+        if (const auto file = deck.getLoadedFile(); file != titles.first)
+        {
+            titles.first = file;
+            titles.second = view.describe != nullptr ? view.describe (file)
+                                                     : std::pair<juce::String, juce::String> { file.getFileNameWithoutExtension(), {} };
+        }
+        auto* o = new juce::DynamicObject();
+        o->setProperty ("title", deck.hasTrack() ? titles.second.first : juce::String());
+        o->setProperty ("artist", deck.hasTrack() ? titles.second.second : juce::String());
+        o->setProperty ("bpm", std::round (deck.getCurrentBpm() * 10.0) / 10.0);
+        o->setProperty ("pos", std::floor (deck.getPositionSeconds()));   // segundos enteros: no se manda nada si solo cambian las decimas
+        o->setProperty ("len", std::floor (deck.getLengthSeconds()));
+        o->setProperty ("playing", deck.isPlaying());
+        o->setProperty ("loading", deck.isLoading());
+        o->setProperty ("vol", std::round (mixer.getStrip (d).getVolume() * 100.0f) / 100.0f);
+        decks.add (juce::var (o));
+    }
+    root->setProperty ("decks", decks);
+    root->setProperty ("xf", std::round (mixer.getCrossfader() * 100.0f) / 100.0f);
+    root->setProperty ("master", std::round (mixer.getMasterVolume() * 100.0f) / 100.0f);
+
+    auto* am = new juce::DynamicObject();
+    am->setProperty ("on", automix.isEnabled());
+    am->setProperty ("status", automix.getStatusText());
+    juce::Array<juce::var> queue;
+    for (const auto& item : automix.getQueue())
+    {
+        if (queue.size() >= 30)
+            break;
+        auto* q = new juce::DynamicObject();
+        q->setProperty ("title", item.title.isNotEmpty() ? item.title : item.file.getFileNameWithoutExtension());
+        q->setProperty ("artist", item.artist);
+        queue.add (juce::var (q));
+    }
+    am->setProperty ("queue", queue);
+    root->setProperty ("automix", juce::var (am));
+
+    juce::Array<juce::var> pads;
+    auto& sampler = mixer.getSampler();
+    for (int p = 0; p < Sampler::numPads; ++p)
+    {
+        auto* o = new juce::DynamicObject();
+        const auto sample = sampler.getSample (p);
+        o->setProperty ("name", sample != nullptr ? sample->name : juce::String());
+        o->setProperty ("playing", sampler.isPlaying (p));
+        pads.add (juce::var (o));
+    }
+    root->setProperty ("pads", pads);
+
+    juce::Array<juce::var> scenes;
+    int live = -1;
+    if (videoStage != nullptr)
+    {
+        live = videoStage->getProgram().getCurrentScene();
+        for (const auto& scene : videoStage->getScenes().scenes)
+        {
+            auto* o = new juce::DynamicObject();
+            o->setProperty ("id", scene.id);
+            o->setProperty ("name", scene.name);
+            scenes.add (juce::var (o));
+        }
+    }
+    root->setProperty ("scenes", scenes);
+    root->setProperty ("scene", live);
+    return juce::JSON::toString (juce::var (root), true);
 }
 }

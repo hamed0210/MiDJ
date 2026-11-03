@@ -119,7 +119,8 @@ Anuncio, Sonando...), avance (clic en la barra: saltar), Play/Pausa, Detener (ci
 - El video se reproduce en una ventana con **WebView2** (el motor de Edge) que está fuera de las pantallas y
   solo existe mientras hay un video (unos 400 MB de RAM mientras está abierta). Abre la página normal de
   YouTube, así que se ven también los videos que no se dejan incrustar; los anuncios se ven igual que en el
-  navegador. Pide H.264 a 720p, que decodifica la tarjeta gráfica.
+  navegador. Pide H.264 a 720p, que decodifica la tarjeta gráfica. Los subtítulos de YouTube (también los
+  automáticos) se apagan: no salen en la salida de video.
 - Al **programa** llega con la fuente de escena **YouTube** (Añadir fuente > YouTube), que captura esa ventana.
   Con una escena con "Pasar a esta escena automáticamente > Cuando suena YouTube", el programa pasa a ella
   sola mientras suena YouTube (manda sobre los decks).
@@ -336,10 +337,47 @@ Al abrir, MiDJ mira en GitHub (una vez al día como mucho y en segundo plano) si
 hay, sale un aviso con sus novedades:
 - **Descargar e instalar**: baja el instalador (con su avance y Cancelar), lo abre y cierra MiDJ; el instalador
   solo pide **Actualizar**. Canciones, escenas y ajustes se conservan.
-- **Ver en GitHub**: la página de la versión, para bajarla a mano.
 - **Omitir esta versión**: no vuelve a avisar de esa (sí de la siguiente).
 - **Más tarde**: avisa otra vez mañana.
 
 En **Ajustes** se ve la versión instalada, la casilla **Buscar actualizaciones al abrir** (para no mirar nunca
 solo) y **Buscar ahora**, que avisa siempre: versión nueva, "tienes la última" o por qué no se pudo mirar.
 Sin internet no pasa nada. Se guarda en `%APPDATA%\MiDJ\updates.xml`.
+
+## Control remoto desde el celular
+
+Botón del **celular** en la barra de arriba (junto a Atajos y Ajustes): **Control remoto desde el celular**
+lo enciende (queda encendido para la próxima vez) y aparece un **código QR**. Con el celular conectado al
+**mismo Wi-Fi** que el PC, se escanea con la cámara y se abre el control en el navegador (Chrome, Safari...),
+sin instalar nada ni usar internet: MiDJ sirve la página y le habla directamente.
+
+Se ve como una consola (oscura, con letra de máquina) con el logo de MiDJ arriba y el menú abajo:
+
+- **Mezcla**: los dos decks uno encima del otro, cada uno con su título, artista, BPM, avance y tiempo que
+  falta, el **Play** redondo grande (lleno del color del deck mientras suena), **CUE**, **SYNC** y a la derecha
+  su **fader de volumen** vertical (se arrastra con el dedo). Debajo, el crossfader (CENTRO o "40% B") y el
+  volumen del master.
+- **Automix**: encender o apagar, Mezclar ya, Saltar y la lista.
+- **Buscar**: el botón de la derecha cambia entre la biblioteca (**LIB>**) y YouTube (**YT>**):
+  - en la biblioteca busca mientras se escribe; cada canción dice si es **AUDIO** o **VIDEO** y tiene **A** /
+    **B** (cargar en ese deck) y **+** (al automix);
+  - en YouTube busca al dejar de escribir (o con Intro) y muestra los videos de dos en dos con su
+    **miniatura** y su duración; cada uno con **VER** (suena ya en MiDJ) y **+ LISTA** (a la lista del automix
+    de YouTube). Las miniaturas las baja el celular de YouTube: sin internet en el celular se ve un recuadro
+    gris. Al bajar hasta el final se cargan 20 videos más, como en YouTube.
+  - El buscador empieza vacío y sin el teclado abierto, y se vacía al cambiar entre biblioteca y YouTube o
+    de pestaña.
+- **Pads y escenas**: los 8 pads del sampler (con el nombre de su sonido; en modo *mantener* suenan mientras
+  se toca), Parar todo y las escenas (la que está al aire en verde).
+
+Lo que se hace desde el celular se ve al momento en MiDJ y al revés. Pueden conectarse varios celulares a la
+vez; el botón se pone **verde** mientras hay alguno y el panel dice cuántos.
+
+- El código lleva una **clave**: sin ella la página abre pero no controla nada. El celular la recuerda, así
+  que después basta con abrir la misma dirección (se puede guardar en la pantalla de inicio).
+  **Cambiar clave** desconecta a todos (hay que volver a escanear).
+- La primera vez Windows puede preguntar por el **firewall**: hay que permitir MiDJ en las **redes
+  privadas**. Si la red del PC está marcada como *pública* en Windows, el celular no llega: cámbiala a
+  privada en *Configuración > Red e Internet*.
+- Si el PC tiene varias redes (Wi-Fi y cable, una VPN...), el panel deja elegir por cuál va la dirección.
+- Usa el puerto 8765 (o el siguiente libre). Se guarda en `%APPDATA%\MiDJ\remote.xml`.

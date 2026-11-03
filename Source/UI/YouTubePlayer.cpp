@@ -42,7 +42,8 @@ namespace
     .ytp-pause-overlay, .ytp-paid-content-overlay, .ytp-watermark, .iv-branding, .ytp-endscreen-content,
     .ytp-cards-teaser, .ytp-spinner, .ytp-tooltip, .ytp-bezel, .ytp-contextmenu, ytd-popup-container,
     #chat, .ytp-suggested-action, .ytp-autonav-endscreen-countdown-overlay, .ytp-upnext,
-    tp-yt-iron-overlay-backdrop, .ytp-cued-thumbnail-overlay { display: none !important; }
+    tp-yt-iron-overlay-backdrop, .ytp-cued-thumbnail-overlay,
+    .ytp-caption-window-container, .caption-window, .ytp-caption-segment { display: none !important; }
     #movie_player, #movie_player.ytp-fullscreen {
       position: fixed !important; inset: 0 !important; width: 100vw !important; height: 100vh !important;
       z-index: 2147483647 !important; background: #000 !important; }
@@ -80,6 +81,7 @@ namespace
   else { const saved = sessionStorage.getItem('midjPage') || ''; if (saved.startsWith((query.get('v') || '') + '|')) pageId = saved; }   // recargada sin &midj
   let wantedVolume = -1, appliedVolume = -1, lastKick = 0, userPaused = false, finished = false;
   let wantedQuality = 'hd720', appliedQuality = '', skipAds = false, inAd = false;
+  let captionsOff = false;
   let stuckSince = 0, reloaded = sessionStorage.getItem('midjReloaded') === location.href;
   setInterval(() => {
     addCss();
@@ -102,6 +104,11 @@ namespace
       if (wantedQuality !== appliedQuality && !ad && v.currentTime > 1 && p.setPlaybackQualityRange) {
         appliedQuality = wantedQuality;
         try { p.setPlaybackQualityRange(wantedQuality, wantedQuality); if (p.setPlaybackQuality) p.setPlaybackQuality(wantedQuality); } catch (e) {}
+      }
+      // Subtitulos apagados (tambien los automaticos): la salida de video no los muestra.
+      if (!captionsOff && !ad && v.currentTime > 0.5) {
+        captionsOff = true;
+        try { if (p.unloadModule) { p.unloadModule('captions'); p.unloadModule('cc'); } } catch (e) {}
       }
       if (wantedVolume >= 0 && wantedVolume !== appliedVolume && !(ad && skipAds)) { appliedVolume = wantedVolume; try { p.setVolume(Math.round(wantedVolume * 100)); p.unMute(); } catch (e) {} }
       // Otro video en la misma pagina (la reproduccion automatica de YouTube): este ya termino.

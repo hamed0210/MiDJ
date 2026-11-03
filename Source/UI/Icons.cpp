@@ -210,6 +210,10 @@ void Icons::draw (juce::Graphics& g, R area, Glyph glyph, juce::Colour colour)
             p.startNewSubPath (at (0.5f, 0.7f)); p.lineTo (at (0.5f, 0.88f));
             stroke (g, p, w);
             break;
+        case Glyph::phone:   // control remoto: un celular con su boton
+            g.drawRoundedRectangle (R (at (0.27f, 0.06f), at (0.73f, 0.94f)), s * 0.1f, w);
+            g.fillEllipse (R (s * 0.1f, s * 0.1f).withCentre (at (0.5f, 0.8f)));
+            break;
         case Glyph::star:
             for (int i = 0; i < 10; ++i)
             {

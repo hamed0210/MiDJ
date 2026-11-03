@@ -22,5 +22,12 @@ namespace TagReader
     TrackTags parseId3v2 (const void* data, size_t size);       // data empieza por "ID3"
     TrackTags parseId3v1 (const void* data, size_t size);       // los 128 bytes finales, "TAG..."
     void fillFromFileName (TrackTags& tags, const juce::String& fileNameWithoutExtension);
+    // Texto de 8 bits de una etiqueta (ID3v1, o ID3v2 con codificacion 0) hasta el primer 0. La norma
+    // dice Latin-1, pero en la practica llega UTF-8, Windows-1252 o la pagina 850 de DOS (la ñ como A4);
+    // se reconoce cual es.
+    juce::String decode8bit (const void* data, size_t size);
+    // Un texto ya leido (UTF-16, por ejemplo) en el que un programa convirtio mal la pagina 850:
+    // "Ma¤anita" -> "Mañanita". Si no lo parece, lo devuelve igual. read() lo aplica a todo.
+    juce::String repairDosText (const juce::String& text);
 }
 }

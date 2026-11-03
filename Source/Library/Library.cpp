@@ -140,6 +140,7 @@ public:
                 library.scanning = true;
                 library.contentChanged();
                 library.fixMpeg2Durations (this);
+                library.fixLegacyTagText (this);
                 for (const auto& folder : library.getFolders())
                     if (! threadShouldExit())
                         library.scanFolder (folder, this);
@@ -432,6 +433,64 @@ void Library::fixMpeg2Durations (juce::Thread* thread)
         for (const auto& [id, seconds] : fixes)
             Statement (db, "UPDATE tracks SET duration = ? WHERE id = ?").bind (1, seconds).bind (2, id).run();
         Statement (db, "INSERT OR REPLACE INTO settings (key, value) VALUES ('mpeg2_durations', ?)")
+            .bind (1, juce::String ((int) fixes.size())).run();
+        exec ("COMMIT");
+    }
+    if (! fixes.empty())
+        contentChanged();
+}
+
+void Library::fixLegacyTagText (juce::Thread* thread)
+{
+    // Hasta la 0.5.0 las etiquetas de 8 bits se leian siempre como Latin-1: las de la pagina 850 de
+    // DOS salian con simbolos ("Ma¤anita") y las UTF-8 con dos letras raras ("MaÃ±anita"). Una vez:
+    // se vuelven a leer las que tienen esos caracteres.
+    struct Row { juce::int64 id; juce::String path, title, artist, album, genre; };
+    std::vector<Row> rows;
+    auto suspicious = [] (const juce::String& s)
+    {
+        for (auto c : s)
+            if (c >= 0x80 && c <= 0xc3)   // controles, simbolos de Latin-1 y la Ã de un UTF-8 mal leido
+                return true;
+        return false;
+    };
+    {
+        const juce::ScopedLock sl (lock);
+        if (Statement (db, "SELECT 1 FROM settings WHERE key = 'tag_text_dos'").next())
+            return;   // ya hecho
+        Statement s (db, "SELECT id, path, title, artist, album, genre FROM tracks");
+        while (s.next())
+        {
+            Row r { s.integer (0), s.text (1), s.text (2), s.text (3), s.text (4), s.text (5) };
+            if (suspicious (r.title) || suspicious (r.artist) || suspicious (r.album) || suspicious (r.genre))
+                rows.push_back (std::move (r));
+        }
+    }
+    std::vector<std::pair<juce::int64, TrackTags>> fixes;
+    std::vector<juce::String> searches;
+    for (const auto& r : rows)
+    {
+        if (thread != nullptr && thread->threadShouldExit())
+            return;   // sin marcar: se termina la proxima vez
+        const juce::File file (r.path);
+        if (! file.existsAsFile())
+            continue;
+        const auto tags = TagReader::read (file);
+        if (tags.title == r.title && tags.artist == r.artist && tags.album == r.album && tags.genre == r.genre)
+            continue;
+        searches.push_back (normalise (tags.title + " " + tags.artist + " " + tags.album + " " + tags.genre + " " + file.getFileNameWithoutExtension()));
+        fixes.emplace_back (r.id, tags);
+    }
+    {
+        const juce::ScopedLock sl (lock);
+        exec ("BEGIN");
+        for (size_t i = 0; i < fixes.size(); ++i)
+        {
+            const auto& [id, tags] = fixes[i];
+            Statement (db, "UPDATE tracks SET title = ?, artist = ?, album = ?, genre = ?, search = ? WHERE id = ?")
+                .bind (1, tags.title).bind (2, tags.artist).bind (3, tags.album).bind (4, tags.genre).bind (5, searches[i]).bind (6, id).run();
+        }
+        Statement (db, "INSERT OR REPLACE INTO settings (key, value) VALUES ('tag_text_dos', ?)")
             .bind (1, juce::String ((int) fixes.size())).run();
         exec ("COMMIT");
     }

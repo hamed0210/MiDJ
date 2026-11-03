@@ -79,9 +79,9 @@ simula una controladora.
 
 ## Estado actual
 
-Versión **0.4.0** (2-nov-2026), compilada, probada (ctest OK) y con instalador en `build/installer`, aún
-sin commit ni publicar en GitHub Releases. En GitHub la última publicada es la **0.3.5** (de la 0.3.6 a la
-0.3.10 no se subieron).
+Versión **0.5.0** (2-nov-2026): control remoto en la red Wi-Fi. En `main` y publicada en GitHub Releases
+(`v0.5.0`, con el instalador); 440 pruebas OK. Desde la 0.4.0 MiDJ avisa solo de las versiones nuevas (quien
+tenga 0.3.10 o anterior debe instalar a mano).
 
 ## Historial (resumen por versión)
 
@@ -112,6 +112,19 @@ sin commit ni publicar en GitHub Releases. En GitHub la última publicada es la 
   vez al día y *Ajustes > Buscar ahora*; descarga e instala); versión desde CMake (`MIDJ_VERSION`); README
   para usuarios con capturas y enlace de descarga, manual en `docs/MANUAL.md` y lo técnico en
   `docs/DESARROLLO.md`; `MiDJTests --updates`.
+- **0.5.0**: control remoto desde el celular por la red local (`Remote/RemoteServer.*`: HTTP + WebSocket
+  propio con SHA-1, sobre `juce::StreamingSocket`, un hilo por celular; `UI/RemotePanel.*` con el QR de
+  `ThirdParty/qrcodegen`; la página `Resources/Remote/remote.html` va como BinaryData `RemotePage`).
+  Protocolo en `MainComponent.h`; reutiliza las acciones MIDI de `ControlSurface`. Puerto 8765, clave en
+  `remote.xml`, apagado por defecto.
+  También en 0.5.0: búsqueda de YouTube y AUDIO/VIDEO en el control remoto; `TagReader::decode8bit` (UTF-8 /
+  Windows-1252 / página 850 de DOS) y `repairDosText` ("Ma¤anita" grabado así en UTF-16), con corrección única
+  `fixLegacyTagText` (marca `tag_text_dos`); automix compacto abajo; margen derecho en el árbol de carpetas;
+  el aviso de actualización ya no tiene "Ver en GitHub".
+  Página del celular con el diseño "Consola" (elegido entre 4 en un lienzo de diseño): decks uno encima del otro
+  con fader vertical propio, menú de abajo con iconos, logo de MiDJ, miniaturas de YouTube de i.ytimg.com. Buscador del celular: se vacía al cambiar de fuente o
+  de pestaña, sin foco automático; "ytmore" pide los siguientes de YouTube (continuación por celular en
+  `remoteYtNext`). Reproductor de YouTube: subtítulos ocultos por CSS y `unloadModule("captions")`.
 
 ## Problemas conocidos y limitaciones
 
@@ -120,6 +133,7 @@ sin commit ni publicar en GitHub Releases. En GitHub la última publicada es la 
 - Windows 10 pone borde amarillo en la captura de ventana (WGC).
 - YouTube depende de la página de YouTube (se puede parchear con `youtube.js` sin recompilar); su
   sonido no pasa por el mezclador.
+- Con un panel modal abierto (Ajustes, control remoto) el cierre por WM_CLOSE (taskkill) no cierra MiDJ.
 - Rubber Band es GPL: para vender MiDJ habría que licenciarla o cambiarla (SoundTouch). Solo la usa
   `TimeStretcher.*`.
 
@@ -127,14 +141,12 @@ sin commit ni publicar en GitHub Releases. En GitHub la última publicada es la 
 
 Apuntar aquí lo que el usuario pida y tacharlo al terminarlo.
 
-**Pedido por el usuario (2-nov-2026), investigado, pendiente de decidir:**
-- **Control remoto desde el celular** sincronizado con un código QR. Opciones estudiadas:
-  (A) servidor HTTP + WebSocket dentro de MiDJ en la red local; el QR abre `http://<ip-del-PC>:<puerto>/?k=<clave>`
-  y MiDJ sirve la página (sin internet ni servidores; mismo Wi-Fi; aviso del firewall de Windows la 1.ª vez).
-  (B) página en la web (GitHub Pages) + relé WebSocket en la nube (p. ej. Cloudflare Worker con Durable
-  Objects, gratis): el QR lleva el código de sala; funciona con datos móviles, pero necesita internet y un
-  servidor que mantener. Una página https no puede hablar con `ws://` de la red local (contenido mixto), por
-  eso (B) necesita el relé. Recomendado: empezar por (A) y añadir (B) después con el mismo protocolo.
+**Pedido por el usuario (2-nov-2026):**
+- ~~Control remoto en la red Wi-Fi~~ (hecho en 0.5.0). Falta probarlo con un celular de verdad.
+- **Control remoto por internet** (opción B, sin decidir): página en GitHub Pages + relé WebSocket en la
+  nube (p. ej. Cloudflare Worker con Durable Objects); funcionaría con datos móviles. Una página https no
+  puede hablar con `ws://` de la red local (contenido mixto), por eso necesita el relé. Se puede reusar el
+  mismo protocolo JSON.
 - **Spotify**: la API pública lo prohíbe para un DJ (Developer Policy III.7: no mezclar ni solapar
   contenido; III.6: no sincronizar con video; Web Playback SDK solo Premium y sin uso comercial; desde
   mayo-2025 el acceso para muchos usuarios es solo para empresas grandes y el modo desarrollo admite 5

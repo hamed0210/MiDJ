@@ -108,9 +108,11 @@ namespace
                                               juce::MessageBoxIconType::InfoIcon, parent);
         if (notes.isNotEmpty())
             window->addTextBlock (notes);
+        // Sin el instalador adjunto (version mal publicada) solo queda bajarla de su pagina.
         if (release.installerUrl.isNotEmpty())
             window->addButton ("Descargar e instalar", 1, juce::KeyPress (juce::KeyPress::returnKey));
-        window->addButton ("Ver en GitHub", 2);
+        else
+            window->addButton ("Descargar", 2, juce::KeyPress (juce::KeyPress::returnKey));
         window->addButton ("Omitir esta version", 3);
         window->addButton ("Mas tarde", 0, juce::KeyPress (juce::KeyPress::escapeKey));
         window->enterModalState (true, juce::ModalCallbackFunction::create ([release] (int result)

@@ -433,8 +433,12 @@ void MixerComponent::timerCallback()
         for (size_t i = 0; i < values.size(); ++i)
             if (! channels[c].knobs[i]->slider.isMouseButtonDown())
                 channels[c].knobs[i]->slider.setValue (values[i], juce::dontSendNotification);
-        if (! channels[c].volume.isMouseButtonDown())
+        if (! channels[c].volume.isMouseButtonDown() && channels[c].volume.getValue() != strip.getVolume())
+        {
+            // Movido por la controladora o el celular: tambien el porcentaje de debajo.
             channels[c].volume.setValue (strip.getVolume(), juce::dontSendNotification);
+            repaint (faderLabelArea[c]);
+        }
         const float peak = mixer.takeDeckPeak ((int) c);
         channels[c].meter.setPeak (peak);
         channels[c].faderMeter.setPeak (peak);
@@ -454,6 +458,8 @@ void MixerComponent::timerCallback()
             channels[c].pfl->getProperties().set ("on", mixer.getPfl ((int) c));
             updatePflButtons();
         }
+    if (! master.slider.isMouseButtonDown())   // sigue al control remoto
+        master.slider.setValue (mixer.getMasterVolume(), juce::dontSendNotification);
     masterLeft.setPeak (mixer.takeMasterPeak (0));
     masterRight.setPeak (mixer.takeMasterPeak (1));
     // El crossfader sigue a la controladora y al automix.

@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#101113">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>MiDJ remoto</title>
+<!-- Si el celular no tiene internet (solo el Wi-Fi del PC) se usan las letras del sistema. -->
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  /* Control remoto de MiDJ (diseno "Consola"): lo sirve el propio programa en la red local (ver Source/Remote). */
+  :root {
+    --bg: #101113; --panel: #18191c; --raised: #222327; --well: #0b0c0e; --line: #2b2d32; --line2: #3a3c42;
+    --a: #3ea6ff; --b: #ffb020; --lime: #b6ff5c; --yt: #ff4e45; --danger: #ff5d5d;
+    --text: #ececef; --quiet: #8d8f96; --faint: #5a5c63;
+    --logo: #ff5a36; --cream: #f2efe8;
+    --sans: "Space Grotesk", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.3 var(--sans); }
+  body { padding: env(safe-area-inset-top) 12px calc(env(safe-area-inset-bottom) + 88px); user-select: none; -webkit-user-select: none; }
+  button { font-family: inherit; color: var(--text); touch-action: manipulation; cursor: pointer; }
+  button:active { filter: brightness(1.35); }
+  .mono { font-family: var(--mono); }
+
+  header { display: flex; align-items: center; gap: 8px; padding: 14px 4px 10px; }
+  .brand { display: flex; align-items: center; gap: 8px; font: 700 19px "Segoe UI", system-ui, -apple-system, Roboto, sans-serif; }
+  .brand .mi { color: var(--cream); } .brand .dj { color: var(--logo); }
+  #status { margin-left: auto; display: flex; align-items: center; gap: 6px; font: 700 11px var(--mono); letter-spacing: .1em; color: var(--quiet); }
+  #status i { width: 8px; height: 8px; border-radius: 4px; background: var(--danger); }
+  #status.on i { background: var(--lime); }
+
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 12px; margin-bottom: 10px; }
+  .label { font: 700 11px var(--mono); letter-spacing: .1em; color: var(--quiet); }
+
+  /* Decks, uno encima del otro: datos y botones a la izquierda, el fader de volumen a la derecha. */
+  .deck { display: flex; gap: 12px; }
+  .deck .main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+  .deck .head { display: flex; align-items: center; gap: 8px; }
+  .deck .name { font: 700 11px var(--mono); letter-spacing: .1em; color: var(--c); }
+  .deck .led { width: 10px; height: 10px; border-radius: 5px; background: var(--line2); }
+  .deck.playing .led { background: var(--lime); }
+  .deck .bpm { margin-left: auto; font: 700 26px var(--mono); line-height: 1; }
+  .deck .bpm small { font-size: 10px; color: var(--quiet); margin-left: 3px; }
+  .deck .title { font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .deck .artist { font-size: 12px; color: var(--quiet); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 1.3em; }
+  .deck .time { display: flex; justify-content: space-between; font: 500 12px var(--mono); color: var(--quiet); }
+  .bar { height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+  .bar div { height: 100%; width: 0; background: var(--c); }
+  .deck .controls { display: flex; align-items: center; gap: 10px; margin-top: 2px; }
+  .round { border-radius: 50%; display: flex; align-items: center; justify-content: center; padding: 0; }
+  .play { width: 68px; height: 68px; border: 2px solid var(--c); background: var(--panel); }
+  .play svg path { fill: var(--c); }
+  .deck.playing .play { background: var(--c); }
+  .deck.playing .play svg path { fill: var(--bg); }
+  .small { width: 48px; height: 48px; border: 1px solid var(--line2); background: var(--raised); font: 700 10px var(--mono); letter-spacing: .04em; }
+  .small.on { border-color: var(--lime); color: var(--lime); }
+
+  /* Fader vertical (se arrastra con el dedo). */
+  .vfader { flex: none; width: 46px; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .vfader .track { position: relative; flex: 1; width: 36px; min-height: 140px; border-radius: 8px; background: var(--well); border: 1px solid var(--line); touch-action: none; }
+  .vfader .track::before { content: ""; position: absolute; left: 16px; top: 10px; bottom: 10px; width: 4px; border-radius: 2px; background: var(--line); }
+  .vfader .fill { position: absolute; left: 16px; bottom: 10px; width: 4px; border-radius: 2px; background: var(--c); }
+  .vfader .cap { position: absolute; left: 3px; width: 28px; height: 16px; margin-top: -8px; border-radius: 4px; background: var(--text); box-shadow: 0 1px 0 #000; }
+  .vfader output { font: 700 11px var(--mono); color: var(--quiet); }
+
+  /* Crossfader y master: deslizadores grandes. */
+  .xf-head { display: flex; justify-content: space-between; margin-bottom: 8px; }
+  #xfText { color: var(--lime); }
+  .xf { position: relative; height: 56px; border-radius: 10px; background: var(--well); border: 1px solid var(--line); }
+  .xf .ends { position: absolute; inset: 0; display: flex; justify-content: space-between; align-items: center; padding: 0 10px; font: 700 14px var(--mono); pointer-events: none; }
+  .xf .ends span:first-child { color: var(--a); } .xf .ends span:last-child { color: var(--b); }
+  .xf .mid { position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: var(--line2); pointer-events: none; }
+  input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; margin: 0; background: transparent; touch-action: none; }
+  input[type=range]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: var(--line); }
+  input[type=range]::-moz-range-track { height: 4px; border-radius: 2px; background: var(--line); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 28px; height: 28px; margin-top: -12px; border-radius: 6px; background: var(--text); border: 0; }
+  input[type=range]::-moz-range-thumb { width: 28px; height: 28px; border-radius: 6px; background: var(--text); border: 0; }
+  .xf input { position: absolute; left: 26px; right: 26px; width: calc(100% - 52px); top: 0; height: 56px; }
+  .xf input::-webkit-slider-thumb { width: 26px; height: 40px; margin-top: -18px; border-radius: 5px; }
+  .xf input::-moz-range-thumb { width: 26px; height: 40px; border-radius: 5px; }
+  .master { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+  .master input { flex: 1; height: 34px; }
+  .master output { width: 40px; text-align: right; font: 700 12px var(--mono); }
+
+  /* Menu de abajo (el del diseno "Escenario"): icono y nombre, el elegido con fondo. */
+  nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 3; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px;
+    padding: 8px 8px calc(env(safe-area-inset-bottom) + 10px); background: var(--panel); border-top: 1px solid var(--line); }
+  nav button { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 0; min-height: 56px; border: 0; border-radius: 12px;
+    background: none; color: var(--quiet); font: 600 11px var(--sans); }
+  nav button svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  nav button.sel { color: var(--text); background: var(--raised); }
+  .page { display: none; } .page.sel { display: block; }
+  [hidden] { display: none !important; }   /* tambien sobre los display: grid/flex de abajo */
+
+  /* Listas, buscador y botones de texto. */
+  .btn { min-height: 46px; border-radius: 10px; border: 1px solid var(--line2); background: var(--raised); font: 700 12px var(--mono); letter-spacing: .04em; }
+  .btn.on { border-color: var(--lime); background: #1d2416; color: var(--lime); }
+  .row { display: flex; gap: 8px; } .row > * { flex: 1; }
+  .list { margin: 0; padding: 0; list-style: none; }
+  .list li { display: flex; align-items: center; gap: 8px; padding: 9px 2px; border-bottom: 1px solid var(--line); }
+  .list li:last-child { border-bottom: 0; }
+  .list .t { flex: 1; min-width: 0; }
+  .list .t b, .list .t small { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .list .t b { font-weight: 600; }
+  .list .t small { color: var(--quiet); font-size: 12px; }
+  .list button { flex: none; min-width: 44px; height: 40px; padding: 0 10px; border-radius: 9px; border: 1px solid var(--line2); background: var(--raised); font: 700 13px var(--mono); }
+  .list .la { color: var(--a); } .list .lb { color: var(--b); }
+  .list li.live b { color: var(--lime); }
+  .list button.on, .yt button.on { border-color: var(--lime); color: var(--lime); }
+  .empty { color: var(--faint); justify-content: center; padding: 18px 0 !important; font-size: 14px; }
+  .kind { flex: none; font: 700 9px var(--mono); letter-spacing: .06em; padding: 3px 5px; border-radius: 4px; border: 1px solid var(--line2); color: var(--a); }
+  .kind.video { color: #d58cf5; }
+  .search { display: flex; gap: 8px; margin-bottom: 10px; }
+  .search label { flex: 1; display: flex; align-items: center; gap: 8px; height: 46px; padding: 0 12px; border-radius: 10px; background: var(--well); border: 1px solid var(--line2); }
+  .search label span { font: 700 11px var(--mono); color: var(--lime); }
+  .search.youtube label span { color: var(--yt); }
+  .search input { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--text); font: 500 15px var(--mono); outline: none; }
+  .search button { flex: none; width: 82px; }
+
+  /* Resultados de YouTube: tarjetas con su miniatura, de dos en dos. */
+  .yt { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .yt article { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
+  .yt .thumb { position: relative; aspect-ratio: 16 / 9; background: var(--raised); }
+  .yt .thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .yt .dur { position: absolute; right: 6px; bottom: 6px; padding: 1px 5px; border-radius: 3px; background: rgba(0,0,0,.82); font: 700 11px var(--mono); }
+  .yt .tag { position: absolute; left: 6px; top: 6px; padding: 1px 5px; border-radius: 3px; background: var(--yt); color: var(--bg); font: 700 10px var(--mono); }
+  .yt .info { padding: 8px 9px 10px; display: flex; flex-direction: column; gap: 4px; flex: 1; }
+  .yt .info b { font-size: 13px; font-weight: 600; line-height: 1.25; height: 2.5em; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .yt .info small { font-size: 11px; color: var(--quiet); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .yt .info .row { margin-top: auto; padding-top: 6px; gap: 6px; }
+  .yt .info button { height: 38px; border-radius: 8px; border: 1px solid var(--line2); background: var(--raised); font: 700 11px var(--mono); }
+  .yt .info button.see { border-color: var(--lime); background: #1d2416; color: var(--lime); }
+  .yt .empty { grid-column: 1 / -1; display: flex; }
+
+  .pads { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+  .pads button { min-height: 72px; border-radius: 12px; border: 1px solid var(--line2); background: var(--raised); font: 700 11px var(--mono); padding: 4px; word-break: break-word; }
+  .pads button.on { border-color: var(--lime); color: var(--lime); background: #1d2416; }
+  .pads button:disabled { opacity: .35; }
+  .muted { color: var(--quiet); font-size: 13px; }
+  #overlay { position: fixed; inset: 0; background: rgba(16,17,19,.94); display: flex; align-items: center; justify-content: center; text-align: center; padding: 24px; z-index: 5; }
+  #overlay[hidden] { display: none; }
+  #overlay p { color: var(--quiet); }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand" aria-label="MiDJ">
+    <!-- El disco de MiDJ (Source/Brand/Logo.cpp, version pequena) -->
+    <svg width="26" height="26" viewBox="0 0 220 220" aria-hidden="true">
+      <circle cx="110" cy="110" r="100" fill="#2a2d37"></circle>
+      <circle cx="110" cy="110" r="48" fill="#ff5a36"></circle>
+      <circle cx="110" cy="110" r="12" fill="#0e0f13"></circle>
+      <path d="M190 28 L162 100" stroke="#f2efe8" stroke-width="22" stroke-linecap="round"></path>
+    </svg>
+    <span><span class="mi">Mi</span><span class="dj">DJ</span></span>
+  </div>
+  <div id="status"><i></i><span>CONECTANDO</span></div>
+</header>
+
+<section class="page sel" id="p-mix">
+  <div class="card deck" style="--c: var(--a)" id="d0"></div>
+  <div class="card deck" style="--c: var(--b)" id="d1"></div>
+  <div class="card">
+    <div class="xf-head label"><span>CROSSFADER</span><span id="xfText">CENTRO</span></div>
+    <div class="xf">
+      <div class="mid"></div>
+      <div class="ends"><span>A</span><span>B</span></div>
+      <input type="range" min="0" max="1" step="0.01" value="0.5" data-set="crossfader" aria-label="Crossfader">
+    </div>
+    <div class="master"><span class="label">MASTER</span><input type="range" min="0" max="1" step="0.01" data-set="master" aria-label="Volumen del master"><output class="mono"></output></div>
+  </div>
+</section>
+
+<section class="page" id="p-automix">
+  <div class="card">
+    <div class="row">
+      <button class="btn" id="am-on" data-press="automix.toggle">AUTOMIX</button>
+      <button class="btn" data-press="automix.mixnow">MEZCLAR YA</button>
+      <button class="btn" data-press="automix.skip">SALTAR</button>
+    </div>
+    <p class="muted" id="am-status"></p>
+    <ul class="list" id="am-queue"></ul>
+  </div>
+</section>
+
+<section class="page" id="p-search">
+  <div class="search" id="searchBox">
+    <label><span id="qPrompt">LIB&gt;</span><input type="search" id="q" placeholder="Buscar canción, artista..." enterkeyhint="search" autocomplete="off" aria-label="Buscar"></label>
+    <button class="btn" id="srcButton">YOUTUBE</button>
+  </div>
+  <div id="libResults" class="card"><ul class="list" id="results"></ul></div>
+  <div id="ytResults" class="yt" hidden></div>
+</section>
+
+<section class="page" id="p-pads">
+  <div class="card"><div class="pads" id="pads"></div>
+    <div class="row" style="margin-top: 10px"><button class="btn" data-press="sampler.stop">PARAR TODO</button></div></div>
+  <div class="card"><div class="label">ESCENAS</div><ul class="list" id="scenes"></ul></div>
+</section>
+
+<nav>
+  <button class="sel" data-page="p-mix"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21V14M4 10V3M12 21V12M12 8V3M20 21V16M20 12V3M1 14h6M9 8h6M17 16h6"></path></svg>Mezcla</button>
+  <button data-page="p-automix"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"></path></svg>Automix</button>
+  <button data-page="p-search"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.35-4.35"></path></svg>Buscar</button>
+  <button data-page="p-pads"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"></path></svg>Pads</button>
+</nav>
+
+<div id="overlay" hidden><div><h2>Sin clave</h2><p>Abre <b>Control remoto</b> en MiDJ (el botón del celular, arriba a la derecha) y escanea el código QR con la cámara.</p></div></div>
+
+<script>
+"use strict";
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const mmss = s => { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
+const pct = v => Math.round(v * 100) + "%";
+
+// La clave llega en el QR (?k=...); se guarda para volver a entrar sin escanear.
+const params = new URLSearchParams(location.search);
+let key = params.get("k");
+try { if (key) localStorage.setItem("midj-key", key); else key = localStorage.getItem("midj-key"); } catch (e) {}
+if (params.get("k")) history.replaceState(null, "", location.pathname);
+
+let ws = null, retry = 500;
+const dragging = new Set();   // controles que se estan moviendo: no se pisan con lo que llega
+
+function setStatus(on, text) { $("#status").className = on ? "on" : ""; $("#status span").textContent = text; }
+function send(msg) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg)); }
+
+function connect() {
+  if (ws && ws.readyState <= 1) return;   // ya conectado o conectando
+  if (!key) { $("#overlay").hidden = false; setStatus(false, "SIN CLAVE"); return; }
+  ws = new WebSocket("ws://" + location.host + "/ws?k=" + encodeURIComponent(key));
+  ws.onopen = () => { retry = 500; setStatus(true, "EN LÍNEA"); };
+  ws.onmessage = e => { const m = JSON.parse(e.data); if (m.t === "state") render(m); else if (m.t === "results") results(m); else if (m.t === "ytresults") ytresults(m); };
+  ws.onclose = () => { setStatus(false, "RECONECTANDO"); setTimeout(connect, retry); retry = Math.min(retry * 2, 5000); };
+}
+
+// Mandar un valor como mucho cada 40 ms mientras se mueve (y el ultimo siempre).
+function throttled(id) {
+  let last = 0, timer = null, value = 0;
+  const push = () => { send({ t: "set", id, v: value }); last = Date.now(); };
+  return {
+    set(v, final) {
+      value = v; clearTimeout(timer);
+      if (final || Date.now() - last > 40) push(); else timer = setTimeout(push, 40);
+    }
+  };
+}
+
+const playIcon = "M8 5l11 7-11 7z", pauseIcon = "M7 5h3v14H7zM14 5h3v14h-3z";
+
+// Decks: se arman una vez y luego solo cambian los textos.
+const faders = [];
+for (const d of [0, 1]) {
+  const n = d + 1, el = $("#d" + d);
+  el.innerHTML = `
+    <div class="main">
+      <div class="head"><span class="name">DECK ${d ? "B" : "A"}</span><span class="led"></span><span class="bpm">--<small>BPM</small></span></div>
+      <div><div class="title">Sin canción</div><div class="artist"></div></div>
+      <div class="bar"><div></div></div>
+      <div class="time"><span>0:00</span><span>-0:00</span></div>
+      <div class="controls">
+        <button class="round play" data-press="deck${n}.play" aria-label="Play deck ${d ? "B" : "A"}"><svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true"><path d="${playIcon}"></path></svg></button>
+        <button class="round small" data-press="deck${n}.cue">CUE</button>
+        <button class="round small" data-press="deck${n}.sync">SYNC</button>
+      </div>
+    </div>
+    <div class="vfader"><div class="track" role="slider" aria-label="Volumen deck ${d ? "B" : "A"}" aria-valuemin="0" aria-valuemax="100" tabindex="0"><div class="fill"></div><div class="cap"></div></div><output>100%</output></div>`;
+  const track = $(".track", el), sender = throttled(`deck${n}.volume`), id = `deck${n}.volume`;
+  let current = 1;
+  const show = v => {
+    current = v;
+    const inner = track.clientHeight - 20;
+    $(".cap", track).style.top = (10 + (1 - v) * inner) + "px";
+    $(".fill", track).style.height = (v * inner) + "px";
+    $("output", el).textContent = pct(v);
+    track.setAttribute("aria-valuenow", Math.round(v * 100));
+  };
+  const fromPointer = e => { const r = track.getBoundingClientRect(); return Math.min(1, Math.max(0, 1 - (e.clientY - r.top - 10) / (r.height - 20))); };
+  track.addEventListener("pointerdown", e => { track.setPointerCapture(e.pointerId); dragging.add(id); const v = fromPointer(e); show(v); sender.set(v); });
+  track.addEventListener("pointermove", e => { if (!track.hasPointerCapture(e.pointerId)) return; const v = fromPointer(e); show(v); sender.set(v); });
+  const end = e => { if (!track.hasPointerCapture(e.pointerId)) return; sender.set(fromPointer(e), true); setTimeout(() => dragging.delete(id), 400); };
+  track.addEventListener("pointerup", end);
+  track.addEventListener("pointercancel", end);
+  faders.push({ id, show, get value() { return current; } });
+  show(1);
+}
+for (let i = 0; i < 8; ++i) $("#pads").insertAdjacentHTML("beforeend", `<button data-pad="${i + 1}">${i + 1}</button>`);
+
+function xfText(v) { return Math.abs(v - 0.5) < 0.02 ? "CENTRO" : (v < 0.5 ? Math.round((0.5 - v) * 200) + "% A" : Math.round((v - 0.5) * 200) + "% B"); }
+function setRange(id, v) {
+  const input = $(`input[data-set="${id}"]`);
+  if (!input || dragging.has(id)) return;
+  input.value = v;
+  if (id === "crossfader") $("#xfText").textContent = xfText(v);
+  else input.nextElementSibling.textContent = pct(v);
+}
+
+function render(s) {
+  s.decks.forEach((d, i) => {
+    const el = $("#d" + i);
+    el.classList.toggle("playing", d.playing);
+    $(".bpm", el).firstChild.textContent = d.bpm > 0 ? d.bpm.toFixed(1) : "--";
+    $(".title", el).textContent = d.loading ? "Cargando..." : (d.title || "Sin canción");
+    $(".artist", el).textContent = d.artist || "";
+    $(".bar div", el).style.width = (d.len > 0 ? Math.min(100, 100 * d.pos / d.len) : 0) + "%";
+    const t = el.querySelectorAll(".time span");
+    t[0].textContent = mmss(d.pos) + " / " + mmss(d.len); t[1].textContent = "-" + mmss(d.len - d.pos);
+    $(".play path", el).setAttribute("d", d.playing ? pauseIcon : playIcon);
+    $(".play", el).setAttribute("aria-label", (d.playing ? "Pausa" : "Play") + " deck " + (i ? "B" : "A"));
+    if (!dragging.has(faders[i].id)) faders[i].show(d.vol);
+  });
+  setRange("crossfader", s.xf);
+  setRange("master", s.master);
+  $("#am-on").classList.toggle("on", s.automix.on);
+  $("#am-on").textContent = s.automix.on ? "AUTOMIX: SÍ" : "AUTOMIX: NO";
+  $("#am-status").textContent = s.automix.status || "";
+  const queue = s.automix.queue;
+  const qHtml = queue.length ? queue.map((q, i) => `<li><div class="t"><b>${i + 1}. ${esc(q.title)}</b><small>${esc(q.artist)}</small></div></li>`).join("")
+                             : `<li class="empty">Lista vacía: agrega canciones desde Buscar</li>`;
+  if ($("#am-queue").dataset.html !== qHtml) { $("#am-queue").innerHTML = qHtml; $("#am-queue").dataset.html = qHtml; }
+  s.pads.forEach((p, i) => {
+    const b = $(`[data-pad="${i + 1}"]`);
+    b.textContent = p.name || String(i + 1); b.disabled = !p.name; b.classList.toggle("on", p.playing);
+  });
+  const sHtml = s.scenes.map(sc => `<li class="${sc.id === s.scene ? "live" : ""}"><div class="t"><b>${esc(sc.name)}</b></div>`
+                  + `<button data-scene="${sc.id}">${sc.id === s.scene ? "AL AIRE" : "PONER"}</button></li>`).join("");
+  if ($("#scenes").dataset.html !== sHtml) { $("#scenes").innerHTML = sHtml; $("#scenes").dataset.html = sHtml; }
+}
+
+// Buscar en la biblioteca o en YouTube (cada una con su respuesta: "results" o "ytresults").
+let source = "library";
+function showSource() {
+  const yt = source === "youtube";
+  $("#searchBox").classList.toggle("youtube", yt);
+  $("#qPrompt").textContent = yt ? "YT>" : "LIB>";
+  $("#srcButton").textContent = yt ? "BIBLIO" : "YOUTUBE";
+  $("#q").placeholder = yt ? "Buscar en YouTube..." : "Buscar canción, artista...";
+  $("#libResults").hidden = yt;
+  $("#ytResults").hidden = !yt;
+  hint();
+}
+function hint() {
+  if (source === "youtube") $("#ytResults").innerHTML = `<div class="empty">Escribe y busca videos de YouTube</div>`;
+  else $("#results").innerHTML = `<li class="empty">Escribe para buscar en la biblioteca de MiDJ</li>`;
+}
+showSource();
+
+function results(m) {
+  if (source !== "library" || m.q !== $("#q").value.trim()) return;   // respuesta de una busqueda anterior
+  $("#results").innerHTML = m.items.length ? m.items.map(it =>
+    `<li><span class="kind ${it.video ? "video" : ""}">${it.video ? "VIDEO" : "AUDIO"}</span>`
+    + `<div class="t"><b>${esc(it.title)}</b><small>${esc(it.artist)}${it.bpm > 0 ? " · " + it.bpm.toFixed(0) + " BPM" : ""} · ${mmss(it.dur)}</small></div>`
+    + `<button class="la" data-load="0" data-track="${it.id}" aria-label="Cargar en el deck A">A</button><button class="lb" data-load="1" data-track="${it.id}" aria-label="Cargar en el deck B">B</button>`
+    + `<button data-queue="${it.id}" aria-label="Agregar al automix">+</button></li>`).join("")
+    : `<li class="empty">Sin resultados</li>`;
+}
+
+// Las miniaturas las da YouTube (i.ytimg.com); sin internet en el celular queda el recuadro gris.
+// Al bajar hasta el final de los videos se piden los siguientes (como en YouTube y en el buscador de MiDJ).
+let ytMore = false, ytLoading = false;
+const ytCard = it =>
+  `<article><div class="thumb"><img src="https://i.ytimg.com/vi/${encodeURIComponent(it.id)}/mqdefault.jpg" alt="" loading="lazy" onerror="this.remove()">`
+  + `<span class="tag">YT</span>${it.dur > 0 ? `<span class="dur">${mmss(it.dur)}</span>` : ""}</div>`
+  + `<div class="info"><b>${esc(it.title)}</b><small>${esc(it.channel)}</small>`
+  + `<div class="row"><button class="see" data-ytplay="${esc(it.id)}">VER</button><button data-ytqueue="${esc(it.id)}" aria-label="Agregar al automix de YouTube">+ LISTA</button></div></div></article>`;
+function ytresults(m) {
+  if (source !== "youtube" || m.q !== $("#q").value.trim()) return;
+  ytLoading = false;
+  ytMore = !!m.more;
+  const box = $("#ytResults");
+  const loader = $("#ytLoader", box);
+  if (loader) loader.remove();
+  if (m.append) box.insertAdjacentHTML("beforeend", m.items.map(ytCard).join(""));
+  else box.innerHTML = m.items.length ? m.items.map(ytCard).join("") : `<div class="empty">${esc(m.error || "Sin resultados")}</div>`;
+  checkYtEnd();
+}
+function checkYtEnd() {
+  if (source !== "youtube" || !ytMore || ytLoading || $("#ytResults").hidden || !$("#p-search").classList.contains("sel")) return;
+  if (window.innerHeight + window.scrollY < document.documentElement.scrollHeight - 400) return;
+  ytLoading = true;
+  $("#ytResults").insertAdjacentHTML("beforeend", `<div class="empty" id="ytLoader">Cargando más videos...</div>`);
+  send({ t: "ytmore" });
+}
+window.addEventListener("scroll", checkYtEnd, { passive: true });
+
+// Buscador vacio (al cambiar entre biblioteca y YouTube o de pestaña): sin texto ni resultados.
+function clearSearch() {
+  clearTimeout(searchTimer);
+  $("#q").value = "";
+  ytMore = false; ytLoading = false;
+  hint();
+}
+
+// Botones: un toque. Los pads se sueltan al levantar el dedo (modo mantener).
+document.addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.page) {
+    document.querySelectorAll("nav button").forEach(x => x.classList.toggle("sel", x === b));
+    document.querySelectorAll(".page").forEach(p => p.classList.toggle("sel", p.id === b.dataset.page));
+    if (b.dataset.page === "p-mix") faders.forEach(f => f.show(f.value));   // el alto del fader se mide visible
+    $("#q").blur();
+    clearSearch();
+    window.scrollTo(0, 0);
+  } else if (b.dataset.press) send({ t: "press", id: b.dataset.press });
+  else if (b.dataset.scene) send({ t: "scene", id: Number(b.dataset.scene) });
+  else if (b.dataset.load) { send({ t: "load", deck: Number(b.dataset.load), track: Number(b.dataset.track) }); flash(b); }
+  else if (b.dataset.queue) { send({ t: "queue", track: Number(b.dataset.queue) }); flash(b); }
+  else if (b.dataset.ytplay) { send({ t: "ytplay", id: b.dataset.ytplay }); flash(b); }
+  else if (b.dataset.ytqueue) { send({ t: "ytqueue", id: b.dataset.ytqueue }); flash(b); }
+  else if (b.id === "srcButton") { source = source === "youtube" ? "library" : "youtube"; showSource(); clearSearch(); }
+});
+function flash(b) { b.classList.add("on"); setTimeout(() => b.classList.remove("on"), 600); }
+$("#pads").addEventListener("pointerdown", e => { const b = e.target.closest("button"); if (b) send({ t: "press", id: "sampler.pad" + b.dataset.pad }); });
+for (const ev of ["pointerup", "pointercancel"])
+  $("#pads").addEventListener(ev, e => { const b = e.target.closest("button"); if (b) send({ t: "release", id: "sampler.pad" + b.dataset.pad }); });
+
+// Crossfader y master.
+document.querySelectorAll("input[type=range]").forEach(input => {
+  const id = input.dataset.set, sender = throttled(id);
+  input.addEventListener("input", () => {
+    dragging.add(id);
+    const v = Number(input.value);
+    if (id === "crossfader") $("#xfText").textContent = xfText(v); else input.nextElementSibling.textContent = pct(v);
+    sender.set(v);
+  });
+  const done = () => { sender.set(Number(input.value), true); setTimeout(() => dragging.delete(id), 400); };
+  input.addEventListener("change", done);
+  input.addEventListener("pointerup", done);
+});
+
+// Buscar mientras se escribe (con una pausa corta; mas larga en YouTube, que va por internet).
+let searchTimer = null;
+function runSearch(delay) {
+  clearTimeout(searchTimer);
+  const q = $("#q").value.trim();
+  if (!q) { hint(); return; }
+  searchTimer = setTimeout(() => {
+    ytMore = false; ytLoading = false;   // busqueda nueva: lo que llegue de la anterior no se anade
+    if (source === "youtube") $("#ytResults").innerHTML = `<div class="empty">Buscando en YouTube...</div>`;
+    send({ t: source === "youtube" ? "ytsearch" : "search", q });
+  }, delay);
+}
+$("#q").addEventListener("input", () => runSearch(source === "youtube" ? 800 : 250));
+$("#q").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); runSearch(0); $("#q").blur(); } });
+
+// Al volver a la pagina (pantalla encendida otra vez) se reconecta enseguida.
+document.addEventListener("visibilitychange", () => { if (!document.hidden && (!ws || ws.readyState > 1)) { retry = 500; connect(); } });
+window.addEventListener("resize", () => faders.forEach(f => f.show(f.value)));
+connect();
+</script>
+</body>
+</html>

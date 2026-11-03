@@ -7,6 +7,7 @@
 #include "Engine/Mixer.h"
 #include "Engine/StemsService.h"
 #include "Library/Library.h"
+#include "Remote/RemoteServer.h"
 #include "UI/AutomixPanel.h"
 #include "UI/DarkLookAndFeel.h"
 #include "UI/DeckComponent.h"
@@ -216,6 +217,33 @@ private:
     YouTubeQueue youtubeQueue;
     std::unique_ptr<YouTubePanel> youtubePanel;
     bool youtubePausedBySpace = false;
+
+    // Control remoto desde el celular (Remote/RemoteServer.h): %APPDATA%\MiDJ\remote.xml guarda si
+    // esta encendido y la clave. Protocolo (JSON por WebSocket):
+    //  celular -> MiDJ: {t:"press"|"release", id:<accion MIDI>} (play, cue, sync, pads, automix...),
+    //                   {t:"set", id:<accion absoluta>|"master", v:0-1}, {t:"scene", id},
+    //                   {t:"search", q}, {t:"load", deck:0|1, track:<id>}, {t:"queue", track:<id>},
+    //                   {t:"ytsearch", q}, {t:"ytmore"} (los siguientes), {t:"ytplay"|"ytqueue", id:<id del video>};
+    //  MiDJ -> celular: {t:"state", decks, xf, master, automix, pads, scenes, scene} (5 veces por
+    //                   segundo, solo si cambia), {t:"results", q, items} (items con video: true/false)
+    //                   y {t:"ytresults", q, items, append, more, error} (a quien busco).
+    RemoteServer remote;
+    bool remoteEnabled = false;
+    juce::String remoteKey;
+    std::map<juce::int64, juce::File> remoteTracks;   // los resultados que se mandaron (id -> archivo)
+    std::map<juce::String, YouTubeVideo> remoteVideos; // los de YouTube (id del video -> video)
+    struct RemoteYouTubeNext { juce::String query, continuation, clientVersion; };
+    std::map<int, RemoteYouTubeNext> remoteYtNext;     // por celular: como pedir los siguientes de su busqueda
+    juce::String lastRemoteState;
+    std::array<std::pair<juce::File, std::pair<juce::String, juce::String>>, 2> remoteTitles;   // titulo y artista de cada deck
+    IconButton remoteButton { Icons::Glyph::phone, "Control remoto desde el celular (codigo QR)" };
+    bool remoteButtonLit = false;   // en verde: hay algun celular conectado
+    void loadRemoteSettings();
+    void saveRemoteSettings();
+    void setRemoteEnabled (bool on);
+    void remoteMessage (int clientId, const juce::var& message);
+    juce::String remoteState();
+    void showRemote();
     MidiLearnOverlay midiOverlay { midi };
     int timerTicks = 0;
 

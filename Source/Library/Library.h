@@ -174,6 +174,7 @@ private:
     // Una vez: los MP3 MPEG-2 (22 050 Hz...) se guardaron con el doble de duracion (fallo del MP3
     // de JUCE, ver Mp3Format); se corrige sin volver a analizar (el BPM ya era bueno).
     void fixMpeg2Durations (juce::Thread* thread);
+    void fixLegacyTagText (juce::Thread* thread);   // una vez: etiquetas de 8 bits mal leidas (ver TagReader::decode8bit)
     void contentChanged() { ++contentVersion; sendChangeMessage(); }
 
     juce::AudioFormatManager& formats;

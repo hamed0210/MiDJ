@@ -29,6 +29,7 @@
 #include "Video/MediaSources.h"
 #include "Video/MediaFoundation.h"
 #include "Library/TagReader.h"
+#include "Remote/RemoteServer.h"
 
 #ifndef NOMINMAX
  #define NOMINMAX
@@ -762,6 +763,30 @@ void testMp3Length()
 void testTagReader()
 {
     using namespace midj::TagReader;
+
+    // Texto de 8 bits: la pagina 850 de DOS (la ñ como A4, la e con tilde como 82), UTF-8 escrito
+    // como Latin-1, Windows-1252 (comillas, ...) y Latin-1 de verdad.
+    auto text = [] (std::initializer_list<int> bytes)
+    {
+        std::vector<char> b;
+        for (int c : bytes)
+            b.push_back ((char) c);
+        return decode8bit (b.data(), b.size());
+    };
+    const auto u = [] (const char* s) { return juce::String::fromUTF8 (s); };
+    check (text ({ 'M', 'a', 0xa4, 'a', 'n', 'i', 't', 'a' }) == u ("Ma\xc3\xb1" "anita")
+               && text ({ 'C', 'a', 'f', 0x82 }) == u ("Caf\xc3\xa9") && text ({ 'N', 0xa0, 'r' }) == u ("N\xc3\xa1r"),
+           "pagina 850 de DOS: Ma(A4)anita -> Mañanita", 0.0, 0.0);
+    check (text ({ 'M', 'a', 0xc3, 0xb1, 'a', 'n', 'a' }) == u ("Ma\xc3\xb1" "ana"), "UTF-8 aunque diga Latin-1", 0.0, 0.0);
+    check (text ({ 'M', 'a', 0xf1, 'a', 'n', 'a' }) == u ("Ma\xc3\xb1" "ana") && text ({ 'A', 0xd1, 'O' }) == u ("A\xc3\x91O"),
+           "Latin-1 de verdad: la ñ como F1", 0.0, 0.0);
+    check (text ({ 'H', 'i', 0x85, ' ', 0x93, 'x', 0x94 }) == u ("Hi\xe2\x80\xa6 \xe2\x80\x9cx\xe2\x80\x9d"), "Windows-1252: ... y comillas", 0.0, 0.0);
+    check (text ({ 'a', 'b', 0, 'c' }) == "ab" && text ({ 'L', 'a', ' ', 'M', 'a', 'r' }) == "La Mar", "hasta el primer 0 y ASCII tal cual", 0.0, 0.0);
+    // Ya en UTF-16 pero mal convertido por el programa que lo etiqueto (un archivo real: "003 Ma¤anita").
+    check (repairDosText (u ("003 Ma\xc2\xa4" "anita De Invierno")) == u ("003 Ma\xc3\xb1" "anita De Invierno")
+               && repairDosText (u ("Ma\xc3\xb1" "ana \xc2\xa1Hola!")) == u ("Ma\xc3\xb1" "ana \xc2\xa1Hola!")
+               && repairDosText (u ("\xc2\xa1Hola!")) == u ("\xc2\xa1Hola!") && repairDosText ("La Mar") == "La Mar",
+           "texto ya leido con la 850 mal convertida: se repara; lo bueno no se toca", 0.0, 0.0);
 
     // ID3v2.3: titulo en Latin-1 (con o acentuada), artista en UTF-16 con BOM, genero "(17)Rock".
     juce::MemoryOutputStream frames;
@@ -4045,6 +4070,110 @@ void testUpdates()
            "ajustes: guardados, desactivado, una vez al dia y por defecto activado", 0.0, 0.0);
 }
 
+void testRemoteServer()
+{
+    std::printf ("== Control remoto (HTTP y WebSocket) ==\n");
+    using midj::RemoteServer;
+    // Los ejemplos del RFC 6455: la respuesta al saludo y un "Hello" con mascara.
+    check (RemoteServer::acceptKey ("dGhlIHNhbXBsZSBub25jZQ==") == "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", "saludo: Sec-WebSocket-Accept del RFC", 0.0, 0.0);
+    const juce::uint8 hello[] = { 0x81, 0x85, 0x37, 0xfa, 0x21, 0x3d, 0x7f, 0x9f, 0x4d, 0x51, 0x58, 0x89 };
+    juce::MemoryBlock buffer (hello, 7);   // a medias: falta
+    RemoteServer::Frame f;
+    const int partial = RemoteServer::takeFrame (buffer, f);
+    buffer.append (hello + 7, sizeof (hello) - 7);
+    const int whole = RemoteServer::takeFrame (buffer, f);
+    check (partial == 0 && whole == 1 && f.opcode == 1 && f.fin && f.payload.toString() == "Hello" && buffer.getSize() == 1,
+           "trama con mascara: a medias espera, entera da 'Hello' y deja lo que sigue", (double) buffer.getSize(), 1.0);
+    const auto big = RemoteServer::textFrame (juce::String::repeatedString ("x", 300));
+    const auto* bb = (const juce::uint8*) big.getData();
+    juce::MemoryBlock bigCopy (big);
+    RemoteServer::Frame bf;
+    check (big.getSize() == 304 && bb[0] == 0x81 && bb[1] == 126 && bb[2] == 1 && bb[3] == 44
+               && RemoteServer::takeFrame (bigCopy, bf) == 1 && bf.payload.getSize() == 300,
+           "trama de 300 bytes: largo en 16 bits y se vuelve a leer", (double) big.getSize(), 304.0);
+    check (RemoteServer::queryValue ("/ws?a=1&k=abc%20d", "k") == "abc d" && RemoteServer::queryValue ("/ws", "k").isEmpty(),
+           "clave en la direccion", 0.0, 0.0);
+    check (RemoteServer::randomKey().length() == 10 && RemoteServer::randomKey() != RemoteServer::randomKey(), "clave al azar de 10 letras", 0.0, 0.0);
+
+    // De punta a punta, con un "celular" en este mismo equipo.
+    RemoteServer server;
+    server.setPage ("<html>MiDJ remoto</html>");
+    std::mutex m;
+    juce::String received;
+    int receivedFrom = 0;
+    server.onMessage = [&] (int id, const juce::var& msg) { const std::lock_guard<std::mutex> l (m); received = msg["id"].toString(); receivedFrom = id; };
+    const bool started = server.start (18765, "clave12345");
+    check (started && server.getPort() >= 18765, "escucha en un puerto", (double) server.getPort(), 18765.0);
+    auto request = [&] (const juce::String& text, juce::StreamingSocket& s)
+    {
+        if (! s.connect ("127.0.0.1", server.getPort(), 2000))
+            return juce::String();
+        s.write (text.toRawUTF8(), (int) text.getNumBytesAsUTF8());
+        juce::String reply;
+        char buf[4096];
+        for (int i = 0; i < 50 && ! reply.contains ("\r\n\r\n"); ++i)
+            if (s.waitUntilReady (true, 100) > 0)
+            {
+                const int n = s.read (buf, sizeof (buf), false);
+                if (n <= 0)
+                    break;
+                reply += juce::String::fromUTF8 (buf, n);
+            }
+        return reply;
+    };
+    juce::StreamingSocket pageSocket;
+    const auto page = request ("GET / HTTP/1.1\r\nHost: x\r\n\r\n", pageSocket);
+    check (page.startsWith ("HTTP/1.1 200") && page.contains ("text/html"), "GET /: la pagina", 0.0, 0.0);
+    const juce::String upgrade = "Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n";
+    juce::StreamingSocket badSocket;
+    check (request ("GET /ws?k=otra HTTP/1.1\r\nHost: x\r\n" + upgrade, badSocket).startsWith ("HTTP/1.1 403"), "clave incorrecta: no entra", 0.0, 0.0);
+    juce::StreamingSocket phone;
+    const auto hand = request ("GET /ws?k=clave12345 HTTP/1.1\r\nHost: x\r\n" + upgrade, phone);
+    check (hand.startsWith ("HTTP/1.1 101") && hand.contains ("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="), "clave buena: WebSocket abierto", 0.0, 0.0);
+    // Mensaje del celular (con mascara, como los navegadores).
+    const juce::String json = R"({"t":"press","id":"deck1.play"})";
+    juce::MemoryOutputStream out;
+    const juce::uint8 head[] = { 0x81, (juce::uint8) (0x80 | json.length()) };
+    out.write (head, 2);
+    const juce::uint8 mask[] = { 1, 2, 3, 4 };
+    out.write (mask, 4);
+    for (int i = 0; i < json.length(); ++i)
+        out.writeByte ((char) (json.toRawUTF8()[i] ^ mask[i & 3]));
+    phone.write (out.getData(), (int) out.getDataSize());
+    for (int i = 0; i < 100; ++i)
+    {
+        {
+            const std::lock_guard<std::mutex> l (m);
+            if (received.isNotEmpty())
+                break;
+        }
+        juce::Thread::sleep (10);
+    }
+    {
+        const std::lock_guard<std::mutex> l (m);
+        check (received == "deck1.play" && receivedFrom > 0 && server.getNumClients() == 1, "mensaje del celular y 1 conectado",
+               (double) server.getNumClients(), 1.0);
+    }
+    // Estado de MiDJ al celular.
+    server.broadcast (R"({"t":"state"})");
+    juce::MemoryBlock got;
+    RemoteServer::Frame sf;
+    for (int i = 0; i < 100 && RemoteServer::takeFrame (got, sf) != 1; ++i)
+        if (phone.waitUntilReady (true, 20) > 0)
+        {
+            char buf[1024];
+            const int n = phone.read (buf, sizeof (buf), false);
+            if (n > 0)
+                got.append (buf, (size_t) n);
+        }
+    check (sf.opcode == 1 && sf.payload.toString() == R"({"t":"state"})", "estado al celular", 0.0, 0.0);
+    // Clave nueva: el conectado se va.
+    server.setKey ("otraclave99");
+    check (server.getNumClients() == 0, "clave nueva: desconecta a los que habia", (double) server.getNumClients(), 0.0);
+    server.stop();
+    check (! server.isRunning(), "apagado", 0.0, 0.0);
+}
+
 void testYouTubeSearch()
 {
     std::printf ("== YouTube: busqueda ==\n");
@@ -4338,6 +4467,7 @@ int main (int argc, char* argv[])
     testLibraryLists();
     testYouTubeSearch();
     testUpdates();
+    testRemoteServer();
     testAlphaVideo();
 
     std::printf ("== Video ==\n");

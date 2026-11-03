@@ -6,7 +6,7 @@ namespace midj
 {
 // Buscar actualizaciones en GitHub (ver App/Updates.h). Si hay una version nueva, un aviso con
 // sus novedades y Descargar e instalar (baja el instalador con su avance, lo abre y cierra MiDJ:
-// el instalador solo pide "Actualizar"), Ver en GitHub, Omitir esta version o Mas tarde.
+// el instalador solo pide "Actualizar"), Omitir esta version o Mas tarde.
 namespace UpdateDialog
 {
     // Al abrir MiDJ: si esta activado y no se miro en las ultimas 20 h, mira en segundo plano y

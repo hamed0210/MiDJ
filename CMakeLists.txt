@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(MiDJ VERSION 0.4.0 LANGUAGES C CXX)
+project(MiDJ VERSION 0.5.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -82,6 +82,7 @@ add_library(MiDJEngine STATIC
     Source/Engine/TimeStretcher.cpp
     Source/Library/Library.cpp
     Source/Library/TagReader.cpp
+    Source/Remote/RemoteServer.cpp
     Source/Video/MediaFoundation.cpp
     Source/Video/DeckVideo.cpp
     Source/Video/Compositor.cpp
@@ -130,6 +131,8 @@ target_sources(MiDJ PRIVATE
     Source/UI/SourceDialogs.cpp
     Source/UI/AutomixPanel.cpp
     Source/UI/UpdateDialog.cpp
+    Source/UI/RemotePanel.cpp
+    Source/ThirdParty/qrcodegen/qrcodegen.cpp
     Source/UI/Icons.cpp
     Source/UI/Widgets.cpp
     Source/UI/TransitionDialog.cpp
@@ -142,7 +145,9 @@ target_sources(MiDJ PRIVATE
 # motor lo pone Windows (WebView2 Runtime).
 set(WEBVIEW2_DIR "D:/Tools/WebView2" CACHE PATH "Carpeta del SDK de WebView2 (include y x64)")
 target_include_directories(MiDJ PRIVATE ${WEBVIEW2_DIR}/include)
-target_link_libraries(MiDJ PRIVATE MiDJEngine ${WEBVIEW2_DIR}/x64/WebView2LoaderStatic.lib version.lib)
+# Pagina del control remoto (la sirve MiDJ al celular): Resources/Remote/remote.html -> RemotePage::remote_html.
+juce_add_binary_data(MiDJRemotePage HEADER_NAME RemotePage.h NAMESPACE RemotePage SOURCES Resources/Remote/remote.html)
+target_link_libraries(MiDJ PRIVATE MiDJEngine MiDJRemotePage ${WEBVIEW2_DIR}/x64/WebView2LoaderStatic.lib version.lib)
 # La version del programa sale de project(... VERSION): la que se compara con GitHub al buscar actualizaciones.
 target_compile_definitions(MiDJ PRIVATE MIDJ_VERSION="${PROJECT_VERSION}")
 midj_copy_runtime(MiDJ)

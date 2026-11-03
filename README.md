@@ -48,6 +48,16 @@ una mezcla a capela.
 Arrastra canciones a la lista del **automix** y MiDJ las mezcla solo: a tempo cuando se puede y con
 fundido cuando no. Ideal para descansar o para música de fondo.
 
+### 📱 Control remoto desde el celular
+
+Pulsa el botón del **celular** (arriba a la derecha), enciéndelo y escanea el **código QR** con la cámara
+del celular: se abre el control en el navegador, sin instalar nada. Desde ahí das Play, mueves volúmenes y
+crossfader, buscas canciones (en tu biblioteca o en YouTube) y las cargas en un deck o en el automix, disparas
+los pads y cambias de escena.
+El celular tiene que estar en el **mismo Wi-Fi** que el PC.
+
+<img src="docs/capturas/remoto.png" alt="Panel del control remoto con el código QR" width="300">
+
 ### 📚 Biblioteca
 
 Añade tus carpetas y MiDJ analiza el BPM de cada canción. Busca al instante, marca **favoritas** ⭐, mira
