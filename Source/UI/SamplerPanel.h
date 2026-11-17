@@ -9,7 +9,7 @@
 
 namespace midj
 {
-// Panel del sampler: 8 pads, volumen y STOP.
+// Panel del sampler: 16 pads en dos bancos de 8, volumen y STOP.
 //  - Clic en un pad con sonido: dispararlo (en modo hold suena mientras se mantiene).
 //  - Clic en un pad vacio: elegir un archivo.
 //  - Clic derecho: cargar, grabar N pulsos de un deck, modo de disparo, bucle, tempo, quitar.
@@ -26,8 +26,9 @@ public:
     std::function<void()> onBankChanged;   // para guardar el banco
 
     void setCompact (bool c) { compact = c; resized(); repaint(); }
+    int activeBank() const { return bank; }
     // Ancho que necesita en modo compacto.
-    static constexpr int compactWidth = 62 + 8 * 34 + 7 * 4 + 10 + 72 + 8 + 56;
+    static constexpr int compactWidth = 62 + 34 + 8 * 34 + 7 * 4 + 10 + 72 + 8 + 56;
 
     void paint (juce::Graphics& g) override;
     void resized() override;
@@ -44,8 +45,10 @@ private:
     Sampler& sampler;
     juce::AudioFormatManager& formats;
     bool compact = false;
+    int bank = 0;
     juce::Rectangle<int> titleArea, volumeLabelArea;
     juce::Slider volume;
+    juce::TextButton bankButton { "Banco 1/2" };
     juce::TextButton stopButton { "Parar todo" };
     std::array<std::unique_ptr<Pad>, Sampler::numPads> pads;
     std::unique_ptr<juce::FileChooser> chooser;

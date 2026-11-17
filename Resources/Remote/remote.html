@@ -121,6 +121,39 @@
   .search input { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--text); font: 500 15px var(--mono); outline: none; }
   .search button { flex: none; width: 82px; }
 
+  .yt-am-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .yt-am-head .label { flex: 1; }
+  .yt-now { display: flex; gap: 10px; align-items: center; min-width: 0; }
+  .yt-now img { width: 104px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 8px; background: var(--raised); }
+  .yt-now .t { min-width: 0; flex: 1; }
+  .yt-now b, .yt-now small { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .yt-now small { color: var(--quiet); margin-top: 4px; }
+  .yt-time { display: flex; justify-content: space-between; font: 11px var(--mono); color: var(--quiet); margin: 7px 0 4px; }
+  .yt-range { height: 30px; }
+  .yt-controls { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
+  .yt-controls button { min-height: 42px; border-radius: 9px; border: 1px solid var(--line2); background: var(--raised); font: 700 11px var(--mono); }
+  .yt-volume { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+  .yt-volume input { flex: 1; height: 30px; }
+  .yt-settings { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+  .yt-settings select, .yt-settings button { width: 100%; min-height: 40px; border-radius: 9px; border: 1px solid var(--line2); background: var(--raised); color: var(--text); padding: 0 8px; }
+  .yt-am-queue li { align-items: center; }
+  .yt-am-queue img { width: 76px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 6px; background: var(--raised); }
+  .yt-am-queue .q-actions { display: flex; gap: 4px; }
+  .yt-am-queue .q-actions button { min-width: 38px; width: 38px; height: 38px; padding: 0; }
+  .am-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+  .am-tabs button { min-height: 44px; }
+  .am-tabs button.sel { border-color: var(--lime); color: var(--lime); background: #1d2416; }
+  .am-panel { display: none; }
+  .am-panel.sel { display: block; }
+  .am-local-controls { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+  .am-local-controls button { min-height: 46px; }
+  .am-local-settings { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+  .am-local-settings select { flex: 1; min-height: 40px; border-radius: 9px; border: 1px solid var(--line2); background: var(--raised); color: var(--text); padding: 0 8px; }
+  .am-local-queue .kind { flex: none; }
+  .am-local-queue .q-actions { display: flex; gap: 4px; }
+  .am-local-queue .q-actions button { min-width: 38px; width: 38px; height: 38px; padding: 0; }
+  .show-key { flex: none; min-width: 56px; height: 44px; border: 1px solid var(--line2); border-radius: 9px; background: var(--raised); color: var(--text); font: 700 10px var(--mono); }
+
   /* Resultados de YouTube: tarjetas con su miniatura, de dos en dos. */
   .yt { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .yt article { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
@@ -140,10 +173,14 @@
   .pads button { min-height: 72px; border-radius: 12px; border: 1px solid var(--line2); background: var(--raised); font: 700 11px var(--mono); padding: 4px; word-break: break-word; }
   .pads button.on { border-color: var(--lime); color: var(--lime); background: #1d2416; }
   .pads button:disabled { opacity: .35; }
+  .pad-banks { display: flex; gap: 8px; margin-bottom: 10px; }
+  .pad-banks button { flex: 1; }
   .muted { color: var(--quiet); font-size: 13px; }
   #overlay { position: fixed; inset: 0; background: rgba(16,17,19,.94); display: flex; align-items: center; justify-content: center; text-align: center; padding: 24px; z-index: 5; }
   #overlay[hidden] { display: none; }
   #overlay p { color: var(--quiet); }
+  #manualKey { width: min(100%, 340px); height: 44px; margin: 8px 0; padding: 0 12px; border: 1px solid var(--line2); border-radius: 9px; background: var(--well); color: var(--text); font: 600 16px var(--mono); }
+  #manualConnect { display: block; width: min(100%, 340px); margin: 0 auto; }
 </style>
 </head>
 <body>
@@ -176,14 +213,40 @@
 </section>
 
 <section class="page" id="p-automix">
-  <div class="card">
-    <div class="row">
-      <button class="btn" id="am-on" data-press="automix.toggle">AUTOMIX</button>
-      <button class="btn" data-press="automix.mixnow">MEZCLAR YA</button>
-      <button class="btn" data-press="automix.skip">SALTAR</button>
+  <div class="am-tabs"><button class="btn sel" data-am-tab="local">AUTOMIX LOCAL</button><button class="btn" data-am-tab="youtube">AUTOMIX YOUTUBE</button></div>
+  <div class="am-panel sel" id="am-local-panel">
+    <div class="card">
+      <div class="am-local-controls">
+        <button class="btn" id="am-on" data-press="automix.toggle">AUTOMIX</button>
+        <button class="btn" data-press="automix.mixnow">MEZCLAR YA</button>
+        <button class="btn" data-press="automix.skip">SALTAR</button>
+      </div>
+      <p class="muted" id="am-status"></p>
+      <div class="am-local-settings"><span class="label">FUNDIDO</span><select id="am-fade" aria-label="Duración del fundido"><option value="2">2 s</option><option value="4">4 s</option><option value="6">6 s</option><option value="8">8 s</option><option value="12">12 s</option><option value="16">16 s</option></select><button class="btn" id="am-lists">LISTAS</button></div>
     </div>
-    <p class="muted" id="am-status"></p>
-    <ul class="list" id="am-queue"></ul>
+    <div class="card" id="am-lists-menu" hidden><div class="label">AGREGAR LISTAS</div><ul class="list" id="am-list-options"></ul></div>
+    <div class="card"><div class="row"><div class="label" style="align-self:center;flex:1">COLA LOCAL</div><button class="btn" data-am-queue-action="clear">VACIAR</button></div><ul class="list am-local-queue" id="am-queue"></ul></div>
+  </div>
+  <div class="am-panel" id="am-youtube-panel">
+   <div class="card">
+    <div class="yt-am-head"><div class="label">AUTOMIX YOUTUBE</div><button class="btn" id="yt-am-on" data-yt-control="toggleAutomix">AUTOMIX: NO</button></div>
+    <p class="muted" id="yt-am-status"></p>
+    <div class="yt-now"><img id="yt-am-thumb" alt="" hidden><div class="t"><b id="yt-am-title">Nada de YouTube sonando</b><small id="yt-am-channel"></small></div></div>
+    <div class="yt-time"><span id="yt-am-time">0:00</span><span id="yt-am-duration">0:00</span></div>
+    <input class="yt-range" id="yt-am-seek" type="range" min="0" max="1" step="0.001" value="0" aria-label="Posición del video de YouTube">
+    <div class="yt-controls">
+      <button data-yt-control="togglePlay" id="yt-am-play">▶ PLAY</button>
+      <button data-yt-control="next">SIGUIENTE</button>
+      <button data-yt-control="stop">CERRAR</button>
+      <button data-yt-control="reset">REINICIAR</button>
+      <button data-yt-control="special" id="yt-am-special" hidden>ACCIÓN</button>
+    </div>
+    <div class="yt-volume"><span class="label">VOL YT</span><input id="yt-am-volume" type="range" min="0" max="1" step="0.01" value="0.8" aria-label="Volumen de YouTube"><output>80%</output></div>
+    <div class="yt-settings"><select id="yt-am-quality" aria-label="Calidad de YouTube"><option value="auto">Auto</option><option value="medium">360p</option><option value="large">480p</option><option value="hd720">720p</option><option value="hd1080">1080p</option></select><button id="yt-am-ads" class="btn">SALTAR ANUNCIOS</button></div>
+  </div>
+  <div class="card"><div class="label">COLA DE YOUTUBE</div><ul class="list yt-am-queue" id="yt-am-queue"></ul>
+    <button class="btn" style="width:100%;margin-top:8px" data-yt-control="clear">VACIAR COLA</button>
+  </div>
   </div>
 </section>
 
@@ -197,7 +260,8 @@
 </section>
 
 <section class="page" id="p-pads">
-  <div class="card"><div class="pads" id="pads"></div>
+  <div class="card"><div class="pad-banks"><button class="btn sel" data-padbank="0">BANCO 1</button><button class="btn" data-padbank="1">BANCO 2</button></div>
+    <div class="pads" id="pads"></div>
     <div class="row" style="margin-top: 10px"><button class="btn" data-press="sampler.stop">PARAR TODO</button></div></div>
   <div class="card"><div class="label">ESCENAS</div><ul class="list" id="scenes"></ul></div>
 </section>
@@ -209,7 +273,9 @@
   <button data-page="p-pads"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"></path></svg>Pads</button>
 </nav>
 
-<div id="overlay" hidden><div><h2>Sin clave</h2><p>Abre <b>Control remoto</b> en MiDJ (el botón del celular, arriba a la derecha) y escanea el código QR con la cámara.</p></div></div>
+<div id="overlay" hidden><div><h2>Conectar al control remoto</h2><p>Abre el botón del celular en MiDJ, copia la clave que aparece debajo de la dirección y escríbela aquí.</p>
+  <label class="search"><input id="manualKey" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Clave de MiDJ" aria-label="Clave de MiDJ"><button class="show-key" id="toggleKeyVisibility" type="button" aria-label="Mostrar contraseña">VER</button></label>
+  <button class="btn" id="manualConnect">CONECTAR</button></div></div>
 
 <script>
 "use strict";
@@ -224,7 +290,7 @@ let key = params.get("k");
 try { if (key) localStorage.setItem("midj-key", key); else key = localStorage.getItem("midj-key"); } catch (e) {}
 if (params.get("k")) history.replaceState(null, "", location.pathname);
 
-let ws = null, retry = 500;
+let ws = null, retry = 500, everConnected = false, padBank = 0, lastState = null;
 const dragging = new Set();   // controles que se estan moviendo: no se pisan con lo que llega
 
 function setStatus(on, text) { $("#status").className = on ? "on" : ""; $("#status span").textContent = text; }
@@ -234,9 +300,20 @@ function connect() {
   if (ws && ws.readyState <= 1) return;   // ya conectado o conectando
   if (!key) { $("#overlay").hidden = false; setStatus(false, "SIN CLAVE"); return; }
   ws = new WebSocket("ws://" + location.host + "/ws?k=" + encodeURIComponent(key));
-  ws.onopen = () => { retry = 500; setStatus(true, "EN LÍNEA"); };
+  ws.onopen = () => { retry = 500; everConnected = true; setStatus(true, "EN LÍNEA"); };
   ws.onmessage = e => { const m = JSON.parse(e.data); if (m.t === "state") render(m); else if (m.t === "results") results(m); else if (m.t === "ytresults") ytresults(m); };
-  ws.onclose = () => { setStatus(false, "RECONECTANDO"); setTimeout(connect, retry); retry = Math.min(retry * 2, 5000); };
+  ws.onclose = () => {
+    setStatus(false, "RECONECTANDO");
+    if (!everConnected) {
+      key = "";
+      try { localStorage.removeItem("midj-key"); } catch (e) {}
+      $("#overlay").hidden = false;
+      $("#manualKey").focus();
+      setStatus(false, "INGRESA LA CLAVE");
+      return;
+    }
+    setTimeout(connect, retry); retry = Math.min(retry * 2, 5000);
+  };
 }
 
 // Mandar un valor como mucho cada 40 ms mientras se mueve (y el ultimo siempre).
@@ -289,7 +366,7 @@ for (const d of [0, 1]) {
   faders.push({ id, show, get value() { return current; } });
   show(1);
 }
-for (let i = 0; i < 8; ++i) $("#pads").insertAdjacentHTML("beforeend", `<button data-pad="${i + 1}">${i + 1}</button>`);
+for (let i = 0; i < 8; ++i) $("#pads").insertAdjacentHTML("beforeend", `<button data-pad-slot="${i}">${i + 1}</button>`);
 
 function xfText(v) { return Math.abs(v - 0.5) < 0.02 ? "CENTRO" : (v < 0.5 ? Math.round((0.5 - v) * 200) + "% A" : Math.round((v - 0.5) * 200) + "% B"); }
 function setRange(id, v) {
@@ -301,6 +378,7 @@ function setRange(id, v) {
 }
 
 function render(s) {
+  lastState = s;
   s.decks.forEach((d, i) => {
     const el = $("#d" + i);
     el.classList.toggle("playing", d.playing);
@@ -316,17 +394,56 @@ function render(s) {
   });
   setRange("crossfader", s.xf);
   setRange("master", s.master);
-  $("#am-on").classList.toggle("on", s.automix.on);
-  $("#am-on").textContent = s.automix.on ? "AUTOMIX: SÍ" : "AUTOMIX: NO";
-  $("#am-status").textContent = s.automix.status || "";
-  const queue = s.automix.queue;
-  const qHtml = queue.length ? queue.map((q, i) => `<li><div class="t"><b>${i + 1}. ${esc(q.title)}</b><small>${esc(q.artist)}</small></div></li>`).join("")
+  const am = s.automix, queue = am.queue;
+  $("#am-on").classList.toggle("on", am.on);
+  $("#am-on").textContent = am.on ? "AUTOMIX: SÍ" : "AUTOMIX: NO";
+  $("#am-status").textContent = am.status || "";
+  document.querySelectorAll('[data-press="automix.mixnow"], [data-press="automix.skip"]').forEach(b => { b.disabled = !am.canMix; });
+  document.querySelectorAll('[data-am-queue-action="clear"]').forEach(b => { b.disabled = queue.length === 0; });
+  if (document.activeElement !== $("#am-fade")) $("#am-fade").value = String(am.fade || 6);
+  const qHtml = queue.length ? queue.map((q, i) => `<li><span class="kind ${q.video ? "video" : ""}">${q.video ? "VIDEO" : "AUDIO"}</span><div class="t"><b>${i + 1}. ${esc(q.title)}</b><small>${esc(q.artist)}${q.bpm > 0 ? ` · ${Number(q.bpm).toFixed(0)} BPM` : ""}</small></div><div class="q-actions"><button data-am-queue-action="up" data-amq-index="${i}" aria-label="Subir">↑</button><button data-am-queue-action="down" data-amq-index="${i}" aria-label="Bajar">↓</button><button data-am-queue-action="remove" data-amq-index="${i}" aria-label="Quitar">×</button></div></li>`).join("")
                              : `<li class="empty">Lista vacía: agrega canciones desde Buscar</li>`;
   if ($("#am-queue").dataset.html !== qHtml) { $("#am-queue").innerHTML = qHtml; $("#am-queue").dataset.html = qHtml; }
-  s.pads.forEach((p, i) => {
-    const b = $(`[data-pad="${i + 1}"]`);
+  const collections = [
+    { kind: "favorites", name: "Favoritos", count: am.favorites },
+    { kind: "played", name: "Más reproducidos", count: am.played },
+    ...(am.playlists || []).map(p => ({ kind: "playlist", id: p.id, name: p.name, count: p.count }))
+  ];
+  const listsHtml = collections.map(c => `<li><div class="t"><b>${esc(c.name)}</b><small>${c.count} canciones</small></div><button data-am-list-kind="${c.kind}" data-am-list-id="${c.id || ""}" data-am-list-replace="1" ${c.count ? "" : "disabled"}>PLAY</button><button data-am-list-kind="${c.kind}" data-am-list-id="${c.id || ""}" data-am-list-replace="0" ${c.count ? "" : "disabled"}>+</button></li>`).join("") || `<li class="empty">No hay listas guardadas</li>`;
+  if ($("#am-list-options").dataset.html !== listsHtml) { $("#am-list-options").innerHTML = listsHtml; $("#am-list-options").dataset.html = listsHtml; }
+  const yt = s.youtubeAutomix, ytQueue = yt.queue;
+  $("#yt-am-on").classList.toggle("on", yt.on);
+  $("#yt-am-on").textContent = yt.on ? "AUTOMIX: SÍ" : "AUTOMIX: NO";
+  $("#yt-am-status").textContent = `${yt.status || "Sin video"} · ${ytQueue.length} en cola`;
+  $("#yt-am-title").textContent = yt.open ? (yt.title || "YouTube") : "Nada de YouTube sonando";
+  $("#yt-am-channel").textContent = yt.channel || "";
+  const thumb = $("#yt-am-thumb");
+  thumb.hidden = !yt.open || !yt.videoId;
+  thumb.onerror = () => { thumb.hidden = true; };
+  thumb.src = yt.open && yt.videoId ? `https://i.ytimg.com/vi/${encodeURIComponent(yt.videoId)}/mqdefault.jpg` : "";
+  $("#yt-am-time").textContent = mmss(yt.time);
+  $("#yt-am-duration").textContent = mmss(yt.duration);
+  const seeking = $("#yt-am-seek");
+  if (document.activeElement !== seeking) seeking.value = yt.duration > 0 ? yt.time / yt.duration : 0;
+  $("#yt-am-play").textContent = yt.state === 3 ? "❚❚ PAUSA" : "▶ PLAY";
+  $("#yt-am-play").disabled = !yt.open || yt.state === 0 || yt.state === 1;
+  document.querySelectorAll('[data-yt-control="next"]').forEach(b => { b.disabled = !yt.open || ytQueue.length === 0; });
+  document.querySelectorAll('[data-yt-control="reset"]').forEach(b => { b.disabled = !yt.open; });
+  $("#yt-am-special").hidden = yt.state !== 2 && yt.state !== 7;
+  $("#yt-am-special").textContent = yt.state === 2 ? "SALTAR AD" : yt.verifying ? "OCULTAR" : "VERIFICAR";
+  if (document.activeElement !== $("#yt-am-volume")) $("#yt-am-volume").value = yt.volume;
+  $("#yt-am-volume").nextElementSibling.textContent = pct(yt.volume);
+  $("#yt-am-quality").value = yt.quality || "auto";
+  $("#yt-am-ads").classList.toggle("on", yt.skipAds);
+  $("#yt-am-ads").textContent = yt.skipAds ? "SALTAR ANUNCIOS: SÍ" : "SALTAR ANUNCIOS: NO";
+  const ytHtml = ytQueue.length ? ytQueue.map((q, i) => `<li><img src="https://i.ytimg.com/vi/${encodeURIComponent(q.id)}/mqdefault.jpg" alt="" loading="lazy" onerror="this.remove()"><div class="t"><b>${i + 1}. ${esc(q.title)}</b><small>${esc(q.channel)}</small></div><div class="q-actions"><button data-ytq-action="up" data-ytq-index="${i}" aria-label="Subir">↑</button><button data-ytq-action="down" data-ytq-index="${i}" aria-label="Bajar">↓</button><button data-ytq-action="play" data-ytq-index="${i}" aria-label="Reproducir ahora">▶</button><button data-ytq-action="remove" data-ytq-index="${i}" aria-label="Quitar">×</button></div></li>`).join("")
+                                  : `<li class="empty">Lista vacía</li>`;
+  if ($("#yt-am-queue").dataset.html !== ytHtml) { $("#yt-am-queue").innerHTML = ytHtml; $("#yt-am-queue").dataset.html = ytHtml; }
+  for (let slot = 0; slot < 8; ++slot) {
+    const i = padBank * 8 + slot, p = s.pads[i], b = $(`[data-pad-slot="${slot}"]`);
+    b.dataset.pad = i + 1;
     b.textContent = p.name || String(i + 1); b.disabled = !p.name; b.classList.toggle("on", p.playing);
-  });
+  }
   const sHtml = s.scenes.map(sc => `<li class="${sc.id === s.scene ? "live" : ""}"><div class="t"><b>${esc(sc.name)}</b></div>`
                   + `<button data-scene="${sc.id}">${sc.id === s.scene ? "AL AIRE" : "PONER"}</button></li>`).join("");
   if ($("#scenes").dataset.html !== sHtml) { $("#scenes").innerHTML = sHtml; $("#scenes").dataset.html = sHtml; }
@@ -399,14 +516,31 @@ function clearSearch() {
 // Botones: un toque. Los pads se sueltan al levantar el dedo (modo mantener).
 document.addEventListener("click", e => {
   const b = e.target.closest("button"); if (!b) return;
-  if (b.dataset.page) {
+  if (b.dataset.amTab) {
+    document.querySelectorAll("[data-am-tab]").forEach(x => x.classList.toggle("sel", x === b));
+    $("#am-local-panel").classList.toggle("sel", b.dataset.amTab === "local");
+    $("#am-youtube-panel").classList.toggle("sel", b.dataset.amTab === "youtube");
+  } else if (b.id === "am-lists") {
+    $("#am-lists-menu").hidden = !$("#am-lists-menu").hidden;
+  } else if (b.dataset.amQueueAction) {
+    send({ t: "amqueueAction", action: b.dataset.amQueueAction, index: Number(b.dataset.amqIndex) });
+  } else if (b.dataset.amListKind) {
+    send({ t: "amlist", kind: b.dataset.amListKind, id: Number(b.dataset.amListId), replace: b.dataset.amListReplace === "1" });
+    $("#am-lists-menu").hidden = true;
+  } else if (b.dataset.page) {
     document.querySelectorAll("nav button").forEach(x => x.classList.toggle("sel", x === b));
     document.querySelectorAll(".page").forEach(p => p.classList.toggle("sel", p.id === b.dataset.page));
     if (b.dataset.page === "p-mix") faders.forEach(f => f.show(f.value));   // el alto del fader se mide visible
     $("#q").blur();
     clearSearch();
     window.scrollTo(0, 0);
+  } else if (b.dataset.padbank !== undefined) {
+    padBank = Number(b.dataset.padbank);
+    document.querySelectorAll("[data-padbank]").forEach(x => x.classList.toggle("sel", Number(x.dataset.padbank) === padBank));
+    if (lastState) render(lastState);
   } else if (b.dataset.press) send({ t: "press", id: b.dataset.press });
+  else if (b.dataset.ytControl) send({ t: "ytcontrol", action: b.dataset.ytControl === "special" ? ($("#yt-am-special").textContent === "SALTAR AD" ? "skipAd" : $("#yt-am-special").textContent === "OCULTAR" ? "hideVerification" : "verify") : b.dataset.ytControl });
+  else if (b.dataset.ytqAction) send({ t: "ytqueueAction", action: b.dataset.ytqAction, index: Number(b.dataset.ytqIndex) });
   else if (b.dataset.scene) send({ t: "scene", id: Number(b.dataset.scene) });
   else if (b.dataset.load) { send({ t: "load", deck: Number(b.dataset.load), track: Number(b.dataset.track) }); flash(b); }
   else if (b.dataset.queue) { send({ t: "queue", track: Number(b.dataset.queue) }); flash(b); }
@@ -414,13 +548,32 @@ document.addEventListener("click", e => {
   else if (b.dataset.ytqueue) { send({ t: "ytqueue", id: b.dataset.ytqueue }); flash(b); }
   else if (b.id === "srcButton") { source = source === "youtube" ? "library" : "youtube"; showSource(); clearSearch(); }
 });
+$("#am-fade").addEventListener("change", e => send({ t: "amsettings", fade: Number(e.target.value) }));
+function connectWithManualKey() {
+  const entered = $("#manualKey").value.trim();
+  if (!entered) { $("#manualKey").focus(); return; }
+  key = entered;
+  try { localStorage.setItem("midj-key", key); } catch (e) {}
+  $("#overlay").hidden = true;
+  retry = 500;
+  connect();
+}
+$("#manualConnect").addEventListener("click", connectWithManualKey);
+$("#manualKey").addEventListener("keydown", e => { if (e.key === "Enter") connectWithManualKey(); });
+$("#toggleKeyVisibility").addEventListener("click", () => {
+  const input = $("#manualKey"), showing = input.type === "password";
+  input.type = showing ? "text" : "password";
+  $("#toggleKeyVisibility").textContent = showing ? "OCULTAR" : "VER";
+  $("#toggleKeyVisibility").setAttribute("aria-label", showing ? "Ocultar contraseña" : "Mostrar contraseña");
+  input.focus();
+});
 function flash(b) { b.classList.add("on"); setTimeout(() => b.classList.remove("on"), 600); }
 $("#pads").addEventListener("pointerdown", e => { const b = e.target.closest("button"); if (b) send({ t: "press", id: "sampler.pad" + b.dataset.pad }); });
 for (const ev of ["pointerup", "pointercancel"])
   $("#pads").addEventListener(ev, e => { const b = e.target.closest("button"); if (b) send({ t: "release", id: "sampler.pad" + b.dataset.pad }); });
 
 // Crossfader y master.
-document.querySelectorAll("input[type=range]").forEach(input => {
+document.querySelectorAll("input[type=range][data-set]").forEach(input => {
   const id = input.dataset.set, sender = throttled(id);
   input.addEventListener("input", () => {
     dragging.add(id);
@@ -432,6 +585,25 @@ document.querySelectorAll("input[type=range]").forEach(input => {
   input.addEventListener("change", done);
   input.addEventListener("pointerup", done);
 });
+
+const ytVolSender = throttled("youtube.volume");
+$("#yt-am-volume").addEventListener("input", e => {
+  const v = Number(e.target.value);
+  e.target.nextElementSibling.textContent = pct(v);
+  ytVolSender.set(v);
+});
+$("#yt-am-volume").addEventListener("change", e => ytVolSender.set(Number(e.target.value), true));
+const ytSeekSender = throttled("youtube.seek");
+$("#yt-am-seek").addEventListener("input", e => {
+  const duration = lastState?.youtubeAutomix?.duration || 0;
+  if (duration > 0) ytSeekSender.set(Number(e.target.value), false);
+});
+$("#yt-am-seek").addEventListener("change", e => {
+  const duration = lastState?.youtubeAutomix?.duration || 0;
+  if (duration > 0) ytSeekSender.set(Number(e.target.value), true);
+});
+$("#yt-am-quality").addEventListener("change", e => send({ t: "ytsettings", quality: e.target.value }));
+$("#yt-am-ads").addEventListener("click", () => send({ t: "ytsettings", skipAds: !lastState?.youtubeAutomix?.skipAds }));
 
 // Buscar mientras se escribe (con una pausa corta; mas larga en YouTube, que va por internet).
 let searchTimer = null;

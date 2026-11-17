@@ -82,6 +82,7 @@ public:
     // Proyector a pantalla completa en un monitor (indice de Displays); de nuevo lo cierra.
     void toggleProjector (int displayIndex);
     bool hasProjector (int displayIndex) const;
+    void restartProjectors();
     void closeProjectors();
     // El monitor que no es el principal (el del publico); si solo hay uno, ese.
     static int audienceDisplay();

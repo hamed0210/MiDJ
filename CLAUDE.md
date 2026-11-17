@@ -13,7 +13,7 @@ solo programa, pensada para un portátil modesto (AMD A8-7410 + Radeon R5, panta
 - Dos decks con keylock (Rubber Band), SYNC, CUE, bucles, pitch ±16 %, 3 efectos a tempo y stems con IA
   (Spleeter en ONNX Runtime); mezclador con EQ de 3 bandas, filtro, crossfader, limitador del master y
   audífonos con pre-escucha.
-- Sampler de 8 pads (lee `.vdjsample`), automix "Smart" como VirtualDJ, controladoras MIDI con modo aprender.
+- Sampler de 16 pads en dos bancos (lee `.vdjsample`), automix "Smart" como VirtualDJ, controladoras MIDI con modo aprender.
 - Biblioteca SQLite con análisis de BPM en segundo plano, favoritos, más reproducidos y listas.
 - Video: MP4/MOV/WMV en los decks (Media Foundation, DXVA), compositor Direct3D 11 a 1280x720/30 fps,
   escenas y fuentes como OBS (capturas DXGI/WGC, capturadoras, multimedia, texto, visualizador...),
@@ -79,11 +79,15 @@ simula una controladora.
 
 ## Estado actual
 
-Versión **0.5.0** (2-nov-2026): control remoto en la red Wi-Fi. En `main` y publicada en GitHub Releases
-(`v0.5.0`, con el instalador); 440 pruebas OK. Desde la 0.4.0 MiDJ avisa solo de las versiones nuevas (quien
+Versión **0.6.0** (16-nov-2026): sampler de 16 pads, control remoto ampliado y controles para reiniciar YouTube y
+los proyectores. Desde la 0.4.0 MiDJ avisa solo de las versiones nuevas (quien
 tenga 0.3.10 o anterior debe instalar a mano).
 
 ## Historial (resumen por versión)
+
+- **0.6.0**: sampler de 16 pads en dos bancos; control remoto por IP y clave, automix local/YouTube en pestañas
+  separadas, miniaturas y controles completos de YouTube, colas editables y reinicio del reproductor; cerrar y
+  reiniciar proyectores desde el menú contextual.
 
 - **Base (antes de 0.2.0)**: esqueleto de dos decks y BPM → SYNC/CUE/bucles → mezclador por deck →
   keylock Rubber Band y BPM fiable → biblioteca SQLite → efectos a tempo → MIDI → sampler → automix con

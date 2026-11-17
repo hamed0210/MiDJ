@@ -46,9 +46,12 @@ private:
     juce::ToggleButton enable { "Control remoto desde el celular" };
     QrCodeView qr;
     juce::TextEditor address;
+    juce::TextEditor keyValue;
+    juce::Label addressLabel { {}, "Dirección (IP:puerto)" }, keyLabel { {}, "Clave" };
     juce::ComboBox network;   // si el PC tiene varias redes (Wi-Fi y cable, VPN...)
     juce::TextButton keyButton { "Cambiar clave" };
     juce::String status, shownUrl;
+    juce::String shownKey;
     juce::StringArray addresses;
 };
 }

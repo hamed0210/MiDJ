@@ -9,7 +9,7 @@
 
 namespace midj
 {
-// Sampler de 8 pads, como el de VirtualDJ:
+// Sampler de 16 pads en dos bancos de 8, como el de VirtualDJ:
 //  - Disparo: on/off (pulsar arranca / para), hold (suena mientras se mantiene) o stutter
 //    (cada pulsacion vuelve a empezar).
 //  - Tempo: libre (a su velocidad), sincronizado (velocidad = BPM del deck / BPM del sonido,
@@ -21,7 +21,8 @@ namespace midj
 class Sampler : private juce::AsyncUpdater
 {
 public:
-    static constexpr int numPads = 8;
+    static constexpr int numPads = 16;
+    static constexpr int padsPerBank = 8;
     enum class Trigger { onOff = 0, hold, stutter };
     enum class TempoMode { free = 0, sync, locked };
 

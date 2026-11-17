@@ -5,6 +5,7 @@
  #define NOMINMAX
 #endif
 #include <windows.h>
+#include <algorithm>
 
 namespace midj
 {
@@ -687,6 +688,31 @@ void VideoStage::closeProjectors()
     updateRunning();
 }
 
+void VideoStage::restartProjectors()
+{
+    if (projectors.empty())
+        return;
+
+    // Guarda las pantallas activas antes de destruir las ventanas: al volver a crearlas,
+    // el compositor obtiene HWND y cadenas de intercambio nuevos.
+    std::vector<juce::Rectangle<int>> areas;
+    areas.reserve (projectors.size());
+    for (const auto& projector : projectors)
+        areas.push_back (projector->getArea());
+
+    projectors.clear();
+    const auto& displays = juce::Desktop::getInstance().getDisplays().displays;
+    for (int i = 0; i < displays.size(); ++i)
+    {
+        const auto area = displays.getReference (i).totalArea;
+        if (std::find (areas.begin(), areas.end(), area) == areas.end())
+            continue;
+        projectors.push_back (std::make_unique<FullScreenProjector> (*this, area));
+        projectors.back()->grabKeyboardFocus();
+    }
+    updateRunning();
+}
+
 void VideoStage::updateRunning()
 {
     const bool anyOpen = isReady() && (previewShowing || bigPreview != nullptr || propertiesWindow != nullptr || ! projectors.empty());
@@ -794,6 +820,7 @@ void VideoStage::showMenu()
                          true, hasProjector (i), [this, i] { toggleProjector (i); });
     }
     menu.addSubMenu ("Proyector a pantalla completa", screens);
+    menu.addItem ("Reiniciar proyector", ! projectors.empty(), false, [this] { restartProjectors(); });
     menu.addItem ("Cerrar proyectores", ! projectors.empty(), false, [this] { closeProjectors(); });
     menu.showMenuAsync (juce::PopupMenu::Options().withMousePosition());
 }

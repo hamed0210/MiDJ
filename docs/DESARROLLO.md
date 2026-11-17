@@ -48,7 +48,7 @@ paquete de Microsoft), accesos directos y desinstalador. Los datos de `%APPDATA%
 ajustes) no se tocan ni al instalar ni al desinstalar.
 
 **Actualizar:** si MiDJ ya está instalado, el instalador lo detecta y muestra solo una página, *Actualizar
-MiDJ 0.4.0 -> 0.5.0*: usa la misma carpeta, el mismo modo (usuario o todos) y los mismos accesos directos, y
+MiDJ 0.5.0 -> 0.6.0*: usa la misma carpeta, el mismo modo (usuario o todos) y los mismos accesos directos, y
 cierra MiDJ si está abierto. Con la misma versión ofrece *Reinstalar*; si lo instalado es más nuevo, avisa antes
 de volver a la anterior. Para cada versión nueva basta con cambiar `VERSION` en `CMakeLists.txt` (de ahí la
 toma el programa) y `AppVersion` en `Installer\MiDJ.iss`.
@@ -101,7 +101,7 @@ Source/
     BpmDetector.*       detección de tempo y del primer pulso
     TimeStretcher.*     keylock: cambio de tempo sin cambio de tono (Rubber Band)
     Effects.*           efectos sincronizados al tempo y rack de 3 ranuras por deck
-    Sampler.*           sampler de 8 pads: disparo, tempo, grabacion y banco
+    Sampler.*           sampler de 16 pads: disparo, tempo, grabacion y banco
     Automix.*           automix de dos decks: lista, plan de cada transicion y mezcla
     MixPoints.*         puntos de automix de una cancion (sonido, fundido, parte ritmica)
     StemSeparator.*     separacion de voz con IA (Spleeter en ONNX Runtime)
@@ -181,6 +181,11 @@ El generador de códigos QR (`Source/ThirdParty/qrcodegen`) es de Project Nayuki
 
 ## Registro de cambios
 
+- **0.6.0**: sampler ampliado a 16 pads con dos bancos; control remoto con conexión por IP y clave manual,
+  pestañas independientes de Automix Local y YouTube, control de colas (orden, quitar y vaciar), listas guardadas,
+  fundido local y controles de reproducción/volumen/búsqueda para YouTube; reinicio del reproductor YouTube desde
+  la app y el remoto; opciones de cerrar y reiniciar el proyector desde el menú contextual.
+
 - Esqueleto: dos decks, crossfader con curva smooth y detección de BPM.
 - SYNC, CUE y bucles de 1-2-4-8 pulsos.
 - Mezclador por deck: ganancia (hasta +12 dB), EQ de 3 bandas con kill (cruces en 200 y 6500 Hz), filtro de un mando (paso bajo / paso alto con zona muerta) y fader de volumen.
@@ -188,7 +193,7 @@ El generador de códigos QR (`Source/ThirdParty/qrcodegen`) es de Project Nayuki
 - Biblioteca en SQLite (`%APPDATA%\MiDJ\library.db`) y navegador: carpetas, escaneo y análisis de BPM en segundo plano, búsqueda sin acentos ni mayúsculas, columnas ordenables; cargar arrastrando a un deck (también desde el Explorador) o con doble clic. Las canciones ya analizadas cargan sin volver a analizar.
 - Efectos: 3 ranuras por deck con Echo (medio pulso, cola al apagar), Reverb, Flanger (barrido de 8 pulsos), BitCrush (fórmula de VirtualDJ) y Gate (cuartos de pulso), todos sincronizados al BPM del deck, sin clics al encender, apagar o cambiar, y sin tocar la señal cuando están apagados.
 - Controladoras MIDI: modo aprender en la pantalla, botones por nota o CC, faders por CC o pitch bend, jog y encoders relativos (detecta complemento a dos o desplazado), los controles de la pantalla siguen a la controladora, conexión en caliente y modo de simulación.
-- Sampler de 8 pads: disparo on/off, mantener y repetir; tempo libre, sincronizado (plegado a 0,66-1,5) o bloqueado al pulso; fundidos de 128 muestras; grabación de 4/8/16 pulsos de un deck empezando en el pulso; lee los .vdjsample de VirtualDJ; banco guardado; pads asignables por MIDI.
+- Sampler de 16 pads en dos bancos de 8: disparo on/off, mantener y repetir; tempo libre, sincronizado (plegado a 0,66-1,5) o bloqueado al pulso; fundidos de 128 muestras; grabación de 4/8/16 pulsos de un deck empezando en el pulso; lee los .vdjsample de VirtualDJ; banco guardado; pads asignables por MIDI.
 - Automix de dos decks con puntos de automix calculados al cargar cada canción (sonido, fundido y parte rítmica, con las reglas de VirtualDJ): mezcla a tempo o con fundido, mezclar ya, saltar, lista guardada y acciones MIDI.
 - Stems con IA: voz e instrumental con Spleeter 2 stems (ONNX Runtime, CPU o DirectML) separados en segundo plano con caché en disco; mezcla en el deck sin clics y exacta con los dos encendidos; botones VOZ/INSTR, preparar desde el navegador y acciones MIDI.
 - Video: MP4/MOV/WMV (y M4A/AAC/WMA) en los decks con Media Foundation de Windows; un hilo de video por deck que sigue la posición que se oye (tras un salto, primer fotograma en ~0,1 s y alcanza al audio sin congelarse); ventana VIDEO con la mezcla según el crossfader, rótulo con título y artista para las canciones sin video y pantalla completa sin bordes en el segundo monitor.

@@ -7,7 +7,7 @@ Todo lo que hace MiDJ, función por función. Para empezar rápido, mira el [REA
 Diseño "Escenario" (oscuro, deck A en azul y B en ámbar), pensado para una pantalla de 1366x768:
 - **Arriba**, una barra con el logo, el formato de la salida de video y debajo el **medidor del audio** ("audio
   31 %": lo que tarda el cálculo de cada bloque frente a lo que dura; "· N cortes" si la tarjeta se quedó sin
-  audio; en rojo desde el 70 % o con cortes), el **sampler** (8 pads, volumen y Parar), las
+  audio; en rojo desde el 70 % o con cortes), el **sampler** (16 pads en dos bancos, volumen y Parar), las
   pestañas **AUDIO / PROGRAMA** del centro, **Proyector** (pantalla completa en un monitor), **MIDI**,
   **Atajos** y **Ajustes**.
 - **Tarjeta de sonido**: si la guardada no abre, se usa la predeterminada en estéreo. Si ninguna abre, o la
@@ -50,7 +50,7 @@ Tab o cargando una canción en él. Botón **Atajos**:
 | Flechas arriba / abajo (RePág / AvPág) | Moverse por la lista de canciones |
 | Flechas izquierda / derecha | Crossfader a pasos del 5 % (con Mayús: del todo) |
 | A | Agregar la canción elegida al automix (en YouTube: al automix de YouTube) |
-| 1 - 8 | Pads del sampler (al soltar, se suelta el pad) |
+| 1 - 8 | Pads del banco activo del sampler (al soltar, se suelta el pad) |
 | Ctrl+1 - 9 (o F1 - F9) | Pasar a la escena 1 - 9 (en portátiles HP las F necesitan la tecla Fn) |
 | V | Pestaña AUDIO / PROGRAMA del centro |
 | Ctrl+F | Buscar (Esc o Intro: salir del buscador) |
@@ -177,7 +177,9 @@ no oscurece). Salidas:
   ventana, para colocar las fuentes con comodidad.
 - **Proyectores a pantalla completa**, uno por monitor, sin bordes ni cursor: doble clic en la vista previa
   abre o cierra el del segundo monitor; clic derecho, el menú con todas las pantallas y el estado del
-  compositor (tarjeta, ms por fotograma, fotogramas perdidos). En el proyector: Esc o doble clic lo cierra.
+  compositor (tarjeta, ms por fotograma, fotogramas perdidos). Si un proyector queda en blanco, clic
+  derecho en PROGRAMA > **Reiniciar proyector** lo cierra y lo vuelve a abrir en las mismas pantallas.
+  En el proyector: Esc o doble clic lo cierra.
 
 Solo se compone y se decodifica mientras se ve la pestaña PROGRAMA, la vista previa grande o un proyector (el
 sonido de las fuentes multimedia sigue aunque no se vea). El video se decodifica en la
@@ -310,7 +312,7 @@ Fuente que dibuja lo que suena por el master (lo que se oye, descontando la late
 
 ## Sampler
 
-8 pads en la barra de arriba (teclas 1-8; el nombre del sonido sale al pasar el ratón). Clic en un pad vacío o arrastrar encima un archivo (o una canción del
+16 pads en dos bancos de 8 en la barra de arriba (cambia el banco con el botón junto a los pads; las teclas 1-8 disparan el banco visible). El nombre del sonido sale al pasar el ratón. Clic en un pad vacío o arrastrar encima un archivo (o una canción del
 navegador) para cargarlo; acepta audio y los `.vdjsample` de VirtualDJ con su tempo y bucle. Clic: disparar.
 Clic derecho: grabar 4, 8 o 16 pulsos de un deck (empieza en el siguiente pulso y queda como bucle bloqueado),
 modo de disparo (on/off, mantener, repetir), bucle, tempo (libre, sincronizado, bloqueado) y quitar.
@@ -358,6 +360,13 @@ Se ve como una consola (oscura, con letra de máquina) con el logo de MiDJ arrib
   su **fader de volumen** vertical (se arrastra con el dedo). Debajo, el crossfader (CENTRO o "40% B") y el
   volumen del master.
 - **Automix**: encender o apagar, Mezclar ya, Saltar y la lista.
+- **Automix**: sus pestañas **Local** y **YouTube** separan las dos colas. En Local puedes encenderlo,
+  mezclar ya, saltar, elegir la duración del fundido y administrar la cola (orden y quitar). **Listas** permite
+  reproducir o agregar Favoritos, Más reproducidos y listas guardadas.
+- **Automix YouTube**: encender o apagar, ver la miniatura y el avance del video actual, reproducir/pausar,
+  saltar al siguiente, cerrar o reiniciar el reproductor, cambiar su volumen y calidad, activar el salto de anuncios,
+  y administrar la cola (miniaturas, orden, reproducir ahora y quitar). Si YouTube pide verificación, el remoto permite
+  mostrar u ocultar la ventana para resolverla en el PC.
 - **Buscar**: el botón de la derecha cambia entre la biblioteca (**LIB>**) y YouTube (**YT>**):
   - en la biblioteca busca mientras se escribe; cada canción dice si es **AUDIO** o **VIDEO** y tiene **A** /
     **B** (cargar en ese deck) y **+** (al automix);
@@ -367,7 +376,7 @@ Se ve como una consola (oscura, con letra de máquina) con el logo de MiDJ arrib
     gris. Al bajar hasta el final se cargan 20 videos más, como en YouTube.
   - El buscador empieza vacío y sin el teclado abierto, y se vacía al cambiar entre biblioteca y YouTube o
     de pestaña.
-- **Pads y escenas**: los 8 pads del sampler (con el nombre de su sonido; en modo *mantener* suenan mientras
+- **Pads y escenas**: los 16 pads del sampler, en dos bancos seleccionables (con el nombre de su sonido; en modo *mantener* suenan mientras
   se toca), Parar todo y las escenas (la que está al aire en verde).
 
 Lo que se hace desde el celular se ve al momento en MiDJ y al revés. Pueden conectarse varios celulares a la
@@ -380,4 +389,4 @@ vez; el botón se pone **verde** mientras hay alguno y el panel dice cuántos.
   privadas**. Si la red del PC está marcada como *pública* en Windows, el celular no llega: cámbiala a
   privada en *Configuración > Red e Internet*.
 - Si el PC tiene varias redes (Wi-Fi y cable, una VPN...), el panel deja elegir por cuál va la dirección.
-- Usa el puerto 8765 (o el siguiente libre). Se guarda en `%APPDATA%\MiDJ\remote.xml`.
+- La dirección muestra `http://IP:puerto` (8765 o el siguiente libre). Puedes escribirla en el navegador y luego ingresar la clave que muestra MiDJ; el QR abre el control directamente. El celular debe estar en la misma red local. Se guarda en `%APPDATA%\MiDJ\remote.xml`.

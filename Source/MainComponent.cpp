@@ -344,7 +344,7 @@ juce::String MainComponent::shortcutsHelp()
            "Flechas arriba / abajo\tMoverse por la lista de canciones\n"
            "Flechas izquierda / derecha\tCrossfader (con Mayus: del todo)\n"
            "A\tAgregar la cancion elegida al automix\n"
-           "1 - 8\tPads del sampler\n"
+           "1 - 8\tPads del banco activo del sampler\n"
            "Ctrl+1 - 9 (o F1 - F9)\tPasar a la escena 1 - 9 (en portatiles HP las F necesitan la tecla Fn)\n"
            "V\tPestana AUDIO / VIDEO del mezclador\n"
            "Ctrl+F\tBuscar en la biblioteca (Esc o Intro: salir del buscador)\n"
@@ -452,11 +452,12 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
     const auto ch = juce::CharacterFunctions::toUpperCase (key.getTextCharacter());
     if (ch >= '1' && ch <= '8')
     {
-        const int pad = (int) (ch - '1');
-        if (! padKeyDown[(size_t) pad])   // la repeticion del teclado no vuelve a dispararlo
+        const int keyIndex = (int) (ch - '1');
+        auto& target = padKeyTargets[(size_t) keyIndex];
+        if (target < 0)   // la repeticion del teclado no vuelve a dispararlo
         {
-            padKeyDown[(size_t) pad] = true;
-            mixer.getSampler().press (pad);
+            target = samplerPanel.activeBank() * Sampler::padsPerBank + keyIndex;
+            mixer.getSampler().press (target);
         }
         return true;
     }
@@ -481,11 +482,11 @@ bool MainComponent::keyStateChanged (bool, juce::Component*)
 {
     // Soltar la tecla de un pad lo suelta (en los pads de modo mantener deja de sonar).
     bool any = false;
-    for (int pad = 0; pad < Sampler::numPads; ++pad)
-        if (padKeyDown[(size_t) pad] && ! juce::KeyPress::isKeyCurrentlyDown ('1' + pad))
+    for (int key = 0; key < Sampler::padsPerBank; ++key)
+        if (padKeyTargets[(size_t) key] >= 0 && ! juce::KeyPress::isKeyCurrentlyDown ('1' + key))
         {
-            padKeyDown[(size_t) pad] = false;
-            mixer.getSampler().release (pad);
+            mixer.getSampler().release (padKeyTargets[(size_t) key]);
+            padKeyTargets[(size_t) key] = -1;
             any = true;
         }
     return any;
@@ -1120,7 +1121,7 @@ void MainComponent::resized()
         programTabButton.setBounds (tabs);
         h.removeFromLeft (headerLogoWidth + 170);
         // El sampler solo si cabe entero (en ventanas estrechas se oculta).
-        const bool samplerFits = h.getWidth() >= SamplerPanel::compactWidth + 16;
+        const bool samplerFits = h.getWidth() >= SamplerPanel::compactWidth;
         samplerPanel.setVisible (panels.sampler && samplerFits);
         if (samplerFits)
             samplerPanel.setBounds (h.removeFromLeft (SamplerPanel::compactWidth));
@@ -1462,8 +1463,108 @@ void MainComponent::remoteMessage (int clientId, const juce::var& message)
         const double v = juce::jlimit (0.0, 1.0, (double) message["v"]);
         if (id == "master")
             mixer.setMasterVolume ((float) v);
+        else if (id == "youtube.volume")
+            youtubePlayer->setVolume ((float) v);
+        else if (id == "youtube.seek")
+        {
+            const auto duration = youtubePlayer->getStatus().duration;
+            if (duration > 0.0)
+                youtubePlayer->seek (duration * v);
+        }
         else if (const auto* action = Actions::find (id); action != nullptr && action->type == ActionType::absolute)
             controlSurface.setAbsolute (id, v);
+    }
+    else if (type == "ytcontrol")
+    {
+        const auto action = message["action"].toString();
+        if (action == "toggleAutomix") youtubePanel->setAutomix (! youtubeQueue.isEnabled());
+        else if (action == "play") youtubePlayer->play();
+        else if (action == "pause") youtubePlayer->pause();
+        else if (action == "toggle") youtubePlayer->togglePlay();
+        else if (action == "next") youtubePanel->next();
+        else if (action == "stop") youtubePlayer->close();
+        else if (action == "clear") youtubeQueue.clear();
+        else if (action == "skipAd") youtubePlayer->skipAd();
+        else if (action == "verify") youtubePlayer->showVerification();
+        else if (action == "hideVerification") youtubePlayer->hideVerification();
+        else if (action == "reset") youtubePlayer->restart();
+    }
+    else if (type == "ytseek")
+    {
+        const auto& status = youtubePlayer->getStatus();
+        if (status.duration > 0.0)
+            youtubePlayer->seek (status.duration * juce::jlimit (0.0, 1.0, (double) message["v"]));
+    }
+    else if (type == "ytqueueAction")
+    {
+        const int index = (int) message["index"];
+        const auto action = message["action"].toString();
+        const auto& items = youtubeQueue.getItems();
+        if (! juce::isPositiveAndBelow (index, (int) items.size()))
+            return;
+        if (action == "up" && index > 0)
+            youtubeQueue.move (index, index - 1);
+        else if (action == "down" && index + 1 < (int) items.size())
+            youtubeQueue.move (index, index + 1);
+        else if (action == "remove")
+            youtubeQueue.remove (index);
+        else if (action == "play")
+        {
+            const auto video = items[(size_t) index];
+            youtubeQueue.remove (index);
+            youtubePlayer->open (video);
+        }
+    }
+    else if (type == "ytsettings")
+    {
+        const auto quality = message["quality"].toString();
+        if (YouTubePlayer::getQualities().contains (quality))
+        {
+            youtubeQueue.quality = quality;
+            youtubePlayer->setQuality (quality);
+        }
+        if (message.hasProperty ("skipAds"))
+        {
+            youtubeQueue.skipAds = (bool) message["skipAds"];
+            youtubePlayer->setSkipAds (youtubeQueue.skipAds);
+        }
+    }
+    else if (type == "amqueueAction")
+    {
+        const auto action = message["action"].toString();
+        const int index = (int) message["index"];
+        if (action == "clear")
+            automix.clearQueue();
+        else if (juce::isPositiveAndBelow (index, (int) automix.getQueue().size()))
+        {
+            if (action == "up" && index > 0)
+                automix.move (index, index - 1);
+            else if (action == "down" && index + 1 < (int) automix.getQueue().size())
+                automix.move (index, index + 1);
+            else if (action == "remove")
+                automix.remove (index);
+        }
+    }
+    else if (type == "amsettings")
+    {
+        const double fade = (double) message["fade"];
+        if (fade >= 2.0 && fade <= 16.0)
+            automix.setFadeSeconds (fade);
+    }
+    else if (type == "amlist")
+    {
+        const auto kind = message["kind"].toString();
+        const bool replace = (bool) message["replace"];
+        std::vector<TrackInfo> tracks;
+        if (kind == "favorites") tracks = library.getFavorites();
+        else if (kind == "played") tracks = library.getMostPlayed();
+        else if (kind == "playlist") tracks = library.getPlaylistTracks ((juce::int64) message["id"]);
+        if (replace)
+            automix.clearQueue();
+        for (const auto& track : tracks)
+            automix.add ({ track.getFile(), track.title, track.artist, track.bpm });
+        if (replace && ! tracks.empty() && ! automix.isEnabled())
+            automix.setEnabled (true);
     }
     else if (type == "scene")
     {
@@ -1597,18 +1698,58 @@ juce::String MainComponent::remoteState()
     auto* am = new juce::DynamicObject();
     am->setProperty ("on", automix.isEnabled());
     am->setProperty ("status", automix.getStatusText());
+    am->setProperty ("fade", automix.getFadeSeconds());
+    am->setProperty ("canMix", automix.isEnabled() && automix.getState() == Automix::State::playing && automix.getNext() != nullptr);
     juce::Array<juce::var> queue;
     for (const auto& item : automix.getQueue())
     {
-        if (queue.size() >= 30)
-            break;
         auto* q = new juce::DynamicObject();
         q->setProperty ("title", item.title.isNotEmpty() ? item.title : item.file.getFileNameWithoutExtension());
         q->setProperty ("artist", item.artist);
+        q->setProperty ("video", DeckVideo::isVideoFile (item.file));
+        q->setProperty ("bpm", item.bpm);
         queue.add (juce::var (q));
     }
     am->setProperty ("queue", queue);
+    am->setProperty ("favorites", library.countFavorites());
+    am->setProperty ("played", library.countPlayed());
+    juce::Array<juce::var> playlists;
+    for (const auto& playlist : library.getPlaylists())
+    {
+        auto* item = new juce::DynamicObject();
+        item->setProperty ("id", playlist.id);
+        item->setProperty ("name", playlist.name);
+        item->setProperty ("count", playlist.count);
+        playlists.add (juce::var (item));
+    }
+    am->setProperty ("playlists", playlists);
     root->setProperty ("automix", juce::var (am));
+
+    auto* ytAm = new juce::DynamicObject();
+    ytAm->setProperty ("on", youtubeQueue.isEnabled());
+    ytAm->setProperty ("open", youtubePlayer->isOpen());
+    ytAm->setProperty ("videoId", youtubePlayer->getVideo().id);
+    ytAm->setProperty ("title", youtubePlayer->getVideo().title);
+    ytAm->setProperty ("channel", youtubePlayer->getVideo().channel);
+    ytAm->setProperty ("status", YouTubePlayer::stateText (youtubePlayer->getStatus()));
+    ytAm->setProperty ("state", (int) youtubePlayer->getStatus().state);
+    ytAm->setProperty ("time", (int) youtubePlayer->getStatus().time);
+    ytAm->setProperty ("duration", (int) youtubePlayer->getStatus().duration);
+    ytAm->setProperty ("volume", std::round (youtubePlayer->getVolume() * 100.0f) / 100.0f);
+    ytAm->setProperty ("quality", youtubePlayer->getQuality());
+    ytAm->setProperty ("skipAds", youtubePlayer->getSkipAds());
+    ytAm->setProperty ("verifying", youtubePlayer->isVerifying());
+    juce::Array<juce::var> ytItems;
+    for (const auto& video : youtubeQueue.getItems())
+    {
+        auto* item = new juce::DynamicObject();
+        item->setProperty ("id", video.id);
+        item->setProperty ("title", video.title);
+        item->setProperty ("channel", video.channel);
+        ytItems.add (juce::var (item));
+    }
+    ytAm->setProperty ("queue", ytItems);
+    root->setProperty ("youtubeAutomix", juce::var (ytAm));
 
     juce::Array<juce::var> pads;
     auto& sampler = mixer.getSampler();

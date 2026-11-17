@@ -34,6 +34,8 @@ public:
 
     // Abre la ventana si hace falta y carga el video; empieza a sonar solo (tras los anuncios).
     void open (const YouTubeVideo& video);
+    // Cierra y vuelve a abrir la ventana de YouTube con el video actual, desde el inicio.
+    void restart();
     void play();
     void pause();
     void togglePlay();

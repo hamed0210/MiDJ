@@ -166,7 +166,7 @@ private:
     SamplerPanel samplerPanel { mixer.getSampler(), formatManager };
     juce::TooltipWindow tooltips { this };
     int activeDeck = 0;
-    std::array<bool, Sampler::numPads> padKeyDown {};
+    std::array<int, Sampler::padsPerBank> padKeyTargets { -1, -1, -1, -1, -1, -1, -1, -1 };
     // Espacio: pausa los decks que suenan y, la vez siguiente, vuelve a poner esos mismos.
     std::array<bool, 2> pausedBySpace {};
     void spacePressed();
@@ -223,8 +223,9 @@ private:
     //  celular -> MiDJ: {t:"press"|"release", id:<accion MIDI>} (play, cue, sync, pads, automix...),
     //                   {t:"set", id:<accion absoluta>|"master", v:0-1}, {t:"scene", id},
     //                   {t:"search", q}, {t:"load", deck:0|1, track:<id>}, {t:"queue", track:<id>},
-    //                   {t:"ytsearch", q}, {t:"ytmore"} (los siguientes), {t:"ytplay"|"ytqueue", id:<id del video>};
-    //  MiDJ -> celular: {t:"state", decks, xf, master, automix, pads, scenes, scene} (5 veces por
+    //                   {t:"ytsearch", q}, {t:"ytmore"}, controles ytcontrol/ytseek/ytsettings/ytqueueAction;
+    //                   {t:"ytplay"|"ytqueue", id:<id del video>}, {t:"amqueueAction"|"amsettings"|"amlist"};
+    //  MiDJ -> celular: {t:"state", decks, xf, master, automix, youtubeAutomix, pads, scenes, scene} (5 veces por
     //                   segundo, solo si cambia), {t:"results", q, items} (items con video: true/false)
     //                   y {t:"ytresults", q, items, append, more, error} (a quien busco).
     RemoteServer remote;

@@ -79,7 +79,7 @@ título de lo que suena y un **visualizador** que baila con la música. Cambia d
 
 ### 🎹 Sampler y controladoras
 
-8 pads para efectos de sonido (acepta los `.vdjsample` de VirtualDJ) y graba trozos de un deck. Conecta
+16 pads en dos bancos de 8 para efectos de sonido (acepta los `.vdjsample` de VirtualDJ) y graba trozos de un deck. Conecta
 cualquier **controladora MIDI** y asigna sus botones con un clic en la pantalla.
 
 ![Ajustes: qué se ve en pantalla, audio y actualizaciones](docs/capturas/ajustes.png)
@@ -93,7 +93,7 @@ cualquier **controladora MIDI** y asigna sus botones con un clic en la pantalla.
 | **Intro** | Carga la canción elegida en el deck |
 | **← / →** | Mueve el crossfader |
 | **A** | Agrega la canción al automix |
-| **1 - 8** | Pads del sampler |
+| **1 - 8** | Pads del banco activo del sampler |
 | **Ctrl + 1 - 9** | Cambia de escena |
 | **V** | Alterna entre AUDIO y PROGRAMA |
 

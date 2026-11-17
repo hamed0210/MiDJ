@@ -86,11 +86,13 @@ YouTubePanel::YouTubePanel (YouTubePlayer& p, YouTubeQueue& q) : player (p), que
     playButton.onClick = [this] { player.togglePlay(); };
     stopButton.setBordered (true);
     stopButton.onClick = [this] { player.close(); };
+    restartButton.setBordered (true);
+    restartButton.onClick = [this] { player.restart(); };
     nextButton.setBordered (true);
     nextButton.onClick = [this] { next(); };
     clearButton.setBordered (true);
     clearButton.onClick = [this] { queue.clear(); };
-    for (auto* b : { &playButton, &stopButton, &nextButton, &clearButton })
+    for (auto* b : { &playButton, &stopButton, &restartButton, &nextButton, &clearButton })
         addAndMakeVisible (b);
 
     volume.setSliderStyle (juce::Slider::LinearHorizontal);
@@ -236,6 +238,7 @@ void YouTubePanel::updateButtons()
     playButton.setGlyph (state == YouTubePlayer::State::playing ? Icons::Glyph::pause : Icons::Glyph::play);
     playButton.setEnabled (state == YouTubePlayer::State::playing || state == YouTubePlayer::State::paused);
     stopButton.setEnabled (player.isOpen());
+    restartButton.setEnabled (player.isOpen() && player.getVideo().id.isNotEmpty());
     nextButton.setEnabled (! queue.getItems().empty());
     clearButton.setEnabled (! queue.getItems().empty());
     settingsButton.setButtonText (YouTubePlayer::qualityName (player.getQuality()) + (player.getSkipAds() ? " | sin anuncios" : ""));
@@ -335,13 +338,15 @@ void YouTubePanel::resized()
         actionButton.setBounds (controls.removeFromRight (juce::jmin (150, controls.getWidth() / 2)));
         controls.removeFromRight (6);
     }
-    timeArea = controls.removeFromRight (actionButton.isVisible() ? 0 : 86);
+    timeArea = controls.removeFromRight (actionButton.isVisible() ? 0 : 70);
     volume.setBounds (controls.removeFromLeft (juce::jmin (110, controls.getWidth())));
     r.removeFromTop (6);
     auto bottom = r.removeFromBottom (32);
     r.removeFromBottom (6);
     list.setBounds (r);
     nextButton.setBounds (bottom.removeFromLeft (44));
+    bottom.removeFromLeft (6);
+    restartButton.setBounds (bottom.removeFromLeft (36));
     bottom.removeFromLeft (6);
     clearButton.setBounds (bottom.removeFromLeft (44));
     bottom.removeFromLeft (6);

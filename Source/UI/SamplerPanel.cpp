@@ -9,7 +9,9 @@ namespace
     // Un color por pad (los mismos tonos que el resto de la interfaz).
     const std::array<juce::Colour, Sampler::numPads> padColours {
         juce::Colour (0xff3ea6ff), juce::Colour (0xffffb020), juce::Colour (0xff9b8cff), juce::Colour (0xff3ddc97),
-        juce::Colour (0xffff6b8b), juce::Colour (0xff4dd0e1), juce::Colour (0xffe8c547), juce::Colour (0xffc58cf5) };
+        juce::Colour (0xffff6b8b), juce::Colour (0xff4dd0e1), juce::Colour (0xffe8c547), juce::Colour (0xffc58cf5),
+        juce::Colour (0xfff08a5d), juce::Colour (0xff6a9fb5), juce::Colour (0xffb83b5e), juce::Colour (0xff6a2c70),
+        juce::Colour (0xff99b898), juce::Colour (0xfffecea8), juce::Colour (0xff2a9d8f), juce::Colour (0xffe76f51) };
 
     bool isSampleFile (const juce::File& f)
     {
@@ -38,7 +40,9 @@ public:
         if (state != lastState)
         {
             lastState = state;
-            const juce::String name = "Pad " + juce::String (index + 1) + " (tecla " + juce::String (index + 1) + ")";
+            const juce::String key = juce::String (index % Sampler::padsPerBank + 1);
+            const juce::String name = "Pad " + juce::String (index + 1) + " (tecla " + key + ", banco "
+                                    + juce::String (index / Sampler::padsPerBank + 1) + ")";
             setTooltip (sample != nullptr ? name + ": " + sample->name + ". Clic derecho: opciones"
                                           : name + " vacio: clic para cargar un sonido. Clic derecho: grabar de un deck");
             repaint();
@@ -200,6 +204,15 @@ SamplerPanel::SamplerPanel (Sampler& s, juce::AudioFormatManager& f) : sampler (
     stopButton.onClick = [this] { sampler.stopAll(); };
     addAndMakeVisible (stopButton);
 
+    bankButton.onClick = [this]
+    {
+        bank = 1 - bank;
+        resized();
+        repaint();
+    };
+    bankButton.setTooltip ("Cambiar entre los dos bancos de pads");
+    addAndMakeVisible (bankButton);
+
     for (int i = 0; i < Sampler::numPads; ++i)
     {
         pads[(size_t) i] = std::make_unique<Pad> (*this, i);
@@ -221,9 +234,10 @@ SamplerPanel::~SamplerPanel()
 
 void SamplerPanel::timerCallback()
 {
-    // Solo los pads que cambian (los que suenan, por su barra de avance).
+    // Solo los pads visibles que cambian (los que suenan, por su barra de avance).
     for (auto& p : pads)
-        p->repaintIfChanged();
+        if (p->isVisible())
+            p->repaintIfChanged();
     if (! volume.isMouseButtonDown())
         volume.setValue (sampler.getVolume(), juce::dontSendNotification);   // la controladora tambien lo mueve
 }
@@ -311,7 +325,7 @@ void SamplerPanel::showMenu (int pad)
 
 void SamplerPanel::addLearnTargets (std::vector<LearnTarget>& out)
 {
-    for (int i = 0; i < Sampler::numPads; ++i)
+    for (int i = bank * Sampler::padsPerBank; i < (bank + 1) * Sampler::padsPerBank; ++i)
         out.push_back ({ pads[(size_t) i].get(), "sampler.pad" + juce::String (i + 1) });
     out.push_back ({ &stopButton, "sampler.stop" });
     out.push_back ({ &volume, "sampler.volume" });
@@ -333,7 +347,9 @@ void SamplerPanel::paint (juce::Graphics& g)
     g.drawText ("Sampler", titleArea, juce::Justification::centredLeft, false);
     g.setColour (DarkLookAndFeel::textQuiet);
     g.setFont (DarkLookAndFeel::sans (12.0f));
-    g.drawText ("Teclas 1-8", titleArea.withTrimmedLeft (70), juce::Justification::centredLeft, false);
+    const int firstKey = bank * Sampler::padsPerBank + 1;
+    g.drawText ("Teclas " + juce::String (firstKey) + "-" + juce::String (firstKey + Sampler::padsPerBank - 1),
+                titleArea.withTrimmedLeft (70), juce::Justification::centredLeft, false);
     g.drawText ("Volumen", volumeLabelArea, juce::Justification::centredRight, false);
 }
 
@@ -344,10 +360,17 @@ void SamplerPanel::resized()
         // Una fila: SAMPLER, los 8 pads, el volumen y "Parar".
         auto row = getLocalBounds();
         titleArea = row.removeFromLeft (62);
-        for (auto& p : pads)
+        bankButton.setButtonText (juce::String (bank + 1) + "/2");
+        bankButton.setBounds (row.removeFromLeft (34));
+        for (int i = 0; i < Sampler::numPads; ++i)
         {
-            p->setBounds (row.removeFromLeft (34));
-            row.removeFromLeft (4);
+            const bool visible = i >= bank * Sampler::padsPerBank && i < (bank + 1) * Sampler::padsPerBank;
+            pads[(size_t) i]->setVisible (visible);
+            if (visible)
+            {
+                pads[(size_t) i]->setBounds (row.removeFromLeft (34));
+                row.removeFromLeft (4);
+            }
         }
         row.removeFromLeft (6);
         volume.setBounds (row.removeFromLeft (72));
@@ -358,19 +381,30 @@ void SamplerPanel::resized()
         return;
     }
     stopButton.setButtonText ("Parar todo");
-    // Arriba el nombre, el volumen y "Parar todo"; debajo los 8 pads en fila (o en 2 filas si es estrecho).
+    // Arriba el nombre, el banco, el volumen y "Parar todo"; debajo los 8 pads del banco activo.
     auto area = getLocalBounds().reduced (14, 10);
     auto header = area.removeFromTop (28);
     stopButton.setBounds (header.removeFromRight (92));
     header.removeFromRight (10);
+    bankButton.setButtonText ("Banco " + juce::String (bank + 1) + "/2");
+    bankButton.setBounds (header.removeFromRight (72));
+    header.removeFromRight (8);
     volume.setBounds (header.removeFromRight (juce::jmin (130, header.getWidth() / 3)));
     volumeLabelArea = header.removeFromRight (60);
     titleArea = header;
     area.removeFromTop (8);
 
-    const int cols = area.getWidth() >= 8 * 56 ? 8 : 4, rows = Sampler::numPads / cols, gap = 8;
+    const int cols = area.getWidth() >= 8 * 56 ? 8 : 4, rows = Sampler::padsPerBank / cols, gap = 8;
     const int w = (area.getWidth() - gap * (cols - 1)) / cols, h = (area.getHeight() - gap * (rows - 1)) / rows;
     for (int i = 0; i < Sampler::numPads; ++i)
-        pads[(size_t) i]->setBounds (area.getX() + (i % cols) * (w + gap), area.getY() + (i / cols) * (h + gap), w, h);
+    {
+        const bool visible = i >= bank * Sampler::padsPerBank && i < (bank + 1) * Sampler::padsPerBank;
+        pads[(size_t) i]->setVisible (visible);
+        if (visible)
+        {
+            const int slot = i - bank * Sampler::padsPerBank;
+            pads[(size_t) i]->setBounds (area.getX() + (slot % cols) * (w + gap), area.getY() + (slot / cols) * (h + gap), w, h);
+        }
+    }
 }
 }

@@ -59,8 +59,18 @@ RemotePanel::RemotePanel (RemoteServer& s, Hooks h) : server (s), hooks (std::mo
     addAndMakeVisible (qr);
     address.setReadOnly (true);
     address.setJustification (juce::Justification::centred);
-    address.setFont (DarkLookAndFeel::mono (13.0f));
+    address.setFont (DarkLookAndFeel::mono (11.0f));
     addAndMakeVisible (address);
+    keyValue.setReadOnly (true);
+    keyValue.setJustification (juce::Justification::centred);
+    keyValue.setFont (DarkLookAndFeel::mono (13.0f));
+    addAndMakeVisible (keyValue);
+    for (auto* label : { &addressLabel, &keyLabel })
+    {
+        label->setFont (DarkLookAndFeel::sans (10.0f, true));
+        label->setColour (juce::Label::textColourId, DarkLookAndFeel::textQuiet);
+        addAndMakeVisible (*label);
+    }
     network.setTooltip ("La red por la que esta conectado el celular");
     network.onChange = [this] { refresh(); };
     addChildComponent (network);
@@ -102,8 +112,17 @@ void RemotePanel::refresh()
         qr.setText (link);
         address.setText (link.upToFirstOccurrenceOf ("/?", false, false), false);
     }
+    const auto key = hooks.getKey();
+    if (key != shownKey)
+    {
+        shownKey = key;
+        keyValue.setText (key, false);
+    }
     qr.setVisible (link.isNotEmpty());
     address.setVisible (link.isNotEmpty());
+    addressLabel.setVisible (link.isNotEmpty());
+    keyValue.setVisible (link.isNotEmpty());
+    keyLabel.setVisible (link.isNotEmpty());
     keyButton.setEnabled (server.isRunning());
     const int n = server.getNumClients();
     if (! hooks.isEnabled())
@@ -128,8 +147,7 @@ void RemotePanel::paint (juce::Graphics& g)
     g.drawFittedText (status, 16, getHeight() - 132, getWidth() - 32, 36, juce::Justification::centred, 2);
     g.setColour (DarkLookAndFeel::textFaint);
     g.setFont (DarkLookAndFeel::sans (12.0f));
-    g.drawFittedText ("Conecta el celular al mismo Wi-Fi que este PC y escanea el codigo con la camara. "
-                      "Si Windows pregunta por el firewall, permite las redes privadas.",
+    g.drawFittedText ("Conecta el celular al mismo Wi-Fi. Puedes escribir la direccion y la clave; si Windows pregunta por el firewall, permite redes privadas.",
                       16, getHeight() - 92, getWidth() - 32, 44, juce::Justification::centred, 3);
 }
 
@@ -146,7 +164,11 @@ void RemotePanel::resized()
     }
     keyButton.setBounds (area.removeFromBottom (32).withSizeKeepingCentre (160, 32));
     area.removeFromBottom (96);   // estado y ayuda (paint)
-    address.setBounds (area.removeFromBottom (28));
+    keyValue.setBounds (area.removeFromBottom (24));
+    keyLabel.setBounds (area.removeFromBottom (14));
+    area.removeFromBottom (4);
+    address.setBounds (area.removeFromBottom (24));
+    addressLabel.setBounds (area.removeFromBottom (14));
     area.removeFromBottom (8);
     qr.setBounds (area);
 }

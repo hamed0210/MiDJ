@@ -192,6 +192,7 @@ struct YouTubePlayer::Impl
     juce::String pendingId;   // el video a cargar en cuanto este listo
     int loadCount = 0;        // va en la direccion (&midj=): los avisos de una pagina anterior se descartan
     std::shared_ptr<bool> alive = std::make_shared<bool> (true);   // para los avisos de WebView2 que llegan tarde
+    int restartId = 0;   // invalida un reinicio pendiente si el usuario abre o cierra otro video
 
     static void registerClass()
     {
@@ -352,6 +353,7 @@ void YouTubePlayer::setState (State s)
 
 void YouTubePlayer::open (const YouTubeVideo& v)
 {
+    ++impl->restartId;
     video = v;
     status = {};
     status.state = State::opening;
@@ -433,6 +435,23 @@ void YouTubePlayer::open (const YouTubeVideo& v)
         {
             createController();
         }
+    });
+}
+
+void YouTubePlayer::restart()
+{
+    if (video.id.isEmpty())
+        return;
+    const auto current = video;
+    const std::weak_ptr<bool> alive = impl->alive;
+    close();
+    const int restartId = ++impl->restartId;
+    // Deja que WebView2 termine de liberar el controlador viejo antes de crear la nueva ventana.
+    juce::Timer::callAfterDelay (150, [this, alive, current, restartId]
+    {
+        const auto safe = alive.lock();
+        if (safe != nullptr && *safe && impl->restartId == restartId && status.state == State::closed)
+            open (current);
     });
 }
 
@@ -753,6 +772,7 @@ juce::String YouTubePlayer::qualityName (const juce::String& q)
 
 void YouTubePlayer::close()
 {
+    ++impl->restartId;
     impl->pendingId.clear();
     impl->destroyWindow();
     video = {};

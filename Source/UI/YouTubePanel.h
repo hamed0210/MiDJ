@@ -88,7 +88,8 @@ private:
     YouTubeQueue& queue;
     juce::ListBox list;
     IconButton playButton { Icons::Glyph::play, "Play / Pausa del video de YouTube" },
-               stopButton { Icons::Glyph::stop, "Detener y cerrar el reproductor" },
+               stopButton { Icons::Glyph::close, "Cerrar la ventana de MiDJ YouTube" },
+               restartButton { Icons::Glyph::restart, "Reiniciar la ventana de MiDJ YouTube y abrir de nuevo el video actual" },
                nextButton { Icons::Glyph::skip, "Siguiente video de la lista" },
                clearButton { Icons::Glyph::trash, "Vaciar la lista de YouTube" };
     juce::Slider volume;
